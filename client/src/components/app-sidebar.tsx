@@ -8,6 +8,7 @@ import {
   Settings,
   Gift,
   LayoutTemplate,
+  Send,
 } from "lucide-react";
 import {
   Sidebar,
@@ -28,6 +29,7 @@ const mainNavItems = [
   { title: "Create Content", url: "/create", icon: FileText },
   { title: "AI Workflows", url: "/workflows", icon: Sparkles },
   { title: "Templates", url: "/templates", icon: LayoutTemplate },
+  { title: "Publishing", url: "/publishing", icon: Send },
 ];
 
 const settingsNavItems = [

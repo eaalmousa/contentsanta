@@ -1,0 +1,660 @@
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import {
+  Plus,
+  Globe,
+  MoreHorizontal,
+  Edit,
+  Trash2,
+  CheckCircle,
+  Loader2,
+  Send,
+  ExternalLink,
+} from "lucide-react";
+import { SiWordpress, SiMedium, SiLinkedin, SiFacebook } from "react-icons/si";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import type { PublishingTarget, PublishJob, Asset, AssetVersion, TargetType } from "@shared/schema";
+
+const platformOptions: { value: TargetType; label: string; icon: React.ElementType; color: string }[] = [
+  { value: "wordpress", label: "WordPress", icon: SiWordpress, color: "text-blue-600" },
+  { value: "webflow", label: "Webflow", icon: Globe, color: "text-blue-500" },
+  { value: "linkedin", label: "LinkedIn", icon: SiLinkedin, color: "text-blue-700" },
+  { value: "x", label: "X (Twitter)", icon: Globe, color: "text-gray-800 dark:text-gray-200" },
+  { value: "meta", label: "Meta (Facebook/Instagram)", icon: SiFacebook, color: "text-blue-600" },
+  { value: "email", label: "Email Newsletter", icon: Globe, color: "text-muted-foreground" },
+  { value: "custom", label: "Custom Webhook", icon: Globe, color: "text-muted-foreground" },
+];
+
+const targetSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  type: z.string().min(1, "Platform is required"),
+  configJson: z.object({
+    apiUrl: z.string().url("Valid URL required").optional().or(z.literal("")),
+    apiKey: z.string().optional(),
+    username: z.string().optional(),
+  }),
+});
+
+type TargetFormValues = z.infer<typeof targetSchema>;
+
+type AssetWithVersion = Asset & {
+  latestVersion?: AssetVersion;
+};
+
+function PlatformIcon({ type, className }: { type: string; className?: string }) {
+  const option = platformOptions.find((p) => p.value === type);
+  if (!option) return <Globe className={className} />;
+  const Icon = option.icon;
+  return <Icon className={`${className} ${option.color}`} />;
+}
+
+function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () => void }) {
+  const { toast } = useToast();
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/publishing-targets/${target.id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets"] });
+      toast({ title: "Target deleted" });
+    },
+  });
+
+  const platformInfo = platformOptions.find((p) => p.value === target.type);
+
+  return (
+    <Card data-testid={`card-target-${target.id}`}>
+      <CardContent className="p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
+              <PlatformIcon type={target.type} className="h-6 w-6" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <h3 className="font-medium" data-testid={`text-target-name-${target.id}`}>
+                {target.name}
+              </h3>
+              <span className="text-sm text-muted-foreground">
+                {platformInfo?.label || target.type}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="default">Active</Badge>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" data-testid={`button-target-menu-${target.id}`}>
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={onEdit}>
+                  <Edit className="mr-2 h-4 w-4" />
+                  Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem 
+                  className="text-destructive"
+                  onClick={() => deleteMutation.mutate()}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function TargetCardSkeleton() {
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-center gap-4">
+          <Skeleton className="h-12 w-12 rounded-lg" />
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-20" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CreateTargetDialog({ 
+  open, 
+  onOpenChange, 
+  editTarget 
+}: { 
+  open: boolean; 
+  onOpenChange: (open: boolean) => void;
+  editTarget?: PublishingTarget | null;
+}) {
+  const { toast } = useToast();
+  const isEditing = !!editTarget;
+
+  const form = useForm<TargetFormValues>({
+    resolver: zodResolver(targetSchema),
+    defaultValues: {
+      name: editTarget?.name || "",
+      type: editTarget?.type || "",
+      configJson: {
+        apiUrl: (editTarget?.configJson as any)?.apiUrl || "",
+        apiKey: (editTarget?.configJson as any)?.apiKey || "",
+        username: (editTarget?.configJson as any)?.username || "",
+      },
+    },
+  });
+
+  const selectedType = form.watch("type");
+
+  const createMutation = useMutation({
+    mutationFn: async (data: TargetFormValues) => {
+      if (isEditing) {
+        await apiRequest("PATCH", `/api/publishing-targets/${editTarget.id}`, data);
+      } else {
+        await apiRequest("POST", "/api/publishing-targets", {
+          ...data,
+          workspaceId: "default",
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets"] });
+      toast({ title: isEditing ? "Target updated" : "Target connected" });
+      onOpenChange(false);
+      form.reset();
+    },
+    onError: () => {
+      toast({ title: "Failed to save target", variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{isEditing ? "Edit Publishing Target" : "Connect Publishing Target"}</DialogTitle>
+          <DialogDescription>
+            {isEditing ? "Update your connection settings." : "Connect a platform to publish your content."}
+          </DialogDescription>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit((data) => createMutation.mutate(data))} className="flex flex-col gap-4">
+            <FormField
+              control={form.control}
+              name="type"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Platform</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-target-platform">
+                        <SelectValue placeholder="Select platform" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {platformOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          <div className="flex items-center gap-2">
+                            <option.icon className={`h-4 w-4 ${option.color}`} />
+                            {option.label}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Connection Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="My Blog" {...field} data-testid="input-target-name" />
+                  </FormControl>
+                  <FormDescription>A friendly name for this connection</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
+            {(selectedType === "wordpress" || selectedType === "webflow" || selectedType === "custom") && (
+              <FormField
+                control={form.control}
+                name="configJson.apiUrl"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>API URL</FormLabel>
+                    <FormControl>
+                      <Input 
+                        placeholder={selectedType === "wordpress" ? "https://yourblog.com/wp-json/wp/v2" : "https://api.example.com/webhook"} 
+                        {...field} 
+                        data-testid="input-target-url"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {(selectedType === "wordpress" || selectedType === "webflow" || selectedType === "custom") && (
+              <FormField
+                control={form.control}
+                name="configJson.apiKey"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>API Key / Token</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="password"
+                        placeholder="Your API key or access token" 
+                        {...field} 
+                        data-testid="input-target-apikey"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {(selectedType === "x" || selectedType === "linkedin" || selectedType === "meta") && (
+              <div className="rounded-lg border bg-muted/50 p-4 text-sm text-muted-foreground">
+                Social media publishing requires OAuth authentication. After saving, you'll be redirected to authorize the connection.
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createMutation.isPending} data-testid="button-save-target">
+                {createMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {isEditing ? "Update" : "Connect"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PublishDialog({ 
+  open, 
+  onOpenChange, 
+  asset 
+}: { 
+  open: boolean; 
+  onOpenChange: (open: boolean) => void;
+  asset: AssetWithVersion | null;
+}) {
+  const { toast } = useToast();
+  const [selectedTarget, setSelectedTarget] = useState<string>("");
+
+  const { data: targets } = useQuery<PublishingTarget[]>({
+    queryKey: ["/api/publishing-targets"],
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: async () => {
+      if (!asset || !selectedTarget) return;
+      await apiRequest("POST", "/api/publish-jobs", {
+        assetVersionId: asset.latestVersion?.id,
+        targetId: selectedTarget,
+        status: "queued",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/publish-jobs"] });
+      toast({ title: "Content queued for publishing" });
+      onOpenChange(false);
+      setSelectedTarget("");
+    },
+    onError: () => {
+      toast({ title: "Failed to publish", variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Publish Content</DialogTitle>
+          <DialogDescription>
+            Select a destination to publish "{asset?.latestVersion?.title}"
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4 py-4">
+          {targets && targets.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {targets.map((target) => (
+                <button
+                  key={target.id}
+                  onClick={() => setSelectedTarget(target.id)}
+                  className={`flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
+                    selectedTarget === target.id ? "border-primary bg-primary/5" : "hover:bg-muted/50"
+                  }`}
+                  data-testid={`button-select-target-${target.id}`}
+                >
+                  <PlatformIcon type={target.type} className="h-5 w-5" />
+                  <span className="font-medium">{target.name}</span>
+                  {selectedTarget === target.id && (
+                    <CheckCircle className="ml-auto h-5 w-5 text-primary" />
+                  )}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed p-6 text-center">
+              <Globe className="mx-auto h-10 w-10 text-muted-foreground/50" />
+              <p className="mt-2 text-sm text-muted-foreground">
+                No publishing targets connected yet.
+              </p>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={() => publishMutation.mutate()} 
+            disabled={!selectedTarget || publishMutation.isPending}
+            data-testid="button-confirm-publish"
+          >
+            {publishMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Send className="mr-2 h-4 w-4" />
+            Publish
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PublishJobCard({ job }: { job: PublishJob & { target?: PublishingTarget } }) {
+  const statusColors: Record<string, string> = {
+    queued: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+    running: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+    succeeded: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+    failed: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+  };
+
+  const resultJson = job.resultJson as { publishedUrl?: string } | null;
+
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
+      <div className="flex items-center gap-3">
+        <PlatformIcon type={job.target?.type || ""} className="h-5 w-5" />
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium">{job.target?.name || "Unknown Target"}</span>
+          <span className="text-xs text-muted-foreground">
+            {job.createdAt ? new Date(job.createdAt).toLocaleString() : ""}
+          </span>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Badge variant="secondary" className={statusColors[job.status] || ""}>
+          {job.status}
+        </Badge>
+        {resultJson?.publishedUrl && (
+          <a href={resultJson.publishedUrl} target="_blank" rel="noopener noreferrer">
+            <Button variant="ghost" size="icon">
+              <ExternalLink className="h-4 w-4" />
+            </Button>
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ApprovedAssetCard({ 
+  asset, 
+  onPublish 
+}: { 
+  asset: AssetWithVersion; 
+  onPublish: () => void;
+}) {
+  return (
+    <Card data-testid={`card-approved-asset-${asset.id}`}>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1 min-w-0">
+            <h4 className="font-medium truncate">{asset.latestVersion?.title || "Untitled"}</h4>
+            <p className="line-clamp-2 text-sm text-muted-foreground">
+              {asset.latestVersion?.body?.slice(0, 100)}...
+            </p>
+          </div>
+          <Button size="sm" onClick={onPublish} data-testid={`button-publish-asset-${asset.id}`}>
+            <Send className="mr-2 h-4 w-4" />
+            Publish
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function Publishing() {
+  const [targetDialogOpen, setTargetDialogOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<PublishingTarget | null>(null);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [selectedAsset, setSelectedAsset] = useState<AssetWithVersion | null>(null);
+
+  const { data: targets, isLoading: targetsLoading } = useQuery<PublishingTarget[]>({
+    queryKey: ["/api/publishing-targets"],
+  });
+
+  const { data: jobs, isLoading: jobsLoading } = useQuery<(PublishJob & { target?: PublishingTarget })[]>({
+    queryKey: ["/api/publish-jobs"],
+  });
+
+  const { data: assets, isLoading: assetsLoading } = useQuery<AssetWithVersion[]>({
+    queryKey: ["/api/assets", { status: "approved" }],
+  });
+
+  const handleEdit = (target: PublishingTarget) => {
+    setEditTarget(target);
+    setTargetDialogOpen(true);
+  };
+
+  const handleTargetDialogChange = (open: boolean) => {
+    setTargetDialogOpen(open);
+    if (!open) setEditTarget(null);
+  };
+
+  const handlePublish = (asset: AssetWithVersion) => {
+    setSelectedAsset(asset);
+    setPublishDialogOpen(true);
+  };
+
+  const approvedAssets = assets?.filter((a) => a.status === "approved") || [];
+
+  return (
+    <div className="flex flex-col gap-8 p-8">
+      <div className="flex flex-col gap-2">
+        <h1 className="font-serif text-4xl font-bold" data-testid="text-publishing-title">
+          Publishing
+        </h1>
+        <p className="text-muted-foreground">
+          Connect publishing targets and distribute your approved content.
+        </p>
+      </div>
+
+      <Tabs defaultValue="targets" className="w-full">
+        <TabsList>
+          <TabsTrigger value="targets" data-testid="tab-targets">Connected Targets</TabsTrigger>
+          <TabsTrigger value="ready" data-testid="tab-ready">Ready to Publish</TabsTrigger>
+          <TabsTrigger value="history" data-testid="tab-history">Publish History</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="targets" className="mt-6">
+          <div className="flex flex-col gap-6">
+            <div className="flex justify-end">
+              <Button onClick={() => setTargetDialogOpen(true)} data-testid="button-add-target">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Target
+              </Button>
+            </div>
+
+            {targetsLoading ? (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[...Array(3)].map((_, i) => (
+                  <TargetCardSkeleton key={i} />
+                ))}
+              </div>
+            ) : targets && targets.length > 0 ? (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {targets.map((target) => (
+                  <TargetCard 
+                    key={target.id} 
+                    target={target} 
+                    onEdit={() => handleEdit(target)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
+                <Globe className="h-16 w-16 text-muted-foreground/50" />
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <h3 className="font-serif text-xl font-semibold">No targets connected</h3>
+                  <p className="max-w-sm text-muted-foreground">
+                    Connect your first publishing target to start distributing content.
+                  </p>
+                </div>
+                <Button onClick={() => setTargetDialogOpen(true)} data-testid="button-add-first-target">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Target
+                </Button>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="ready" className="mt-6">
+          {assetsLoading ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {[...Array(4)].map((_, i) => (
+                <Card key={i}>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-16 w-full" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : approvedAssets.length > 0 ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {approvedAssets.map((asset) => (
+                <ApprovedAssetCard 
+                  key={asset.id} 
+                  asset={asset} 
+                  onPublish={() => handlePublish(asset)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
+              <CheckCircle className="h-16 w-16 text-muted-foreground/50" />
+              <div className="flex flex-col items-center gap-2 text-center">
+                <h3 className="font-serif text-xl font-semibold">No approved content</h3>
+                <p className="max-w-sm text-muted-foreground">
+                  Approve content from your library to see it here ready for publishing.
+                </p>
+              </div>
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-6">
+          {jobsLoading ? (
+            <div className="flex flex-col gap-3">
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} className="h-16 w-full" />
+              ))}
+            </div>
+          ) : jobs && jobs.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              {jobs.map((job) => (
+                <PublishJobCard key={job.id} job={job} />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
+              <Send className="h-16 w-16 text-muted-foreground/50" />
+              <div className="flex flex-col items-center gap-2 text-center">
+                <h3 className="font-serif text-xl font-semibold">No publish history</h3>
+                <p className="max-w-sm text-muted-foreground">
+                  Your publishing activity will appear here.
+                </p>
+              </div>
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      <CreateTargetDialog 
+        open={targetDialogOpen} 
+        onOpenChange={handleTargetDialogChange}
+        editTarget={editTarget}
+      />
+
+      <PublishDialog
+        open={publishDialogOpen}
+        onOpenChange={setPublishDialogOpen}
+        asset={selectedAsset}
+      />
+    </div>
+  );
+}
