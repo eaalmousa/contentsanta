@@ -9,6 +9,7 @@ import {
   Gift,
   LayoutTemplate,
   Send,
+  BarChart3,
 } from "lucide-react";
 import {
   Sidebar,
@@ -30,6 +31,7 @@ const mainNavItems = [
   { title: "AI Workflows", url: "/workflows", icon: Sparkles },
   { title: "Templates", url: "/templates", icon: LayoutTemplate },
   { title: "Publishing", url: "/publishing", icon: Send },
+  { title: "Usage", url: "/usage", icon: BarChart3 },
 ];
 
 const settingsNavItems = [
