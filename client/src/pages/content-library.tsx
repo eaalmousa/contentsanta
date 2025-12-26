@@ -1,17 +1,17 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   Search,
-  Filter,
   Plus,
   FileText,
-  ExternalLink,
   MoreHorizontal,
   Eye,
   Download,
   Trash2,
   CheckCircle2,
+  Send,
+  Archive,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,13 +32,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { Asset, AssetStatus, WorkflowType } from "@shared/schema";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import type { Asset, AssetVersion, AssetStatus, WorkflowType } from "@shared/schema";
 import { workflowMeta } from "@shared/schema";
+
+type AssetWithVersion = Asset & {
+  latestVersion?: AssetVersion;
+};
 
 const statusOptions: { value: AssetStatus | "all"; label: string }[] = [
   { value: "all", label: "All Statuses" },
   { value: "draft", label: "Draft" },
-  { value: "review", label: "In Review" },
+  { value: "in_review", label: "In Review" },
   { value: "approved", label: "Approved" },
   { value: "published", label: "Published" },
   { value: "archived", label: "Archived" },
@@ -49,22 +55,52 @@ const workflowOptions = Object.entries(workflowMeta).map(([key, meta]) => ({
   label: meta.label,
 }));
 
-function AssetCard({ asset }: { asset: Asset }) {
+function AssetCard({ asset }: { asset: AssetWithVersion }) {
+  const { toast } = useToast();
+  
   const statusColors: Record<AssetStatus, string> = {
     draft: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
-    review: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+    in_review: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
     approved: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
     published: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
     archived: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400",
   };
 
-  const workflowInfo = asset.workflowType ? workflowMeta[asset.workflowType as WorkflowType] : null;
+  const version = asset.latestVersion;
+  const workflowInfo = version?.workflowType ? workflowMeta[version.workflowType as WorkflowType] : null;
+
+  const approveMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/assets/${asset.id}/approve`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      toast({ title: "Asset approved" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/assets/${asset.id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      toast({ title: "Asset deleted" });
+    },
+  });
+
+  const handleExport = () => {
+    if (version) {
+      window.open(`/api/export/${version.id}?format=md`, "_blank");
+    }
+  };
 
   return (
     <Card className="group" data-testid={`card-asset-${asset.id}`}>
       <CardContent className="p-6">
         <div className="flex flex-col gap-4">
-          {/* Header */}
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3 min-w-0">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
@@ -72,7 +108,7 @@ function AssetCard({ asset }: { asset: Asset }) {
               </div>
               <div className="flex flex-col gap-1 min-w-0">
                 <h3 className="font-medium truncate" data-testid={`text-asset-title-${asset.id}`}>
-                  {asset.title}
+                  {version?.title || "Untitled"}
                 </h3>
                 {workflowInfo && (
                   <span className="text-xs text-muted-foreground">
@@ -92,16 +128,21 @@ function AssetCard({ asset }: { asset: Asset }) {
                   <Eye className="mr-2 h-4 w-4" />
                   View Details
                 </DropdownMenuItem>
-                <DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExport}>
                   <Download className="mr-2 h-4 w-4" />
                   Export
                 </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  Approve
-                </DropdownMenuItem>
+                {asset.status === "draft" && (
+                  <DropdownMenuItem onClick={() => approveMutation.mutate()}>
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    Approve
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive">
+                <DropdownMenuItem 
+                  className="text-destructive"
+                  onClick={() => deleteMutation.mutate()}
+                >
                   <Trash2 className="mr-2 h-4 w-4" />
                   Delete
                 </DropdownMenuItem>
@@ -109,26 +150,29 @@ function AssetCard({ asset }: { asset: Asset }) {
             </DropdownMenu>
           </div>
 
-          {/* Body Preview */}
           <p className="line-clamp-3 text-sm text-muted-foreground">
-            {asset.body?.slice(0, 200)}
-            {asset.body && asset.body.length > 200 ? "..." : ""}
+            {version?.body?.slice(0, 200)}
+            {version?.body && version.body.length > 200 ? "..." : ""}
           </p>
 
-          {/* Footer */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary" className={statusColors[asset.status]}>
-                {asset.status}
+                {asset.status === "in_review" ? "In Review" : asset.status}
               </Badge>
-              {asset.language && (
+              {version?.language && (
                 <Badge variant="outline" className="uppercase text-xs">
-                  {asset.language}
+                  {version.language}
                 </Badge>
               )}
-              {asset.channelType && (
+              {version?.channel && version.channel !== "generic" && (
                 <Badge variant="outline" className="text-xs">
-                  {asset.channelType}
+                  {version.channel}
+                </Badge>
+              )}
+              {version && (
+                <Badge variant="outline" className="text-xs">
+                  v{version.versionNo}
                 </Badge>
               )}
             </div>
@@ -173,32 +217,37 @@ export default function ContentLibrary() {
   const [statusFilter, setStatusFilter] = useState<AssetStatus | "all">("all");
   const [workflowFilter, setWorkflowFilter] = useState<string>("all");
 
-  const { data: assets, isLoading } = useQuery<Asset[]>({
-    queryKey: ["/api/assets", { status: statusFilter, workflow: workflowFilter, search: searchQuery }],
-    staleTime: 0, // Always consider data stale so it refetches on mount
-    refetchOnMount: "always", // Always refetch when component mounts
+  const { data: assets, isLoading } = useQuery<AssetWithVersion[]>({
+    queryKey: ["/api/assets", { status: statusFilter !== "all" ? statusFilter : undefined }],
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const filteredAssets = assets?.filter((asset) => {
+    const version = asset.latestVersion;
+    
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      if (!asset.title.toLowerCase().includes(query) && 
-          !asset.body?.toLowerCase().includes(query)) {
+      const title = version?.title?.toLowerCase() || "";
+      const body = version?.body?.toLowerCase() || "";
+      if (!title.includes(query) && !body.includes(query)) {
         return false;
       }
     }
+    
     if (statusFilter !== "all" && asset.status !== statusFilter) {
       return false;
     }
-    if (workflowFilter !== "all" && asset.workflowType !== workflowFilter) {
+    
+    if (workflowFilter !== "all" && version?.workflowType !== workflowFilter) {
       return false;
     }
+    
     return true;
   });
 
   return (
     <div className="flex flex-col gap-8 p-8">
-      {/* Page Header */}
       <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-2">
           <h1 className="font-serif text-4xl font-bold" data-testid="text-library-title">
@@ -216,7 +265,6 @@ export default function ContentLibrary() {
         </Link>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -257,7 +305,6 @@ export default function ContentLibrary() {
         </div>
       </div>
 
-      {/* Content Grid */}
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[...Array(6)].map((_, i) => (

@@ -1,56 +1,117 @@
-import type { 
-  User, InsertUser,
-  Workspace, InsertWorkspace,
-  Brand, InsertBrand,
-  Input, InsertInput,
-  WorkflowRun, InsertWorkflowRun,
-  Asset, InsertAsset,
-  Project, InsertProject,
-  RunStatus,
-  AssetStatus,
+import { 
+  workspaces, type Workspace, type InsertWorkspace,
+  workspaceUsers, type WorkspaceUser, type InsertWorkspaceUser,
+  brands, type Brand, type InsertBrand,
+  templates, type Template, type InsertTemplate,
+  projects, type Project, type InsertProject,
+  inputs, type Input, type InsertInput,
+  workflows, type Workflow, type InsertWorkflow,
+  workflowRuns, type WorkflowRun, type InsertWorkflowRun,
+  assets, type Asset, type InsertAsset,
+  assetVersions, type AssetVersion, type InsertAssetVersion,
+  comments, type Comment, type InsertComment,
+  publishingTargets, type PublishingTarget, type InsertPublishingTarget,
+  publishJobs, type PublishJob, type InsertPublishJob,
+  usageLedger, type UsageLedger, type InsertUsageLedger,
+  type RoleType,
+  type RunStatus,
+  type AssetStatus,
 } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { db } from "./db";
+import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
 
 export interface IStorage {
-  // Users
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  
   // Workspaces
   getWorkspaces(): Promise<Workspace[]>;
   getWorkspace(id: string): Promise<Workspace | undefined>;
-  createWorkspace(workspace: InsertWorkspace): Promise<Workspace>;
+  getWorkspaceBySlug(slug: string): Promise<Workspace | undefined>;
+  createWorkspace(data: InsertWorkspace): Promise<Workspace>;
+  updateWorkspace(id: string, data: Partial<InsertWorkspace>): Promise<Workspace | undefined>;
+  
+  // Workspace Users
+  getWorkspaceUsers(workspaceId: string): Promise<WorkspaceUser[]>;
+  getWorkspaceUser(workspaceId: string, userId: string): Promise<WorkspaceUser | undefined>;
+  addUserToWorkspace(data: InsertWorkspaceUser): Promise<WorkspaceUser>;
+  updateWorkspaceUserRole(id: string, role: RoleType): Promise<WorkspaceUser | undefined>;
+  removeUserFromWorkspace(workspaceId: string, userId: string): Promise<void>;
+  getUserWorkspaces(userId: string): Promise<Workspace[]>;
   
   // Brands
   getBrands(workspaceId?: string): Promise<Brand[]>;
   getBrand(id: string): Promise<Brand | undefined>;
-  createBrand(brand: InsertBrand): Promise<Brand>;
-  updateBrand(id: string, data: Partial<Brand>): Promise<Brand | undefined>;
+  createBrand(data: InsertBrand): Promise<Brand>;
+  updateBrand(id: string, data: Partial<InsertBrand>): Promise<Brand | undefined>;
+  deleteBrand(id: string): Promise<void>;
   
-  // Inputs
-  getInputs(workspaceId?: string): Promise<Input[]>;
-  getInput(id: string): Promise<Input | undefined>;
-  createInput(input: InsertInput): Promise<Input>;
-  deleteInput(id: string): Promise<boolean>;
-  
-  // Workflow Runs
-  getWorkflowRuns(filters?: { workspaceId?: string; inputId?: string; limit?: number }): Promise<WorkflowRun[]>;
-  getWorkflowRun(id: string): Promise<WorkflowRun | undefined>;
-  createWorkflowRun(run: InsertWorkflowRun): Promise<WorkflowRun>;
-  updateWorkflowRun(id: string, data: Partial<WorkflowRun>): Promise<WorkflowRun | undefined>;
-  
-  // Assets
-  getAssets(filters?: { workspaceId?: string; status?: AssetStatus; inputId?: string; limit?: number }): Promise<Asset[]>;
-  getAsset(id: string): Promise<Asset | undefined>;
-  createAsset(asset: InsertAsset): Promise<Asset>;
-  updateAsset(id: string, data: Partial<Asset>): Promise<Asset | undefined>;
-  deleteAsset(id: string): Promise<boolean>;
+  // Templates
+  getTemplates(workspaceId?: string, brandId?: string): Promise<Template[]>;
+  getTemplate(id: string): Promise<Template | undefined>;
+  createTemplate(data: InsertTemplate): Promise<Template>;
+  updateTemplate(id: string, data: Partial<InsertTemplate>): Promise<Template | undefined>;
+  deleteTemplate(id: string): Promise<void>;
   
   // Projects
   getProjects(workspaceId?: string): Promise<Project[]>;
   getProject(id: string): Promise<Project | undefined>;
-  createProject(project: InsertProject): Promise<Project>;
+  createProject(data: InsertProject): Promise<Project>;
+  updateProject(id: string, data: Partial<InsertProject>): Promise<Project | undefined>;
+  deleteProject(id: string): Promise<void>;
+  
+  // Inputs
+  getInputs(workspaceId?: string): Promise<Input[]>;
+  getInput(id: string): Promise<Input | undefined>;
+  createInput(data: InsertInput): Promise<Input>;
+  updateInput(id: string, data: Partial<InsertInput>): Promise<Input | undefined>;
+  deleteInput(id: string): Promise<void>;
+  
+  // Workflows
+  getWorkflows(workspaceId?: string): Promise<Workflow[]>;
+  getWorkflow(id: string): Promise<Workflow | undefined>;
+  createWorkflow(data: InsertWorkflow): Promise<Workflow>;
+  updateWorkflow(id: string, data: Partial<InsertWorkflow>): Promise<Workflow | undefined>;
+  deleteWorkflow(id: string): Promise<void>;
+  
+  // Workflow Runs
+  getWorkflowRuns(workspaceId?: string): Promise<WorkflowRun[]>;
+  getWorkflowRun(id: string): Promise<WorkflowRun | undefined>;
+  createWorkflowRun(data: InsertWorkflowRun): Promise<WorkflowRun>;
+  updateWorkflowRun(id: string, data: Partial<WorkflowRun>): Promise<WorkflowRun | undefined>;
+  
+  // Assets
+  getAssets(workspaceId?: string, status?: AssetStatus): Promise<Asset[]>;
+  getAsset(id: string): Promise<Asset | undefined>;
+  createAsset(data: InsertAsset): Promise<Asset>;
+  updateAsset(id: string, data: Partial<InsertAsset>): Promise<Asset | undefined>;
+  deleteAsset(id: string): Promise<void>;
+  
+  // Asset Versions
+  getAssetVersions(assetId: string): Promise<AssetVersion[]>;
+  getAssetVersion(id: string): Promise<AssetVersion | undefined>;
+  getLatestAssetVersion(assetId: string): Promise<AssetVersion | undefined>;
+  createAssetVersion(data: InsertAssetVersion): Promise<AssetVersion>;
+  updateAssetVersion(id: string, data: Partial<InsertAssetVersion>): Promise<AssetVersion | undefined>;
+  
+  // Comments
+  getComments(assetVersionId: string): Promise<Comment[]>;
+  createComment(data: InsertComment): Promise<Comment>;
+  deleteComment(id: string): Promise<void>;
+  
+  // Publishing Targets
+  getPublishingTargets(workspaceId: string): Promise<PublishingTarget[]>;
+  getPublishingTarget(id: string): Promise<PublishingTarget | undefined>;
+  createPublishingTarget(data: InsertPublishingTarget): Promise<PublishingTarget>;
+  updatePublishingTarget(id: string, data: Partial<InsertPublishingTarget>): Promise<PublishingTarget | undefined>;
+  deletePublishingTarget(id: string): Promise<void>;
+  
+  // Publish Jobs
+  getPublishJobs(assetVersionId?: string): Promise<PublishJob[]>;
+  getPublishJob(id: string): Promise<PublishJob | undefined>;
+  createPublishJob(data: InsertPublishJob): Promise<PublishJob>;
+  updatePublishJob(id: string, data: Partial<PublishJob>): Promise<PublishJob | undefined>;
+  
+  // Usage Ledger
+  getUsageLedger(workspaceId: string): Promise<UsageLedger[]>;
+  createUsageEntry(data: InsertUsageLedger): Promise<UsageLedger>;
   
   // Stats
   getStats(workspaceId?: string): Promise<{
@@ -61,260 +122,370 @@ export interface IStorage {
   }>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User> = new Map();
-  private workspaces: Map<string, Workspace> = new Map();
-  private brands: Map<string, Brand> = new Map();
-  private inputs: Map<string, Input> = new Map();
-  private workflowRuns: Map<string, WorkflowRun> = new Map();
-  private assets: Map<string, Asset> = new Map();
-  private projects: Map<string, Project> = new Map();
-
-  constructor() {
-    // Initialize with a default workspace
-    const defaultWorkspace: Workspace = {
-      id: "default",
-      name: "Demo Workspace",
-      slug: "demo-workspace",
-    };
-    this.workspaces.set(defaultWorkspace.id, defaultWorkspace);
-    
-    // Initialize with a default brand
-    const defaultBrand: Brand = {
-      id: "default-brand",
-      workspaceId: "default",
-      name: "My Brand",
-      defaultLanguage: "en",
-      industry: "Technology",
-      audience: "Business professionals and decision makers",
-      tone: "professional",
-      approvedTerms: ["innovative", "cutting-edge", "solution"],
-      forbiddenWords: ["cheap", "basic"],
-      styleRules: "Use active voice. Keep sentences concise. Always include a call to action.",
-    };
-    this.brands.set(defaultBrand.id, defaultBrand);
-  }
-
-  // Users
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
-  }
-
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
-  }
-
+export class DatabaseStorage implements IStorage {
   // Workspaces
   async getWorkspaces(): Promise<Workspace[]> {
-    return Array.from(this.workspaces.values());
+    return await db.select().from(workspaces).orderBy(desc(workspaces.createdAt));
   }
 
   async getWorkspace(id: string): Promise<Workspace | undefined> {
-    return this.workspaces.get(id);
+    const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, id));
+    return workspace;
   }
 
-  async createWorkspace(workspace: InsertWorkspace): Promise<Workspace> {
-    const id = randomUUID();
-    const newWorkspace: Workspace = { ...workspace, id };
-    this.workspaces.set(id, newWorkspace);
-    return newWorkspace;
+  async getWorkspaceBySlug(slug: string): Promise<Workspace | undefined> {
+    const [workspace] = await db.select().from(workspaces).where(eq(workspaces.slug, slug));
+    return workspace;
+  }
+
+  async createWorkspace(data: InsertWorkspace): Promise<Workspace> {
+    const [workspace] = await db.insert(workspaces).values(data).returning();
+    return workspace;
+  }
+
+  async updateWorkspace(id: string, data: Partial<InsertWorkspace>): Promise<Workspace | undefined> {
+    const [workspace] = await db.update(workspaces).set(data).where(eq(workspaces.id, id)).returning();
+    return workspace;
+  }
+
+  // Workspace Users
+  async getWorkspaceUsers(workspaceId: string): Promise<WorkspaceUser[]> {
+    return await db.select().from(workspaceUsers).where(eq(workspaceUsers.workspaceId, workspaceId));
+  }
+
+  async getWorkspaceUser(workspaceId: string, userId: string): Promise<WorkspaceUser | undefined> {
+    const [wu] = await db.select().from(workspaceUsers)
+      .where(and(eq(workspaceUsers.workspaceId, workspaceId), eq(workspaceUsers.userId, userId)));
+    return wu;
+  }
+
+  async addUserToWorkspace(data: InsertWorkspaceUser): Promise<WorkspaceUser> {
+    const [wu] = await db.insert(workspaceUsers).values(data).returning();
+    return wu;
+  }
+
+  async updateWorkspaceUserRole(id: string, role: RoleType): Promise<WorkspaceUser | undefined> {
+    const [wu] = await db.update(workspaceUsers).set({ role }).where(eq(workspaceUsers.id, id)).returning();
+    return wu;
+  }
+
+  async removeUserFromWorkspace(workspaceId: string, userId: string): Promise<void> {
+    await db.delete(workspaceUsers)
+      .where(and(eq(workspaceUsers.workspaceId, workspaceId), eq(workspaceUsers.userId, userId)));
+  }
+
+  async getUserWorkspaces(userId: string): Promise<Workspace[]> {
+    const userWorkspaces = await db.select({ workspaceId: workspaceUsers.workspaceId })
+      .from(workspaceUsers)
+      .where(eq(workspaceUsers.userId, userId));
+    
+    if (userWorkspaces.length === 0) return [];
+    
+    const workspaceIds = userWorkspaces.map(wu => wu.workspaceId);
+    return await db.select().from(workspaces)
+      .where(sql`${workspaces.id} IN ${workspaceIds}`);
   }
 
   // Brands
   async getBrands(workspaceId?: string): Promise<Brand[]> {
-    const brands = Array.from(this.brands.values());
     if (workspaceId) {
-      return brands.filter((b) => b.workspaceId === workspaceId);
+      return await db.select().from(brands).where(eq(brands.workspaceId, workspaceId)).orderBy(desc(brands.createdAt));
     }
-    return brands;
+    return await db.select().from(brands).orderBy(desc(brands.createdAt));
   }
 
   async getBrand(id: string): Promise<Brand | undefined> {
-    return this.brands.get(id);
+    const [brand] = await db.select().from(brands).where(eq(brands.id, id));
+    return brand;
   }
 
-  async createBrand(brand: InsertBrand): Promise<Brand> {
-    const id = randomUUID();
-    const newBrand: Brand = { ...brand, id };
-    this.brands.set(id, newBrand);
-    return newBrand;
+  async createBrand(data: InsertBrand): Promise<Brand> {
+    const [brand] = await db.insert(brands).values(data).returning();
+    return brand;
   }
 
-  async updateBrand(id: string, data: Partial<Brand>): Promise<Brand | undefined> {
-    const brand = this.brands.get(id);
-    if (!brand) return undefined;
-    const updated = { ...brand, ...data };
-    this.brands.set(id, updated);
-    return updated;
+  async updateBrand(id: string, data: Partial<InsertBrand>): Promise<Brand | undefined> {
+    const [brand] = await db.update(brands).set(data).where(eq(brands.id, id)).returning();
+    return brand;
   }
 
-  // Inputs
-  async getInputs(workspaceId?: string): Promise<Input[]> {
-    const inputs = Array.from(this.inputs.values());
-    if (workspaceId) {
-      return inputs.filter((i) => i.workspaceId === workspaceId);
+  async deleteBrand(id: string): Promise<void> {
+    await db.delete(brands).where(eq(brands.id, id));
+  }
+
+  // Templates
+  async getTemplates(workspaceId?: string, brandId?: string): Promise<Template[]> {
+    let query = db.select().from(templates);
+    if (workspaceId && brandId) {
+      return await query.where(and(eq(templates.workspaceId, workspaceId), eq(templates.brandId, brandId)));
+    } else if (workspaceId) {
+      return await query.where(eq(templates.workspaceId, workspaceId));
+    } else if (brandId) {
+      return await query.where(eq(templates.brandId, brandId));
     }
-    return inputs.sort((a, b) => {
-      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return dateB - dateA;
-    });
+    return await query;
   }
 
-  async getInput(id: string): Promise<Input | undefined> {
-    return this.inputs.get(id);
+  async getTemplate(id: string): Promise<Template | undefined> {
+    const [template] = await db.select().from(templates).where(eq(templates.id, id));
+    return template;
   }
 
-  async createInput(input: InsertInput): Promise<Input> {
-    const id = randomUUID();
-    const newInput: Input = { 
-      ...input, 
-      id, 
-      createdAt: new Date(),
-    };
-    this.inputs.set(id, newInput);
-    return newInput;
+  async createTemplate(data: InsertTemplate): Promise<Template> {
+    const [template] = await db.insert(templates).values(data).returning();
+    return template;
   }
 
-  async deleteInput(id: string): Promise<boolean> {
-    return this.inputs.delete(id);
+  async updateTemplate(id: string, data: Partial<InsertTemplate>): Promise<Template | undefined> {
+    const [template] = await db.update(templates).set(data).where(eq(templates.id, id)).returning();
+    return template;
   }
 
-  // Workflow Runs
-  async getWorkflowRuns(filters?: { workspaceId?: string; inputId?: string; limit?: number }): Promise<WorkflowRun[]> {
-    let runs = Array.from(this.workflowRuns.values());
-    
-    if (filters?.workspaceId) {
-      runs = runs.filter((r) => r.workspaceId === filters.workspaceId);
-    }
-    if (filters?.inputId) {
-      runs = runs.filter((r) => r.inputId === filters.inputId);
-    }
-    
-    runs.sort((a, b) => {
-      const dateA = a.startedAt ? new Date(a.startedAt).getTime() : 0;
-      const dateB = b.startedAt ? new Date(b.startedAt).getTime() : 0;
-      return dateB - dateA;
-    });
-    
-    if (filters?.limit) {
-      runs = runs.slice(0, filters.limit);
-    }
-    
-    return runs;
-  }
-
-  async getWorkflowRun(id: string): Promise<WorkflowRun | undefined> {
-    return this.workflowRuns.get(id);
-  }
-
-  async createWorkflowRun(run: InsertWorkflowRun): Promise<WorkflowRun> {
-    const id = randomUUID();
-    const newRun: WorkflowRun = {
-      ...run,
-      id,
-      status: "pending",
-      startedAt: new Date(),
-      completedAt: null,
-      costEstimate: null,
-    };
-    this.workflowRuns.set(id, newRun);
-    return newRun;
-  }
-
-  async updateWorkflowRun(id: string, data: Partial<WorkflowRun>): Promise<WorkflowRun | undefined> {
-    const run = this.workflowRuns.get(id);
-    if (!run) return undefined;
-    const updated = { ...run, ...data };
-    this.workflowRuns.set(id, updated);
-    return updated;
-  }
-
-  // Assets
-  async getAssets(filters?: { workspaceId?: string; status?: AssetStatus; inputId?: string; limit?: number }): Promise<Asset[]> {
-    let assets = Array.from(this.assets.values());
-    
-    if (filters?.workspaceId) {
-      assets = assets.filter((a) => a.workspaceId === filters.workspaceId);
-    }
-    if (filters?.status) {
-      assets = assets.filter((a) => a.status === filters.status);
-    }
-    if (filters?.inputId) {
-      assets = assets.filter((a) => a.inputId === filters.inputId);
-    }
-    
-    assets.sort((a, b) => {
-      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return dateB - dateA;
-    });
-    
-    if (filters?.limit) {
-      assets = assets.slice(0, filters.limit);
-    }
-    
-    return assets;
-  }
-
-  async getAsset(id: string): Promise<Asset | undefined> {
-    return this.assets.get(id);
-  }
-
-  async createAsset(asset: InsertAsset): Promise<Asset> {
-    const id = randomUUID();
-    const newAsset: Asset = {
-      ...asset,
-      id,
-      createdAt: new Date(),
-    };
-    this.assets.set(id, newAsset);
-    return newAsset;
-  }
-
-  async updateAsset(id: string, data: Partial<Asset>): Promise<Asset | undefined> {
-    const asset = this.assets.get(id);
-    if (!asset) return undefined;
-    const updated = { ...asset, ...data };
-    this.assets.set(id, updated);
-    return updated;
-  }
-
-  async deleteAsset(id: string): Promise<boolean> {
-    return this.assets.delete(id);
+  async deleteTemplate(id: string): Promise<void> {
+    await db.delete(templates).where(eq(templates.id, id));
   }
 
   // Projects
   async getProjects(workspaceId?: string): Promise<Project[]> {
-    const projects = Array.from(this.projects.values());
     if (workspaceId) {
-      return projects.filter((p) => p.workspaceId === workspaceId);
+      return await db.select().from(projects).where(eq(projects.workspaceId, workspaceId)).orderBy(desc(projects.createdAt));
     }
-    return projects;
+    return await db.select().from(projects).orderBy(desc(projects.createdAt));
   }
 
   async getProject(id: string): Promise<Project | undefined> {
-    return this.projects.get(id);
+    const [project] = await db.select().from(projects).where(eq(projects.id, id));
+    return project;
   }
 
-  async createProject(project: InsertProject): Promise<Project> {
-    const id = randomUUID();
-    const newProject: Project = {
-      ...project,
-      id,
-      createdAt: new Date(),
-    };
-    this.projects.set(id, newProject);
-    return newProject;
+  async createProject(data: InsertProject): Promise<Project> {
+    const [project] = await db.insert(projects).values(data).returning();
+    return project;
+  }
+
+  async updateProject(id: string, data: Partial<InsertProject>): Promise<Project | undefined> {
+    const [project] = await db.update(projects).set(data).where(eq(projects.id, id)).returning();
+    return project;
+  }
+
+  async deleteProject(id: string): Promise<void> {
+    await db.delete(projects).where(eq(projects.id, id));
+  }
+
+  // Inputs
+  async getInputs(workspaceId?: string): Promise<Input[]> {
+    if (workspaceId) {
+      return await db.select().from(inputs).where(eq(inputs.workspaceId, workspaceId)).orderBy(desc(inputs.createdAt));
+    }
+    return await db.select().from(inputs).orderBy(desc(inputs.createdAt));
+  }
+
+  async getInput(id: string): Promise<Input | undefined> {
+    const [input] = await db.select().from(inputs).where(eq(inputs.id, id));
+    return input;
+  }
+
+  async createInput(data: InsertInput): Promise<Input> {
+    const [input] = await db.insert(inputs).values(data).returning();
+    return input;
+  }
+
+  async updateInput(id: string, data: Partial<InsertInput>): Promise<Input | undefined> {
+    const [input] = await db.update(inputs).set(data).where(eq(inputs.id, id)).returning();
+    return input;
+  }
+
+  async deleteInput(id: string): Promise<void> {
+    await db.delete(inputs).where(eq(inputs.id, id));
+  }
+
+  // Workflows
+  async getWorkflows(workspaceId?: string): Promise<Workflow[]> {
+    if (workspaceId) {
+      return await db.select().from(workflows).where(eq(workflows.workspaceId, workspaceId));
+    }
+    return await db.select().from(workflows);
+  }
+
+  async getWorkflow(id: string): Promise<Workflow | undefined> {
+    const [workflow] = await db.select().from(workflows).where(eq(workflows.id, id));
+    return workflow;
+  }
+
+  async createWorkflow(data: InsertWorkflow): Promise<Workflow> {
+    const [workflow] = await db.insert(workflows).values(data).returning();
+    return workflow;
+  }
+
+  async updateWorkflow(id: string, data: Partial<InsertWorkflow>): Promise<Workflow | undefined> {
+    const [workflow] = await db.update(workflows).set(data).where(eq(workflows.id, id)).returning();
+    return workflow;
+  }
+
+  async deleteWorkflow(id: string): Promise<void> {
+    await db.delete(workflows).where(eq(workflows.id, id));
+  }
+
+  // Workflow Runs
+  async getWorkflowRuns(workspaceId?: string): Promise<WorkflowRun[]> {
+    if (workspaceId) {
+      return await db.select().from(workflowRuns).where(eq(workflowRuns.workspaceId, workspaceId)).orderBy(desc(workflowRuns.createdAt));
+    }
+    return await db.select().from(workflowRuns).orderBy(desc(workflowRuns.createdAt));
+  }
+
+  async getWorkflowRun(id: string): Promise<WorkflowRun | undefined> {
+    const [run] = await db.select().from(workflowRuns).where(eq(workflowRuns.id, id));
+    return run;
+  }
+
+  async createWorkflowRun(data: InsertWorkflowRun): Promise<WorkflowRun> {
+    const [run] = await db.insert(workflowRuns).values({
+      ...data,
+      startedAt: new Date(),
+    }).returning();
+    return run;
+  }
+
+  async updateWorkflowRun(id: string, data: Partial<WorkflowRun>): Promise<WorkflowRun | undefined> {
+    const [run] = await db.update(workflowRuns).set(data).where(eq(workflowRuns.id, id)).returning();
+    return run;
+  }
+
+  // Assets
+  async getAssets(workspaceId?: string, status?: AssetStatus): Promise<Asset[]> {
+    let conditions = [];
+    if (workspaceId) conditions.push(eq(assets.workspaceId, workspaceId));
+    if (status) conditions.push(eq(assets.status, status));
+    
+    if (conditions.length > 0) {
+      return await db.select().from(assets).where(and(...conditions)).orderBy(desc(assets.createdAt));
+    }
+    return await db.select().from(assets).orderBy(desc(assets.createdAt));
+  }
+
+  async getAsset(id: string): Promise<Asset | undefined> {
+    const [asset] = await db.select().from(assets).where(eq(assets.id, id));
+    return asset;
+  }
+
+  async createAsset(data: InsertAsset): Promise<Asset> {
+    const [asset] = await db.insert(assets).values(data).returning();
+    return asset;
+  }
+
+  async updateAsset(id: string, data: Partial<InsertAsset>): Promise<Asset | undefined> {
+    const [asset] = await db.update(assets).set(data).where(eq(assets.id, id)).returning();
+    return asset;
+  }
+
+  async deleteAsset(id: string): Promise<void> {
+    await db.delete(assets).where(eq(assets.id, id));
+  }
+
+  // Asset Versions
+  async getAssetVersions(assetId: string): Promise<AssetVersion[]> {
+    return await db.select().from(assetVersions)
+      .where(eq(assetVersions.assetId, assetId))
+      .orderBy(desc(assetVersions.versionNo));
+  }
+
+  async getAssetVersion(id: string): Promise<AssetVersion | undefined> {
+    const [version] = await db.select().from(assetVersions).where(eq(assetVersions.id, id));
+    return version;
+  }
+
+  async getLatestAssetVersion(assetId: string): Promise<AssetVersion | undefined> {
+    const [version] = await db.select().from(assetVersions)
+      .where(eq(assetVersions.assetId, assetId))
+      .orderBy(desc(assetVersions.versionNo))
+      .limit(1);
+    return version;
+  }
+
+  async createAssetVersion(data: InsertAssetVersion): Promise<AssetVersion> {
+    const [version] = await db.insert(assetVersions).values(data).returning();
+    return version;
+  }
+
+  async updateAssetVersion(id: string, data: Partial<InsertAssetVersion>): Promise<AssetVersion | undefined> {
+    const [version] = await db.update(assetVersions).set(data).where(eq(assetVersions.id, id)).returning();
+    return version;
+  }
+
+  // Comments
+  async getComments(assetVersionId: string): Promise<Comment[]> {
+    return await db.select().from(comments)
+      .where(eq(comments.assetVersionId, assetVersionId))
+      .orderBy(desc(comments.createdAt));
+  }
+
+  async createComment(data: InsertComment): Promise<Comment> {
+    const [comment] = await db.insert(comments).values(data).returning();
+    return comment;
+  }
+
+  async deleteComment(id: string): Promise<void> {
+    await db.delete(comments).where(eq(comments.id, id));
+  }
+
+  // Publishing Targets
+  async getPublishingTargets(workspaceId: string): Promise<PublishingTarget[]> {
+    return await db.select().from(publishingTargets).where(eq(publishingTargets.workspaceId, workspaceId));
+  }
+
+  async getPublishingTarget(id: string): Promise<PublishingTarget | undefined> {
+    const [target] = await db.select().from(publishingTargets).where(eq(publishingTargets.id, id));
+    return target;
+  }
+
+  async createPublishingTarget(data: InsertPublishingTarget): Promise<PublishingTarget> {
+    const [target] = await db.insert(publishingTargets).values(data).returning();
+    return target;
+  }
+
+  async updatePublishingTarget(id: string, data: Partial<InsertPublishingTarget>): Promise<PublishingTarget | undefined> {
+    const [target] = await db.update(publishingTargets).set(data).where(eq(publishingTargets.id, id)).returning();
+    return target;
+  }
+
+  async deletePublishingTarget(id: string): Promise<void> {
+    await db.delete(publishingTargets).where(eq(publishingTargets.id, id));
+  }
+
+  // Publish Jobs
+  async getPublishJobs(assetVersionId?: string): Promise<PublishJob[]> {
+    if (assetVersionId) {
+      return await db.select().from(publishJobs).where(eq(publishJobs.assetVersionId, assetVersionId));
+    }
+    return await db.select().from(publishJobs);
+  }
+
+  async getPublishJob(id: string): Promise<PublishJob | undefined> {
+    const [job] = await db.select().from(publishJobs).where(eq(publishJobs.id, id));
+    return job;
+  }
+
+  async createPublishJob(data: InsertPublishJob): Promise<PublishJob> {
+    const [job] = await db.insert(publishJobs).values(data).returning();
+    return job;
+  }
+
+  async updatePublishJob(id: string, data: Partial<PublishJob>): Promise<PublishJob | undefined> {
+    const [job] = await db.update(publishJobs).set(data).where(eq(publishJobs.id, id)).returning();
+    return job;
+  }
+
+  // Usage Ledger
+  async getUsageLedger(workspaceId: string): Promise<UsageLedger[]> {
+    return await db.select().from(usageLedger)
+      .where(eq(usageLedger.workspaceId, workspaceId))
+      .orderBy(desc(usageLedger.createdAt));
+  }
+
+  async createUsageEntry(data: InsertUsageLedger): Promise<UsageLedger> {
+    const [entry] = await db.insert(usageLedger).values(data).returning();
+    return entry;
   }
 
   // Stats
@@ -324,18 +495,38 @@ export class MemStorage implements IStorage {
     workflowRuns: number;
     approvedAssets: number;
   }> {
-    const inputs = await this.getInputs(workspaceId);
-    const assets = await this.getAssets({ workspaceId });
-    const runs = await this.getWorkflowRuns({ workspaceId });
-    const approved = assets.filter((a) => a.status === "approved" || a.status === "published");
+    let inputCount, assetCount, runCount, approvedCount;
     
+    if (workspaceId) {
+      const [inputResult] = await db.select({ count: sql<number>`count(*)` }).from(inputs).where(eq(inputs.workspaceId, workspaceId));
+      const [assetResult] = await db.select({ count: sql<number>`count(*)` }).from(assets).where(eq(assets.workspaceId, workspaceId));
+      const [runResult] = await db.select({ count: sql<number>`count(*)` }).from(workflowRuns).where(eq(workflowRuns.workspaceId, workspaceId));
+      const [approvedResult] = await db.select({ count: sql<number>`count(*)` }).from(assets)
+        .where(and(eq(assets.workspaceId, workspaceId), eq(assets.status, "approved")));
+      
+      inputCount = inputResult?.count || 0;
+      assetCount = assetResult?.count || 0;
+      runCount = runResult?.count || 0;
+      approvedCount = approvedResult?.count || 0;
+    } else {
+      const [inputResult] = await db.select({ count: sql<number>`count(*)` }).from(inputs);
+      const [assetResult] = await db.select({ count: sql<number>`count(*)` }).from(assets);
+      const [runResult] = await db.select({ count: sql<number>`count(*)` }).from(workflowRuns);
+      const [approvedResult] = await db.select({ count: sql<number>`count(*)` }).from(assets).where(eq(assets.status, "approved"));
+      
+      inputCount = inputResult?.count || 0;
+      assetCount = assetResult?.count || 0;
+      runCount = runResult?.count || 0;
+      approvedCount = approvedResult?.count || 0;
+    }
+
     return {
-      totalInputs: inputs.length,
-      totalAssets: assets.length,
-      workflowRuns: runs.length,
-      approvedAssets: approved.length,
+      totalInputs: Number(inputCount),
+      totalAssets: Number(assetCount),
+      workflowRuns: Number(runCount),
+      approvedAssets: Number(approvedCount),
     };
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

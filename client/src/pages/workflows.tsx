@@ -180,11 +180,11 @@ function RunHistory({ inputId }: { inputId: string | null }) {
               className="flex items-center justify-between gap-3 rounded-lg border p-3"
             >
               <div className="flex items-center gap-3">
-                {run.status === "completed" ? (
+                {run.status === "succeeded" ? (
                   <CheckCircle2 className="h-5 w-5 text-emerald-500" />
                 ) : run.status === "running" ? (
                   <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
-                ) : run.status === "failed" ? (
+                ) : run.status === "failed" || run.status === "cancelled" ? (
                   <XCircle className="h-5 w-5 text-red-500" />
                 ) : (
                   <Clock className="h-5 w-5 text-muted-foreground" />
