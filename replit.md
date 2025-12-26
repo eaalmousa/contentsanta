@@ -24,37 +24,59 @@ Preferred communication style: Simple, everyday language.
 - **Runtime**: Node.js with Express
 - **Language**: TypeScript (ESM modules)
 - **API Style**: RESTful JSON API under `/api` prefix
+- **Authentication**: Replit Auth with OpenID Connect
 - **Build**: esbuild for production bundling with selective dependency bundling
 
 ### Data Layer
 - **ORM**: Drizzle ORM with PostgreSQL dialect
+- **Database**: PostgreSQL (Neon-backed via Replit)
 - **Schema Location**: `shared/schema.ts` contains all table definitions
 - **Validation**: Zod schemas generated from Drizzle schemas via `drizzle-zod`
-- **Migrations**: Drizzle Kit with migrations in `./migrations` directory
+- **Migrations**: Drizzle Kit with `npm run db:push` for schema sync
 
-### Core Data Models
-- **Workspaces**: Multi-tenant container for brands and content
-- **Brands**: Voice profiles with tone, audience, approved terms, forbidden words
-- **Inputs**: Raw content (URLs, text, PDFs, transcripts, briefs)
-- **Workflow Runs**: AI processing jobs with status tracking
-- **Assets**: Generated content outputs with approval workflow
-- **Projects**: Content organization containers
+### Core Data Models (13 tables)
+- **users**: Authenticated users from Replit Auth
+- **sessions**: Session management for authentication
+- **workspaces**: Multi-tenant containers for brands and content
+- **workspace_users**: Role-based permissions (owner, admin, editor, reviewer, viewer)
+- **brands**: Voice profiles with tone, audience, approved terms, forbidden words
+- **inputs**: Raw content (URLs, text, PDFs, transcripts, briefs)
+- **workflow_runs**: AI processing jobs with status tracking
+- **assets**: Generated content containers with approval workflow
+- **asset_versions**: Full version history for each asset
+- **templates**: Reusable content templates
+- **comments**: Collaboration comments on assets
+- **publishing_targets**: Integration targets for publishing
+- **publish_jobs**: Publish job history
+- **usage_ledger**: Usage tracking for billing
 
 ### AI Workflow System
-- Workflow types defined in schema: headline_pack, blog_draft, social_pack, seo_optimize, translation_ar_en, translation_en_ar, rewrite_tone, expand, summarize, image_prompts, repurpose_transcript
-- Each workflow has metadata (label, description, icon, output type)
-- Processing simulated server-side with 1.5s async delay, then creates assets
-- Status updates: pending → running → completed/failed
+- **Provider**: OpenAI via Replit AI Integrations (no API key required, billed to credits)
+- **Model**: gpt-4o-mini for content generation
+- **Workflow types**: headline_pack, seo_blog, social_pack, press_release, newsletter, rewrite_tone, executive_brief, expand_longform, summarize, translation_ar_en, translation_en_ar, image_prompts, repurpose_transcript
+- **Processing**: Async workflow with real AI generation
+- **Status flow**: queued → running → succeeded/failed/cancelled
 
-### Storage Layer
-- **Current**: In-memory storage (MemStorage) for MVP development
-- Assets, inputs, workflow runs, brands, workspaces stored in Maps
-- Ready for database migration when needed
+### Authentication
+- **Provider**: Replit Auth with OpenID Connect
+- **Supported logins**: Google, GitHub, X, Apple, email/password
+- **Session management**: PostgreSQL-backed sessions via connect-pg-simple
+- **Protected routes**: All mutation endpoints require authentication
+
+### Asset Versioning
+- **Design**: Assets are containers; asset_versions hold actual content
+- **Fields on version**: title, body, workflowType, language, channel, versionNo
+- **History**: Full version history maintained for each asset
+- **API**: GET /api/assets returns assets with latestVersion included
 
 ### Recent Changes (December 2025)
-- Fixed Content Library not rendering assets: Added staleTime: 0 and refetchOnMount: "always" to assets query
-- Fixed workflow processing try-catch block structure
-- Added logging to processWorkflow for debugging
+- Migrated from in-memory storage to PostgreSQL with 13 tables
+- Implemented Replit Auth with OpenID Connect
+- Added role-based workspace permissions
+- Implemented asset versioning system
+- Integrated OpenAI via Replit AI Integrations for real AI processing
+- Added templates, comments, and publishing targets support
+- Updated frontend for authentication with landing page for visitors
 
 ### Project Structure
 ```
@@ -62,41 +84,53 @@ client/           # React frontend
   src/
     components/   # UI components (shadcn/ui)
     pages/        # Route pages
-    hooks/        # Custom React hooks
+    hooks/        # Custom React hooks (including use-auth.ts)
     lib/          # Utilities and query client
 server/           # Express backend
   index.ts        # Server entry point
   routes.ts       # API route definitions
-  storage.ts      # Data access layer
-  vite.ts         # Vite dev middleware
+  storage.ts      # DatabaseStorage implementation (50+ methods)
+  db.ts           # Drizzle database connection
+  ai-workflow.ts  # OpenAI-powered workflow processor
+  replit_integrations/
+    auth/         # Replit Auth integration
+    batch/        # Batch processing utilities
+    chat/         # Chat routes and storage
+    image/        # Image generation
 shared/           # Shared code between client/server
   schema.ts       # Drizzle schema + Zod types
+  models/         # Additional model definitions
 ```
 
-### Development vs Production
-- **Development**: Vite dev server with HMR proxied through Express
-- **Production**: Static files served from `dist/public`, server bundle in `dist/index.cjs`
+### Development Commands
+- `npm run dev` - Start development server
+- `npm run db:push` - Push schema changes to database
+- `npm run build` - Build for production
+
+### Environment Variables
+- `DATABASE_URL` - PostgreSQL connection string (auto-configured by Replit)
+- `SESSION_SECRET` - Session encryption key
+- `AI_INTEGRATIONS_OPENAI_API_KEY` - OpenAI API key (auto-configured)
+- `AI_INTEGRATIONS_OPENAI_BASE_URL` - OpenAI base URL (auto-configured)
 
 ## External Dependencies
 
 ### Database
 - **PostgreSQL**: Primary database via Neon (cloud PostgreSQL)
-- **Connection**: `DATABASE_URL` environment variable required
+- **Connection**: `DATABASE_URL` environment variable (auto-configured)
 - **Session Storage**: `connect-pg-simple` for Express sessions
 
+### AI Integration
+- **OpenAI**: Via Replit AI Integrations (gpt-4o-mini, gpt-image-1)
+- **Batch Processing**: p-limit and p-retry for rate limiting
+
 ### UI Component Libraries
-- **Radix UI**: Full suite of accessible primitives (dialog, dropdown, tabs, etc.)
+- **Radix UI**: Full suite of accessible primitives
 - **Embla Carousel**: Carousel/slider functionality
 - **cmdk**: Command palette component
 - **Vaul**: Drawer component
 - **react-day-picker**: Calendar/date picker
 
 ### Build and Development
-- **Replit Plugins**: Runtime error overlay, cartographer, dev banner for Replit environment
+- **Replit Plugins**: Runtime error overlay, cartographer, dev banner
 - **PostCSS**: Tailwind CSS processing with autoprefixer
-
-### Potential Future Integrations (from product spec)
-- OpenAI for AI workflow processing
-- Cloudflare R2/S3 for file storage (PDFs, documents)
-- OAuth providers (Google) for authentication
-- Publishing channel integrations

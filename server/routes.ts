@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { processWorkflowWithAI } from "./ai-workflow";
 import { 
   insertInputSchema, 
   insertBrandSchema, 
@@ -20,8 +21,8 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 
-// Simulated AI workflow processing
-async function processWorkflow(
+// Legacy simulated AI workflow processing (fallback)
+async function processWorkflowLegacy(
   runId: string, 
   inputId: string, 
   workflowType: WorkflowType,
@@ -487,8 +488,8 @@ export async function registerRoutes(
       
       const userId = (req.user as any)?.claims?.sub;
       
-      // Start async processing
-      processWorkflow(
+      // Start async AI processing
+      processWorkflowWithAI(
         run.id, 
         data.inputId, 
         data.workflowType as WorkflowType,
