@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Link } from "wouter";
+import { format } from "date-fns";
 import {
   Search,
   Plus,
@@ -14,14 +18,21 @@ import {
   MessageSquare,
   Clock,
   Tag,
+  Edit3,
+  Save,
+  History,
+  GitBranch,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -42,6 +53,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CommentsPanel } from "@/components/comments-panel";
@@ -73,6 +92,13 @@ const workflowOptions = Object.entries(workflowMeta).map(([key, meta]) => ({
   value: key,
   label: meta.label,
 }));
+
+const editSchema = z.object({
+  title: z.string().min(1, "Title is required"),
+  body: z.string().min(1, "Content is required"),
+});
+
+type EditFormValues = z.infer<typeof editSchema>;
 
 function AssetCard({ 
   asset, 
@@ -229,6 +255,43 @@ function AssetCardSkeleton() {
   );
 }
 
+function VersionHistoryItem({ 
+  version, 
+  isLatest,
+  onRestore 
+}: { 
+  version: AssetVersion; 
+  isLatest: boolean;
+  onRestore: () => void;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-lg border p-3" data-testid={`version-${version.id}`}>
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
+        <GitBranch className="h-4 w-4 text-muted-foreground" />
+      </div>
+      <div className="flex flex-col gap-1 flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-sm">Version {version.versionNo}</span>
+          {isLatest && (
+            <Badge variant="secondary" className="text-xs">Latest</Badge>
+          )}
+        </div>
+        <span className="text-xs text-muted-foreground truncate">
+          {version.title || "Untitled"}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {version.createdAt ? format(new Date(version.createdAt), "MMM d, yyyy 'at' h:mm a") : ""}
+        </span>
+      </div>
+      {!isLatest && (
+        <Button variant="outline" size="sm" onClick={onRestore} data-testid={`button-restore-${version.id}`}>
+          Restore
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function AssetDetailSheet({ 
   asset, 
   open, 
@@ -239,8 +302,31 @@ function AssetDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
+  const [isEditing, setIsEditing] = useState(false);
+  const [activeTab, setActiveTab] = useState("content");
+  
   const version = asset?.latestVersion;
   const workflowInfo = version?.workflowType ? workflowMeta[version.workflowType as WorkflowType] : null;
+
+  const form = useForm<EditFormValues>({
+    resolver: zodResolver(editSchema),
+    defaultValues: {
+      title: version?.title || "",
+      body: version?.body || "",
+    },
+  });
+
+  // Fetch version history
+  const { data: versions, isLoading: versionsLoading } = useQuery<AssetVersion[]>({
+    queryKey: ["/api/assets", asset?.id, "versions"],
+    queryFn: async () => {
+      if (!asset) return [];
+      const res = await fetch(`/api/assets/${asset.id}/versions`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!asset && activeTab === "history",
+  });
 
   const approveMutation = useMutation({
     mutationFn: async () => {
@@ -265,120 +351,280 @@ function AssetDetailSheet({
     },
   });
 
+  const saveMutation = useMutation({
+    mutationFn: async (data: EditFormValues) => {
+      if (!asset) return;
+      // Create a new version with the updated content
+      await apiRequest("POST", `/api/assets/${asset.id}/versions`, {
+        title: data.title,
+        body: data.body,
+        language: version?.language || "en",
+        channel: version?.channel || "generic",
+        workflowType: version?.workflowType,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", asset?.id, "versions"] });
+      setIsEditing(false);
+      toast({ title: "Changes saved as new version" });
+    },
+    onError: () => {
+      toast({ title: "Failed to save changes", variant: "destructive" });
+    },
+  });
+
+  const restoreVersionMutation = useMutation({
+    mutationFn: async (versionToRestore: AssetVersion) => {
+      if (!asset) return;
+      await apiRequest("POST", `/api/assets/${asset.id}/versions`, {
+        title: versionToRestore.title,
+        body: versionToRestore.body,
+        language: versionToRestore.language,
+        channel: versionToRestore.channel,
+        workflowType: versionToRestore.workflowType,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", asset?.id, "versions"] });
+      toast({ title: "Version restored" });
+    },
+  });
+
+  // Reset form when version changes
+  const handleStartEdit = () => {
+    form.reset({
+      title: version?.title || "",
+      body: version?.body || "",
+    });
+    setIsEditing(true);
+  };
+
+  const handleCancelEdit = () => {
+    form.reset();
+    setIsEditing(false);
+  };
+
   if (!asset || !version) return null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-xl flex flex-col p-0">
+      <SheetContent className="w-full sm:max-w-2xl flex flex-col p-0">
         <SheetHeader className="p-6 pb-0">
           <div className="flex items-start justify-between gap-4">
-            <SheetTitle className="text-xl font-serif" data-testid="text-detail-title">
-              {version.title || "Untitled"}
-            </SheetTitle>
+            <div className="flex flex-col gap-1 min-w-0">
+              <SheetTitle className="text-xl font-serif truncate" data-testid="text-detail-title">
+                {version.title || "Untitled"}
+              </SheetTitle>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className={statusColors[asset.status]}>
+                  {asset.status === "in_review" ? "In Review" : asset.status}
+                </Badge>
+                {workflowInfo && (
+                  <Badge variant="outline">{workflowInfo.label}</Badge>
+                )}
+                <Badge variant="outline" className="text-xs">v{version.versionNo}</Badge>
+              </div>
+            </div>
             <Button variant="ghost" size="icon" onClick={() => onOpenChange(false)}>
               <X className="h-4 w-4" />
             </Button>
           </div>
         </SheetHeader>
 
-        <ScrollArea className="flex-1 px-6">
-          <div className="flex flex-col gap-6 py-6">
-            {/* Status and metadata */}
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary" className={statusColors[asset.status]}>
-                {asset.status === "in_review" ? "In Review" : asset.status}
-              </Badge>
-              {workflowInfo && (
-                <Badge variant="outline">
-                  {workflowInfo.label}
-                </Badge>
-              )}
-              <Badge variant="outline" className="text-xs">
-                v{version.versionNo}
-              </Badge>
-              {version.language && (
-                <Badge variant="outline" className="uppercase text-xs">
-                  {version.language}
-                </Badge>
-              )}
-            </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
+          <div className="px-6 pt-4">
+            <TabsList className="w-full grid grid-cols-3">
+              <TabsTrigger value="content" data-testid="tab-content">
+                <FileText className="mr-2 h-4 w-4" />
+                Content
+              </TabsTrigger>
+              <TabsTrigger value="history" data-testid="tab-history">
+                <History className="mr-2 h-4 w-4" />
+                History
+              </TabsTrigger>
+              <TabsTrigger value="comments" data-testid="tab-comments">
+                <MessageSquare className="mr-2 h-4 w-4" />
+                Comments
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
-            {/* Metadata row */}
-            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-              <div className="flex items-center gap-1">
-                <Clock className="h-4 w-4" />
-                <span>{asset.createdAt ? new Date(asset.createdAt).toLocaleDateString() : ""}</span>
-              </div>
-              {version.channel && version.channel !== "generic" && (
-                <div className="flex items-center gap-1">
-                  <Tag className="h-4 w-4" />
-                  <span className="capitalize">{version.channel}</span>
+          <ScrollArea className="flex-1">
+            <TabsContent value="content" className="mt-0 p-6 pt-4">
+              <div className="flex flex-col gap-6">
+                {/* Metadata */}
+                <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+                  <div className="flex items-center gap-1">
+                    <Clock className="h-4 w-4" />
+                    <span>{asset.createdAt ? new Date(asset.createdAt).toLocaleDateString() : ""}</span>
+                  </div>
+                  {version.language && (
+                    <Badge variant="outline" className="uppercase text-xs">{version.language}</Badge>
+                  )}
+                  {version.channel && version.channel !== "generic" && (
+                    <div className="flex items-center gap-1">
+                      <Tag className="h-4 w-4" />
+                      <span className="capitalize">{version.channel}</span>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
 
-            {/* Actions */}
-            <div className="flex flex-wrap items-center gap-2">
-              {asset.status === "draft" && (
-                <>
+                {/* Actions */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {!isEditing && (
+                    <Button variant="outline" size="sm" onClick={handleStartEdit} data-testid="button-edit">
+                      <Edit3 className="mr-2 h-4 w-4" />
+                      Edit
+                    </Button>
+                  )}
+                  {asset.status === "draft" && (
+                    <>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => submitForReviewMutation.mutate()}
+                        data-testid="button-submit-review"
+                      >
+                        <MessageSquare className="mr-2 h-4 w-4" />
+                        Submit for Review
+                      </Button>
+                      <Button 
+                        size="sm"
+                        onClick={() => approveMutation.mutate()}
+                        data-testid="button-approve-detail"
+                      >
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                        Approve
+                      </Button>
+                    </>
+                  )}
+                  {asset.status === "in_review" && (
+                    <Button 
+                      size="sm"
+                      onClick={() => approveMutation.mutate()}
+                      data-testid="button-approve-detail"
+                    >
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                      Approve
+                    </Button>
+                  )}
                   <Button 
                     variant="outline" 
                     size="sm"
-                    onClick={() => submitForReviewMutation.mutate()}
-                    data-testid="button-submit-review"
+                    onClick={() => window.open(`/api/export/${version.id}?format=md`, "_blank")}
+                    data-testid="button-export-detail"
                   >
-                    <MessageSquare className="mr-2 h-4 w-4" />
-                    Submit for Review
+                    <Download className="mr-2 h-4 w-4" />
+                    Export
                   </Button>
-                  <Button 
-                    size="sm"
-                    onClick={() => approveMutation.mutate()}
-                    data-testid="button-approve-detail"
-                  >
-                    <CheckCircle2 className="mr-2 h-4 w-4" />
-                    Approve
-                  </Button>
-                </>
-              )}
-              {asset.status === "in_review" && (
-                <Button 
-                  size="sm"
-                  onClick={() => approveMutation.mutate()}
-                  data-testid="button-approve-detail"
-                >
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  Approve
-                </Button>
-              )}
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => window.open(`/api/export/${version.id}?format=md`, "_blank")}
-                data-testid="button-export-detail"
-              >
-                <Download className="mr-2 h-4 w-4" />
-                Export
-              </Button>
-            </div>
-
-            <Separator />
-
-            {/* Content body */}
-            <div className="flex flex-col gap-2">
-              <h4 className="text-sm font-medium text-muted-foreground">Content</h4>
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                <div className="whitespace-pre-wrap text-sm" data-testid="text-detail-body">
-                  {version.body}
                 </div>
+
+                <Separator />
+
+                {/* Content */}
+                {isEditing ? (
+                  <Form {...form}>
+                    <form onSubmit={form.handleSubmit((data) => saveMutation.mutate(data))} className="flex flex-col gap-4">
+                      <FormField
+                        control={form.control}
+                        name="title"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Title</FormLabel>
+                            <FormControl>
+                              <Input {...field} data-testid="input-edit-title" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="body"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Content</FormLabel>
+                            <FormControl>
+                              <Textarea 
+                                {...field} 
+                                className="min-h-[300px] resize-none"
+                                data-testid="input-edit-body"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="flex items-center gap-2">
+                        <Button type="submit" disabled={saveMutation.isPending} data-testid="button-save-edit">
+                          {saveMutation.isPending ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : (
+                            <Save className="mr-2 h-4 w-4" />
+                          )}
+                          Save as New Version
+                        </Button>
+                        <Button type="button" variant="outline" onClick={handleCancelEdit}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  </Form>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <h4 className="text-sm font-medium text-muted-foreground">Content</h4>
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <div className="whitespace-pre-wrap text-sm" data-testid="text-detail-body">
+                        {version.body}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
+            </TabsContent>
 
-            <Separator />
+            <TabsContent value="history" className="mt-0 p-6 pt-4">
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-2">
+                  <History className="h-5 w-5 text-muted-foreground" />
+                  <h3 className="font-medium">Version History</h3>
+                </div>
+                
+                {versionsLoading ? (
+                  <div className="flex flex-col gap-3">
+                    {[...Array(3)].map((_, i) => (
+                      <Skeleton key={i} className="h-20 w-full" />
+                    ))}
+                  </div>
+                ) : versions && versions.length > 0 ? (
+                  <div className="flex flex-col gap-3">
+                    {versions.map((v, index) => (
+                      <VersionHistoryItem 
+                        key={v.id} 
+                        version={v} 
+                        isLatest={index === 0}
+                        onRestore={() => restoreVersionMutation.mutate(v)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <History className="h-10 w-10 text-muted-foreground/50" />
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      No version history available.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
 
-            {/* Comments section */}
-            <CommentsPanel assetVersionId={version.id} />
-          </div>
-        </ScrollArea>
+            <TabsContent value="comments" className="mt-0 p-6 pt-4">
+              <CommentsPanel assetVersionId={version.id} />
+            </TabsContent>
+          </ScrollArea>
+        </Tabs>
       </SheetContent>
     </Sheet>
   );
