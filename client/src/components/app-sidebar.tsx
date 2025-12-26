@@ -10,6 +10,7 @@ import {
   LayoutTemplate,
   Send,
   BarChart3,
+  Users,
 } from "lucide-react";
 import {
   Sidebar,
@@ -32,6 +33,7 @@ const mainNavItems = [
   { title: "Templates", url: "/templates", icon: LayoutTemplate },
   { title: "Publishing", url: "/publishing", icon: Send },
   { title: "Usage", url: "/usage", icon: BarChart3 },
+  { title: "Team", url: "/team", icon: Users },
 ];
 
 const settingsNavItems = [

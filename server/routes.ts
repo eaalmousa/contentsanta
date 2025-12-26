@@ -790,6 +790,75 @@ export async function registerRoutes(
     }
   });
 
+  // Team Management
+  app.get("/api/team", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string || "default";
+      const members = await storage.getWorkspaceUsers(workspaceId);
+      
+      // Enrich with user data
+      const enrichedMembers = await Promise.all(members.map(async (member) => {
+        const user = await storage.getUser(member.userId);
+        return { ...member, user };
+      }));
+      
+      res.json(enrichedMembers);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch team members" });
+    }
+  });
+
+  app.post("/api/team/invite", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { email, role, workspaceId } = req.body;
+      
+      if (!email || !role) {
+        return res.status(400).json({ error: "Email and role are required" });
+      }
+      
+      // For now, create a placeholder user ID based on email
+      // In production, this would send an invite email
+      const userId = `invite_${email.replace(/[^a-z0-9]/gi, '_')}`;
+      
+      const member = await storage.addUserToWorkspace({
+        workspaceId: workspaceId || "default",
+        userId,
+        role,
+      });
+      
+      res.status(201).json({ ...member, email, status: "invited" });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to invite team member" });
+    }
+  });
+
+  app.patch("/api/team/:id/role", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { role } = req.body;
+      if (!role) {
+        return res.status(400).json({ error: "Role is required" });
+      }
+      
+      const member = await storage.updateWorkspaceUserRole(req.params.id, role);
+      if (!member) {
+        return res.status(404).json({ error: "Member not found" });
+      }
+      
+      res.json(member);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update role" });
+    }
+  });
+
+  app.delete("/api/team/:workspaceId/:userId", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      await storage.removeUserFromWorkspace(req.params.workspaceId, req.params.userId);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to remove team member" });
+    }
+  });
+
   // Export endpoint
   app.get("/api/export/:assetVersionId", async (req: Request, res: Response) => {
     try {

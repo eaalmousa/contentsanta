@@ -17,6 +17,7 @@ import Workflows from "@/pages/workflows";
 import Templates from "@/pages/templates";
 import Publishing from "@/pages/publishing";
 import Usage from "@/pages/usage";
+import Team from "@/pages/team";
 import BrandVoice from "@/pages/brand-voice";
 import Settings from "@/pages/settings";
 import NotFound from "@/pages/not-found";
@@ -31,6 +32,7 @@ function Router() {
       <Route path="/templates" component={Templates} />
       <Route path="/publishing" component={Publishing} />
       <Route path="/usage" component={Usage} />
+      <Route path="/team" component={Team} />
       <Route path="/brand" component={BrandVoice} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
