@@ -7,6 +7,7 @@ import {
   Palette,
   Settings,
   Gift,
+  LayoutTemplate,
 } from "lucide-react";
 import {
   Sidebar,
@@ -26,6 +27,7 @@ const mainNavItems = [
   { title: "Content Library", url: "/library", icon: FolderOpen },
   { title: "Create Content", url: "/create", icon: FileText },
   { title: "AI Workflows", url: "/workflows", icon: Sparkles },
+  { title: "Templates", url: "/templates", icon: LayoutTemplate },
 ];
 
 const settingsNavItems = [

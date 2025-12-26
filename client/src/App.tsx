@@ -14,6 +14,7 @@ import Dashboard from "@/pages/dashboard";
 import ContentLibrary from "@/pages/content-library";
 import CreateContent from "@/pages/create-content";
 import Workflows from "@/pages/workflows";
+import Templates from "@/pages/templates";
 import BrandVoice from "@/pages/brand-voice";
 import Settings from "@/pages/settings";
 import NotFound from "@/pages/not-found";
@@ -25,6 +26,7 @@ function Router() {
       <Route path="/library" component={ContentLibrary} />
       <Route path="/create" component={CreateContent} />
       <Route path="/workflows" component={Workflows} />
+      <Route path="/templates" component={Templates} />
       <Route path="/brand" component={BrandVoice} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
