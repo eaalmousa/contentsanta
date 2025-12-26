@@ -20,6 +20,7 @@ import Usage from "@/pages/usage";
 import Team from "@/pages/team";
 import BrandVoice from "@/pages/brand-voice";
 import Settings from "@/pages/settings";
+import AdminDashboard from "@/pages/admin";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -35,6 +36,7 @@ function Router() {
       <Route path="/team" component={Team} />
       <Route path="/brand" component={BrandVoice} />
       <Route path="/settings" component={Settings} />
+      <Route path="/admin" component={AdminDashboard} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -11,6 +11,7 @@ import {
   Send,
   BarChart3,
   Users,
+  Shield,
 } from "lucide-react";
 import {
   Sidebar,
@@ -39,6 +40,7 @@ const mainNavItems = [
 const settingsNavItems = [
   { title: "Brand Voice", url: "/brand", icon: Palette },
   { title: "Settings", url: "/settings", icon: Settings },
+  { title: "Admin", url: "/admin", icon: Shield },
 ];
 
 export function AppSidebar() {

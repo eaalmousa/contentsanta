@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { setupAuth, registerAuthRoutes, isAuthenticated, authStorage } from "./replit_integrations/auth";
 import { processWorkflowWithAI } from "./ai-workflow";
 import { 
   insertInputSchema, 
@@ -856,6 +856,54 @@ export async function registerRoutes(
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to remove team member" });
+    }
+  });
+
+  // Admin endpoints
+  app.get("/api/admin/stats", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const assets = await storage.getAssets("demo-workspace");
+      const runs = await storage.getWorkflowRuns("demo-workspace");
+      const users = await authStorage.getAllUsers();
+      
+      const successfulRuns = runs.filter(r => r.status === "succeeded").length;
+      const failedRuns = runs.filter(r => r.status === "failed").length;
+      
+      res.json({
+        totalUsers: users.length,
+        activeUsers: users.length,
+        totalAssets: assets.length,
+        totalRuns: runs.length,
+        successfulRuns,
+        failedRuns,
+        tokensUsed: runs.reduce((sum, r) => sum + (r.tokensUsed || 0), 0),
+        storageUsed: 12,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch admin stats" });
+    }
+  });
+
+  app.get("/api/admin/users", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const users = await authStorage.getAllUsers();
+      
+      const usersWithStats = await Promise.all(
+        users.map(async (user) => {
+          const assets = await storage.getAssets("demo-workspace");
+          const runs = await storage.getWorkflowRuns("demo-workspace");
+          return {
+            ...user,
+            assetCount: assets.length,
+            runCount: runs.length,
+            lastActive: user.updatedAt || user.createdAt,
+          };
+        })
+      );
+      
+      res.json(usersWithStats);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch users" });
     }
   });
 
