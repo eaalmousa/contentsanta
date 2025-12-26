@@ -1,0 +1,744 @@
+1) Product Definition
+1.1 Purpose
+
+Content Santa is a web platform that:
+
+ingests raw content (links, drafts, briefs, transcripts, notes)
+
+enhances it using specialized AI workflows (rewrite, expand, translate, SEO, social variants, visuals prompts, compliance checks)
+
+produces ready-to-publish assets
+
+optionally publishes/schedules to connected channels
+
+maintains a searchable content library with brand voice, templates, and approvals
+
+1.2 Target Users
+
+Agencies (small/mid), marketing teams
+
+Founder-led businesses
+
+Content editors and social teams
+
+Solo creators operating multiple brands
+
+1.3 Core Outcomes
+
+Faster production of higher-quality multi-format content
+
+Consistent brand voice
+
+Fewer approval cycles
+
+Measurable output (assets produced, time saved, publishing performance)
+
+2) Scope: Features (Full Set)
+2.1 Workspace + Roles
+
+Multi-tenant Workspaces
+
+Workspace creation, settings, branding
+
+Multiple brands per workspace (optional but recommended)
+
+Roles
+
+Owner
+
+Admin
+
+Editor
+
+Reviewer/Approver
+
+Client/Viewer (read/comment only)
+
+2.2 Brand & Voice System
+
+Per brand:
+
+Brand profile (industry, audience, tone)
+
+Approved terminology list
+
+Forbidden words list
+
+Style rules (punctuation, Arabic/English register)
+
+Boilerplates (About, disclaimers, product blurbs)
+
+Content templates library (PR, blog, LinkedIn, IG, email, scripts)
+
+2.3 Content Intake (Inputs)
+
+Supported input types:
+
+URL (article/page)
+
+Plain text / draft
+
+PDF upload
+
+DOCX upload
+
+Transcript paste (or upload)
+
+Brief form (structured)
+
+Social post seed (short idea)
+
+Ingestion options:
+
+manual upload
+
+“watch folders” (optional phase 2)
+
+email forwarding ingest (optional phase 2)
+
+RSS/source monitoring (optional phase 2)
+
+2.4 Content Enhancement Workflows (AI)
+
+Workflow types (each produces deliverables + audit trail):
+
+Rewrite (tone variants)
+
+Expand into longform
+
+Summarize into executive brief
+
+SEO blog (outline → draft → metadata)
+
+Press release (Gulf institutional style option)
+
+Social pack (LinkedIn, X, IG captions, Threads)
+
+Newsletter (subject lines + body)
+
+Arabic ↔ English translation (high-level MSA option)
+
+Headline generation (multiple styles)
+
+Fact-check & claim flagger (non-definitive, cites “needs verification”)
+
+Compliance checks (basic: sensitive topics, prohibited claims, medical disclaimers)
+
+Image prompts pack (for designers / image generation)
+
+Repurposing (blog → 10 posts, transcript → article + quotes, etc.)
+
+2.5 Collaboration + Approval
+
+Comments + suggested edits on generated assets
+
+Versioning for every output
+
+Approval states: Draft → In Review → Approved → Published/Archived
+
+Approval routing rules per brand/workspace
+
+Activity log (who ran what workflow, when)
+
+2.6 Publishing & Distribution
+
+Channel connectors (phase-based):
+
+WordPress (REST)
+
+Webflow CMS (API)
+
+Medium (optional)
+
+LinkedIn (posting if API permissions allow; otherwise export)
+
+Meta (IG/FB) via approved pathways (often limited; provide export + scheduler hooks)
+
+X (Twitter) API posting if configured
+
+Email: Mailchimp/SendGrid export (phase 2 integration)
+
+At minimum in MVP:
+
+Export in formats: DOCX, PDF, Markdown, HTML
+
+“Publishing package” ZIP: assets + metadata + suggested images prompts
+
+2.7 Content Library & Search
+
+Projects and campaigns
+
+Tags, topics, personas
+
+Full-text search across inputs/outputs
+
+Filters: brand, channel, language, workflow type, status, date
+
+2.8 Analytics (MVP + Phase 2)
+
+MVP analytics:
+
+output counts per workflow
+
+time saved estimates
+
+approval cycle time
+
+top templates used
+
+Phase 2:
+
+channel performance ingest (where APIs permit)
+
+attribution per campaign
+
+2.9 Billing & Plans (SaaS)
+
+Free trial / free tier (optional)
+
+Plans by:
+
+seats
+
+monthly workflow runs / token budget
+
+brands per workspace
+
+publishing connectors
+
+Stripe subscriptions
+
+Usage metering (runs, compute time, token budget)
+
+2.10 Administration Console
+
+Manage users/workspaces
+
+Plan assignment, usage, quotas
+
+Global templates marketplace (optional)
+
+Moderation policies & security settings
+
+System logs & job health
+
+3) Architecture on Replit
+3.1 Recommended Stack (Replit-friendly)
+
+Frontend
+
+React + Vite (or Next.js if you prefer, but Vite is simpler on Replit)
+
+TailwindCSS
+
+TipTap (rich editor) or simple Markdown editor (MVP)
+
+Backend
+
+Node.js + Express (simple, stable on Replit)
+
+PostgreSQL (Neon or Supabase Postgres) recommended over Replit DB for relational requirements
+
+If you insist on Replit Database: it works, but you’ll rebuild relational guarantees manually. For this product, Postgres is a better foundation.
+
+Storage
+
+S3-compatible object storage (Cloudflare R2 / AWS S3) for files
+
+CDN optional later
+
+AI Orchestration
+
+OpenAI Agent Builder as the workflow orchestrator
+
+Your backend calls:
+
+runWorkflow(workflowType, inputId, brandId, options)
+
+stores outputs and traces
+
+Queues / Jobs
+
+MVP: in-process job runner + DB job table
+
+Phase 2: Redis queue (Upstash) or a lightweight worker
+
+3.2 High-Level Flow
+
+User uploads/creates input
+
+System stores input + metadata
+
+User runs a workflow
+
+Backend calls Agent Builder (or a workflow runner service)
+
+Output saved as asset versions
+
+Review/approve
+
+Export or publish
+
+Analytics updates
+
+4) Data Model (Postgres)
+4.1 Core Tables
+
+workspaces
+
+id, name, slug, plan_id, created_at
+
+workspace_users
+
+id, workspace_id, user_id, role, created_at
+
+users
+
+id, email, name, auth_provider_id, created_at
+
+brands
+
+id, workspace_id, name, default_language, brand_rules_json, created_at
+
+templates
+
+id, workspace_id (nullable for global), brand_id (nullable), type, name, content, created_at
+
+projects
+
+id, workspace_id, brand_id, name, description, created_at
+
+inputs
+
+id, workspace_id, brand_id, project_id, type (url/text/pdf/docx/transcript/brief), title, raw_text, source_url, file_key, language, created_at
+
+workflows
+
+id, workspace_id, brand_id, name, type, config_json, created_at
+
+workflow_runs
+
+id, workspace_id, brand_id, input_id, workflow_type, status, started_at, completed_at, cost_estimate, trace_json
+
+assets
+
+id, workspace_id, brand_id, project_id, input_id, status (draft/review/approved/published/archived), primary_language, created_at
+
+asset_versions
+
+id, asset_id, version_no, title, body, format (md/html/plain), channel_type, language, metadata_json, created_at
+
+comments
+
+id, asset_version_id, user_id, body, created_at
+
+publishing_targets
+
+id, workspace_id, brand_id, type (wordpress/webflow/x/etc), credentials_encrypted, created_at
+
+publish_jobs
+
+id, asset_version_id, target_id, status, scheduled_at, executed_at, result_json
+
+usage_ledger
+
+id, workspace_id, user_id, run_id, units, unit_type (tokens/runs), created_at
+
+plans
+
+id, name, limits_json, price_id (Stripe), created_at
+
+4.2 Notes on Security
+
+Every table includes workspace_id
+
+Backend enforces tenant filtering on every query
+
+Encrypt connector credentials at rest (server-side key)
+
+5) API Design (Express)
+5.1 Auth
+
+/auth/login (OAuth or magic link)
+
+/auth/callback
+
+/auth/me
+
+5.2 Workspaces & Brands
+
+GET /workspaces
+
+POST /workspaces
+
+GET /workspaces/:id
+
+POST /brands
+
+PATCH /brands/:id (brand voice rules)
+
+5.3 Inputs
+
+POST /inputs (text/url/brief)
+
+POST /inputs/upload (PDF/DOCX → store file → extract text)
+
+GET /inputs/:id
+
+5.4 Workflows & Runs
+
+GET /workflows
+
+POST /workflow-runs
+Body: { inputId, workflowType, brandId, options }
+
+GET /workflow-runs/:id
+
+5.5 Assets & Versions
+
+POST /assets/from-run/:runId
+
+GET /assets
+
+GET /assets/:id
+
+POST /assets/:id/versions
+
+PATCH /asset-versions/:id (manual edits)
+
+POST /asset-versions/:id/submit-review
+
+POST /asset-versions/:id/approve
+
+5.6 Export & Publish
+
+POST /export/:assetVersionId (docx/pdf/html)
+
+POST /publishing-targets
+
+POST /publish-jobs
+
+GET /publish-jobs/:id
+
+5.7 Admin & Billing
+
+GET /admin/workspaces
+
+PATCH /admin/workspaces/:id/plan
+
+Stripe webhook: /webhooks/stripe
+
+6) AI Workflows: Standard Specifications
+
+Each workflow must produce:
+
+output.title
+
+output.body
+
+output.metadata:
+
+language
+
+channel_type
+
+tone label
+
+key messages
+
+CTA variants
+
+SEO fields (where relevant)
+
+quality_flags:
+
+claims requiring verification
+
+sensitive topics flags
+
+compliance warnings
+
+trace:
+
+prompt version IDs
+
+model used
+
+inputs referenced
+
+time/cost estimates
+
+6.1 Workflow Catalog (Initial)
+
+headline_pack_v1
+
+rewrite_tone_v1
+
+seo_blog_v1
+
+press_release_v1
+
+social_pack_v1
+
+newsletter_v1
+
+translation_ar_en_v1
+
+translation_en_ar_v1
+
+repurpose_transcript_v1
+
+executive_brief_v1
+
+7) Agent Builder Orchestration (Replacing n8n)
+7.1 Orchestrator Principles
+
+A single entrypoint in backend: POST /workflow-runs
+
+Backend passes:
+
+cleaned input text
+
+brand rules
+
+selected template
+
+workflow config
+
+Orchestrator returns:
+
+structured JSON output
+
+trace
+
+flags
+
+7.2 Implementation Pattern
+
+Backend modules
+
+workflowRunner.ts
+
+validates input + permissions
+
+loads brand rules + template
+
+calls agent
+
+stores run + output draft
+
+Agent responsibilities
+
+chooses the right sub-steps
+
+enforces brand voice constraints
+
+produces structured output JSON
+
+7.3 Prompt Governance
+
+Store prompt versions in DB:
+
+prompt_versions table (optional but recommended)
+
+each workflow references a prompt version ID
+
+allows rollback and audit
+
+8) File Handling: PDF/DOCX/Text Extraction
+
+MVP approach:
+
+DOCX: mammoth
+
+PDF: pdf-parse (best-effort; complex PDFs later)
+
+Store original file in object storage + extracted text in inputs.raw_text
+
+9) UX Structure (Frontend)
+9.1 Pages
+
+Login
+
+Workspace switcher
+
+Brand settings (voice & rules)
+
+Inputs (inbox)
+
+Projects
+
+Workflow runner (select input → choose workflow → run)
+
+Asset editor (versions + comments)
+
+Review queue
+
+Export & Publish
+
+Analytics
+
+Admin (owner only)
+
+9.2 MVP UI Priorities
+
+fast workflow execution
+
+clean editor + version history
+
+visible brand constraints (what rules were applied)
+
+export reliably
+
+10) Milestones & Build Plan (Replit)
+Phase 1 — MVP (Core)
+
+Auth + workspace/role model
+
+Brand rules + templates
+
+Inputs (text/url/file)
+
+Workflow runs (3–5 workflows)
+
+Assets + versions + editor
+
+Export (docx/pdf/md)
+
+Usage tracking
+
+Phase 2 — Collaboration + Approvals
+
+Comments + suggestions
+
+Review routing
+
+Approval states + audit
+
+More workflows (press release, newsletter, repurpose)
+
+Phase 3 — Publishing Integrations
+
+WordPress publish
+
+Webflow publish
+
+Scheduling jobs
+
+Connector credential vault
+
+Phase 4 — Billing & Scaling
+
+Stripe subscriptions
+
+Plan limits enforcement
+
+Usage-based add-ons
+
+Queue/worker improvements
+
+11) Non-Functional Requirements
+11.1 Security
+
+Strict workspace isolation
+
+Encrypt publishing credentials
+
+Audit logs for admin actions
+
+Rate limiting workflow endpoints
+
+11.2 Reliability
+
+Idempotency keys for publish jobs
+
+Retry strategy for external publishing
+
+Backoff for agent calls
+
+11.3 Observability
+
+Request IDs everywhere
+
+Workflow run logs saved in trace_json
+
+Admin “system health” page (runs, failures)
+
+12) Configuration & Environment Variables
+
+Backend
+
+DATABASE_URL
+
+OPENAI_API_KEY (or Agent Builder credentials)
+
+OBJECT_STORAGE_KEY, OBJECT_STORAGE_SECRET, OBJECT_STORAGE_BUCKET, OBJECT_STORAGE_ENDPOINT
+
+ENCRYPTION_KEY (for credentials vault)
+
+STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET
+
+APP_URL
+
+13) Deliverable Standards (Output Quality)
+
+Every generated output must be:
+
+structured, reusable, and editable
+
+tagged with language + channel
+
+compliant with brand rules
+
+flagged where claims appear unverifiable
+
+saved with full traceability (who ran it, when, and with what configuration)
+
+14) Acceptance Criteria (MVP)
+
+MVP is considered complete when:
+
+A user can create a workspace + brand
+
+Add an input (text/url/pdf/docx)
+
+Run at least 5 workflows
+
+Receive outputs as versioned assets
+
+Edit, comment, approve
+
+Export to DOCX/PDF/Markdown
+
+Usage tracking increments correctly
+
+No cross-workspace data leakage is possible
+
+15) Suggested Repository Structure (Replit)
+/apps
+  /web        (React UI)
+  /api        (Express server)
+packages
+  /shared     (types, validators, utils)
+infra
+  /migrations (sql)
+
+
+API structure
+
+/api/src
+  /routes
+  /services
+    auth.service.ts
+    workspace.service.ts
+    brand.service.ts
+    input.service.ts
+    workflow.service.ts
+    asset.service.ts
+    export.service.ts
+    publish.service.ts
+  /lib
+    db.ts
+    crypto.ts
+    storage.ts
+    agentClient.ts
