@@ -1,0 +1,583 @@
+Below is a complete Replit-ready documentation pack that you can paste directly into your Replit Agent (or follow as a build spec). It includes: architecture, repo structure, Neon setup, schema (SQL migrations), API contract, workflow runner design (Agent Builder), security, and an MVP build sequence.
+
+1) Tech Stack (Replit + Neon)
+
+Frontend
+
+React + Vite
+
+TailwindCSS
+
+Editor: Markdown first (TipTap later)
+
+Backend
+
+Node.js + Express + TypeScript
+
+PostgreSQL (Neon) via pg + drizzle-orm (recommended) or knex (either works)
+
+Auth
+
+Passwordless magic link (simple MVP) OR Google OAuth (phase 2)
+
+Session tokens via JWT stored in HttpOnly cookies
+
+Storage
+
+MVP: store extracted text in DB; file uploads to object storage later (R2/S3)
+
+If needed now: use Cloudflare R2 for PDFs/DOCX (phase 2)
+
+AI Orchestration
+
+OpenAI Agent Builder as workflow brain
+
+Backend calls agentClient.run(workflowType, context) and stores structured output
+
+2) Repo Structure (Monorepo)
+/apps
+  /web               # React + Vite
+  /api               # Express + TS
+/packages
+  /shared            # shared types + zod schemas
+/infra
+  /migrations        # SQL migrations (or drizzle migrations)
+/docs                # internal docs (optional)
+
+3) Neon Setup (Production-Grade Basics)
+3.1 Create Neon Project
+
+Create database + user
+
+Copy the connection string (use pooled endpoint if you expect bursts)
+
+3.2 Environment Variables (Replit Secrets)
+
+Set these in Replit Secrets:
+
+API
+
+DATABASE_URL = Neon connection string
+
+JWT_SECRET = long random string
+
+COOKIE_SECRET = long random string
+
+OPENAI_API_KEY (or Agent Builder auth token/credentials)
+
+APP_URL = your Replit public URL
+
+Optional (later):
+
+R2_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY, R2_SECRET_KEY
+
+STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET
+
+4) Database Schema (Postgres SQL)
+
+Create one migration file first: infra/migrations/001_init.sql
+
+This schema is multi-tenant, includes versioning, approvals, runs, and usage ledger.
+
+-- 001_init.sql
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ENUMS
+DO $$ BEGIN
+  CREATE TYPE role_type AS ENUM ('owner','admin','editor','reviewer','viewer');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE input_type AS ENUM ('url','text','pdf','docx','transcript','brief');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE asset_status AS ENUM ('draft','in_review','approved','published','archived');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE run_status AS ENUM ('queued','running','succeeded','failed','cancelled');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE channel_type AS ENUM ('blog','press_release','linkedin','x','instagram','newsletter','website','generic');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE target_type AS ENUM ('wordpress','webflow','x','linkedin','meta','email','custom');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE publish_status AS ENUM ('queued','scheduled','running','succeeded','failed','cancelled');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE usage_unit_type AS ENUM ('run','tokens','seconds');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+-- CORE
+CREATE TABLE IF NOT EXISTS users (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email text UNIQUE NOT NULL,
+  full_name text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS workspaces (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name text NOT NULL,
+  slug text UNIQUE NOT NULL,
+  plan_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS workspace_users (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role role_type NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(workspace_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS brands (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  default_language text NOT NULL DEFAULT 'en',
+  brand_rules_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(workspace_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS templates (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid REFERENCES workspaces(id) ON DELETE CASCADE,
+  brand_id uuid REFERENCES brands(id) ON DELETE CASCADE,
+  type text NOT NULL,             -- e.g. "press_release", "seo_blog", "social_pack"
+  name text NOT NULL,
+  content text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  brand_id uuid NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  description text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS inputs (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  brand_id uuid NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+  project_id uuid REFERENCES projects(id) ON DELETE SET NULL,
+  type input_type NOT NULL,
+  title text,
+  source_url text,
+  language text,
+  raw_text text,
+  file_key text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- AI WORKFLOWS
+CREATE TABLE IF NOT EXISTS workflows (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  brand_id uuid REFERENCES brands(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  type text NOT NULL,             -- e.g. seo_blog_v1, press_release_v1
+  config_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  brand_id uuid NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+  input_id uuid NOT NULL REFERENCES inputs(id) ON DELETE CASCADE,
+  workflow_type text NOT NULL,
+  status run_status NOT NULL DEFAULT 'queued',
+  started_at timestamptz,
+  completed_at timestamptz,
+  cost_estimate numeric,
+  trace_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  output_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  error_json jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ASSETS + VERSIONING
+CREATE TABLE IF NOT EXISTS assets (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  brand_id uuid NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+  project_id uuid REFERENCES projects(id) ON DELETE SET NULL,
+  input_id uuid REFERENCES inputs(id) ON DELETE SET NULL,
+  status asset_status NOT NULL DEFAULT 'draft',
+  primary_language text NOT NULL DEFAULT 'en',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS asset_versions (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  asset_id uuid NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  version_no int NOT NULL,
+  title text,
+  body text NOT NULL,
+  format text NOT NULL DEFAULT 'md',         -- md/html/plain
+  channel channel_type NOT NULL DEFAULT 'generic',
+  language text NOT NULL DEFAULT 'en',
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(asset_id, version_no)
+);
+
+CREATE TABLE IF NOT EXISTS comments (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  asset_version_id uuid NOT NULL REFERENCES asset_versions(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- PUBLISHING
+CREATE TABLE IF NOT EXISTS publishing_targets (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  brand_id uuid NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+  type target_type NOT NULL,
+  name text NOT NULL,
+  credentials_encrypted text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS publish_jobs (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  asset_version_id uuid NOT NULL REFERENCES asset_versions(id) ON DELETE CASCADE,
+  target_id uuid NOT NULL REFERENCES publishing_targets(id) ON DELETE CASCADE,
+  status publish_status NOT NULL DEFAULT 'queued',
+  scheduled_at timestamptz,
+  executed_at timestamptz,
+  result_json jsonb,
+  error_json jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- USAGE
+CREATE TABLE IF NOT EXISTS usage_ledger (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  run_id uuid REFERENCES workflow_runs(id) ON DELETE SET NULL,
+  units numeric NOT NULL,
+  unit_type usage_unit_type NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- INDEXES (performance)
+CREATE INDEX IF NOT EXISTS idx_workspace_users_workspace ON workspace_users(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_brands_workspace ON brands(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_inputs_workspace ON inputs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_runs_workspace ON workflow_runs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_assets_workspace ON assets(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_versions_asset ON asset_versions(asset_id);
+
+5) Backend Services (API) — Contract
+5.1 Auth (MVP)
+
+POST /auth/magic-link (send link)
+
+GET /auth/verify?token=... (set cookie session)
+
+GET /auth/me
+
+POST /auth/logout
+
+5.2 Workspaces & Brands
+
+POST /workspaces
+
+GET /workspaces
+
+GET /workspaces/:id
+
+POST /brands
+
+PATCH /brands/:id (brand_rules_json)
+
+5.3 Inputs
+
+POST /inputs body: {workspaceId, brandId, projectId?, type, title?, sourceUrl?, language?, rawText?}
+
+POST /inputs/upload (PDF/DOCX) → extract → store raw_text
+
+GET /inputs/:id
+
+5.4 Workflow Runs (Agent Builder)
+
+POST /workflow-runs
+
+{ workspaceId, brandId, inputId, workflowType, options }
+
+GET /workflow-runs/:id
+
+5.5 Assets & Versions
+
+POST /assets/from-run/:runId creates asset + v1
+
+GET /assets?workspaceId=&brandId=&status=&q=
+
+GET /assets/:id
+
+POST /assets/:id/versions (manual new version)
+
+PATCH /asset-versions/:id (edit)
+
+POST /asset-versions/:id/submit-review
+
+POST /asset-versions/:id/approve
+
+POST /asset-versions/:id/publish (creates publish job)
+
+5.6 Export
+
+POST /export/:assetVersionId → returns downloadable file (MD/HTML/DOCX/PDF)
+
+6) AI Workflow Runner Design (Agent Builder)
+6.1 Standard Payload into Agent
+
+Backend must assemble:
+
+{
+  "workflowType": "press_release_v1",
+  "input": { "title": "...", "rawText": "...", "sourceUrl": "...", "language": "en" },
+  "brand": { "name": "...", "defaultLanguage": "en", "rules": { ... } },
+  "options": { "channel": "press_release", "tone": "institutional", "length": "standard" }
+}
+
+6.2 Standard Output (must be structured)
+
+Agent returns:
+
+{
+  "title": "...",
+  "body": "...",
+  "metadata": {
+    "language": "en",
+    "channel": "press_release",
+    "keyMessages": [],
+    "ctaVariants": [],
+    "seo": { "metaTitle": "", "metaDescription": "", "keywords": [] }
+  },
+  "qualityFlags": {
+    "claimsToVerify": [],
+    "sensitiveTopics": [],
+    "complianceWarnings": []
+  },
+  "trace": {
+    "promptVersion": "press_release_v1.0",
+    "model": "...",
+    "steps": []
+  }
+}
+
+
+Store this in workflow_runs.output_json + trace_json, then convert to asset_versions.
+
+7) Security & Tenant Isolation Rules
+
+Backend must enforce:
+
+every query filtered by workspace_id
+
+user must belong to workspace in workspace_users
+
+role-gated actions:
+
+create brands/templates/projects: admin+
+
+approve/publish: reviewer/admin/owner
+
+admin console: owner only
+
+publishing credentials encrypted (AES-GCM) using ENCRYPTION_KEY
+
+8) MVP Build Sequence (Do in Order)
+
+Scaffold monorepo (web + api + shared)
+
+Implement DB connection + migration runner
+
+Implement auth (magic link or dev stub + JWT)
+
+Workspace + brand CRUD
+
+Inputs CRUD (text + url), file extraction can wait
+
+Workflow runner endpoint (stub returns mock output first)
+
+Assets + versioning + statuses
+
+Web UI: input list → run workflow → view asset → edit → submit review → approve
+
+Usage ledger increments per run
+
+Export to Markdown/HTML (DOCX/PDF later)
+
+9) Replit Agent Master Prompt (Paste as-is)
+
+Copy this into Replit AI Agent and run it.
+
+You are the Replit AI agent building “Content Santa” as a production-quality SaaS MVP.
+
+Non-negotiable requirements:
+- Use Neon Postgres via DATABASE_URL.
+- Use Node.js + Express + TypeScript for API.
+- Use React + Vite + Tailwind for frontend.
+- Multi-tenant: all data is isolated by workspace_id; enforce in every query.
+- Provide clear, structured logs with requestId per request.
+- Implement workflow orchestration using an agentClient wrapper (OpenAI Agent Builder). If credentials are missing, stub with deterministic mock outputs but keep the interfaces identical.
+
+Repo structure:
+- /apps/api (Express API)
+- /apps/web (React Vite)
+- /packages/shared (types + zod)
+- /infra/migrations (SQL)
+
+Step 1 — Project setup
+- Create package.json at root with workspaces or pnpm. Prefer pnpm.
+- Create TypeScript configs and shared ESLint defaults.
+- Ensure “npm run dev” starts both web and api.
+
+Step 2 — Database
+- Create infra/migrations/001_init.sql with the schema below and a migration runner in apps/api.
+- Migration runner should:
+  - read /infra/migrations/*.sql in order
+  - keep a migrations table to prevent re-running
+- Create db.ts with a pooled Postgres client.
+
+Step 3 — Auth
+- Implement simple auth with JWT in HttpOnly cookie.
+- For MVP, implement:
+  - POST /auth/dev-login {email, name?} that creates user if missing and sets cookie.
+  - GET /auth/me
+  - POST /auth/logout
+- Keep interfaces so magic-link can replace later.
+
+Step 4 — Core APIs
+Implement:
+- Workspaces:
+  - POST /workspaces
+  - GET /workspaces
+- Workspace membership:
+  - On workspace creation, make creator Owner in workspace_users.
+- Brands:
+  - POST /brands
+  - PATCH /brands/:id
+  - GET /brands?workspaceId=
+- Inputs:
+  - POST /inputs (text/url)
+  - GET /inputs?workspaceId=&brandId=
+  - GET /inputs/:id
+- Workflows:
+  - POST /workflow-runs
+  - GET /workflow-runs/:id
+- Assets:
+  - POST /assets/from-run/:runId
+  - GET /assets?workspaceId=&brandId=&status=&q=
+  - GET /assets/:id (with versions)
+- Versions:
+  - PATCH /asset-versions/:id
+  - POST /asset-versions/:id/submit-review
+  - POST /asset-versions/:id/approve
+
+Step 5 — AI Orchestration
+- Implement agentClient.ts with method runWorkflow(payload).
+- If OpenAI keys exist, call Agent Builder; otherwise return a mocked structured response using payload.workflowType.
+- Always store:
+  - workflow_runs.output_json
+  - workflow_runs.trace_json
+  - workflow_runs.status transitions
+
+Step 6 — Frontend
+Create pages:
+- /login (dev login form: email, name)
+- /app/workspaces (list + create)
+- /app/brands (brand list + edit rules)
+- /app/inputs (create input + list)
+- /app/inputs/:id (view + run workflow)
+- /app/assets (list)
+- /app/assets/:id (version viewer/editor + submit review + approve)
+Use clean UI and consistent layout; show statuses clearly.
+
+Step 7 — Tenant enforcement
+Implement middleware:
+- requires auth
+- verifies workspace membership for routes that accept workspaceId or reference workspace-owned objects
+- denies cross-workspace access always
+
+Step 8 — Quality
+- Add Zod validation for all request bodies.
+- Add structured error responses: {requestId, errorCode, errorDetail}.
+- Add request logging middleware with requestId.
+
+Database schema to use: (use the SQL in infra/migrations/001_init.sql exactly as provided in this prompt’s attached schema text).
+
+Deliverable:
+- Working MVP in Replit.
+- Seed script to create initial workspace/brand for dev usage.
+
+
+(Then paste the SQL from section 4 into the agent prompt as the “attached schema text”.)
+
+10) Default Workflows to Ship in MVP
+
+Hardcode these workflow types as options in the UI (store runs in DB):
+
+headline_pack_v1
+
+rewrite_tone_v1
+
+press_release_v1
+
+seo_blog_v1
+
+social_pack_v1
+
+translation_en_ar_v1
+
+translation_ar_en_v1
+
+11) What You’ll Have After MVP
+
+Multi-tenant content library
+
+Brand rules engine (stored + applied)
+
+Workflow runs with audit trail
+
+Versioned assets + approvals
+
+Clean foundation to add:
+
+PDF/DOCX ingestion
+
+publishing connectors
+
+Stripe plans & quotas
+
+job queue & scheduling

@@ -24,12 +24,42 @@ export async function apiRequest(
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
+
+function buildUrl(queryKey: readonly unknown[]): string {
+  // First element is the base URL
+  const baseUrl = queryKey[0] as string;
+  
+  // If there are more elements, check if any are objects (query params)
+  if (queryKey.length === 1) {
+    return baseUrl;
+  }
+  
+  // Check if second element is an object (query params) or a path segment
+  const secondElement = queryKey[1];
+  
+  if (typeof secondElement === "object" && secondElement !== null) {
+    // It's a query params object
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(secondElement)) {
+      if (value !== undefined && value !== null && value !== "") {
+        params.append(key, String(value));
+      }
+    }
+    const queryString = params.toString();
+    return queryString ? `${baseUrl}?${queryString}` : baseUrl;
+  }
+  
+  // It's a path segment (like an ID)
+  return queryKey.filter(k => typeof k === "string").join("/");
+}
+
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    const url = buildUrl(queryKey);
+    const res = await fetch(url, {
       credentials: "include",
     });
 
@@ -47,7 +77,7 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
+      staleTime: 30000,
       retry: false,
     },
     mutations: {
