@@ -729,10 +729,7 @@ export async function registerRoutes(
   // Publishing Targets
   app.get("/api/publishing-targets", async (req: Request, res: Response) => {
     try {
-      const workspaceId = req.query.workspaceId as string;
-      if (!workspaceId) {
-        return res.status(400).json({ error: "workspaceId required" });
-      }
+      const workspaceId = (req.query.workspaceId as string) || "demo-workspace";
       const targets = await storage.getPublishingTargets(workspaceId);
       res.json(targets);
     } catch (error) {
