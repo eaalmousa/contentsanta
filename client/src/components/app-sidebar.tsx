@@ -15,6 +15,7 @@ import {
   Rss,
   Inbox,
   Zap,
+  Target,
 } from "lucide-react";
 import {
   Sidebar,
@@ -41,6 +42,7 @@ const mainNavItems = [
 ];
 
 const automationNavItems = [
+  { title: "Content Goals", url: "/content-goals", icon: Target },
   { title: "Sources", url: "/sources", icon: Rss },
   { title: "Inbox", url: "/inbox", icon: Inbox },
   { title: "Automations", url: "/automations", icon: Zap },

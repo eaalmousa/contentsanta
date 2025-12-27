@@ -24,6 +24,7 @@ import AdminDashboard from "@/pages/admin";
 import Sources from "@/pages/sources";
 import Inbox from "@/pages/inbox";
 import Automations from "@/pages/automations";
+import ContentGoals from "@/pages/content-goals";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -43,6 +44,7 @@ function Router() {
       <Route path="/sources" component={Sources} />
       <Route path="/inbox" component={Inbox} />
       <Route path="/automations" component={Automations} />
+      <Route path="/content-goals" component={ContentGoals} />
       <Route component={NotFound} />
     </Switch>
   );
