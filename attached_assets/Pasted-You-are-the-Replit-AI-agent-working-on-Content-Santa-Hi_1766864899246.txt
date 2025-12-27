@@ -1,0 +1,84 @@
+You are the Replit AI agent working on Content Santa.
+
+High-level goal:
+Clean up the product and navigation to focus on the core idea:
+Topics define intent, sources are auto-discovered, Smart Editor is drafts/review only.
+
+CRITICAL product decisions:
+1) Smart Editor = drafts/review ONLY. No topic creation UI inside Smart Editor.
+2) Topics page is the single place for topic creation.
+3) The Topic Wizard must automatically discover and show sources (no “add sources first” dead end).
+
+PART A — UI / Navigation Cleanup (remove unnecessary tabs)
+1) Simplify the left sidebar to the minimum viable IA for the core product:
+   Keep:
+   - Smart Editor (review drafts)
+   - Topics (create/manage topics)
+   - Publishing (targets + publishing)
+   - Admin Tools: Sources, Inbox (only if required for operations)
+   Hide/Remove for now (behind feature flags or remove from sidebar):
+   - Library (if unused)
+   - Advanced: Dashboard, Create Content, AI Workflows, Templates, Usage, Team (unless actively used)
+   - Settings sections that are not required for MVP
+2) Ensure every removed item is either:
+   - removed from routes, OR
+   - behind a feature flag so users never see dead pages.
+
+PART B — Fix the broken recommended sources call (401 Unauthorized)
+1) Investigate why /api/topics/recommended (or similar endpoint used for discovery) returns 401.
+2) Fix auth consistency:
+   - Frontend requests must include session credentials (credentials: "include") or correct auth headers used elsewhere.
+   - Backend must read the same auth mechanism as other endpoints.
+3) After fix, verify in browser Network:
+   - recommended sources request returns 200 when user is signed in.
+
+PART C — Make Topic Wizard auto-discover sources (core UX fix)
+Current issue:
+Wizard shows “No sources available for this workspace. Add RSS sources first.” This is not acceptable for MVP.
+Change it to auto-discovery.
+
+Implementation requirements:
+1) In Topic Wizard step “Sources”:
+   - Automatically run source discovery when user arrives at this step OR when topic query/region/countries change.
+   - Call the discovery endpoint with:
+     { query, region, countries[], language, workspaceId }
+2) Display results as recommended sources list (ranked), with:
+   - source name + domain
+   - media tier / quality score (if available)
+   - RSS URL (if found)
+   - checkbox to select
+   - “Add selected sources” and “Add all” buttons
+3) When user selects sources:
+   - persist them into workspace sources table immediately (create if not exists)
+   - mark them enabled by default (or let user enable)
+4) Only if discovery returns 0 results:
+   - show the empty state with two CTAs:
+     a) “Try broader query” (suggest removing geo restriction)
+     b) “Add source manually” (opens manual add dialog)
+5) Topic creation rules:
+   - Topic can be created without sources, but must be created as inactive (isLive=false).
+   - Activation requires at least one enabled source (backend must enforce).
+   - In UI, show status clearly: “Inactive — no sources yet” with action “Discover sources” / “Add sources”.
+
+PART D — Remove “address first” friction (onboarding)
+If system is prompting for “address” or any non-core profile requirement before using Topics:
+1) Make those fields optional for MVP (no blocking).
+2) If legally required later, show it only at publishing checkout stage, not topic creation.
+
+PART E — Acceptance tests (must pass)
+1) From Smart Editor:
+   - No New Topic button.
+   - “Create your first topic” links to /topics?create=1.
+2) From Topics page:
+   - /topics?create=1 opens the NEW wizard.
+   - On Sources step, it auto-discovers and shows sources without requiring manual pre-setup.
+3) Auth:
+   - recommended sources API returns 200 (no 401).
+4) Persistency:
+   - selecting sources saves them to workspace and they appear in Admin Tools -> Sources.
+5) Edge cases:
+   - discovery returns 0: user sees retry + manual add options (no crash).
+   - no sources: topic created inactive, activation blocked by backend with clear UI message.
+
+Deliver:
+Implement all changes, remove dead navigation items, and ensure the core topic→sources→drafts flow is smooth and self-contained.

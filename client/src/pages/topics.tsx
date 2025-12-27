@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { 
   Plus,
@@ -570,10 +571,25 @@ function SourceSelector({
 
   if (safeSources.length === 0) {
     return (
-      <div className="text-center py-8 text-muted-foreground">
-        <Newspaper className="w-8 h-8 mx-auto mb-2 opacity-50" />
-        <p>No sources available for this workspace.</p>
-        <p className="text-sm">Add RSS sources in the Sources section first.</p>
+      <div className="text-center py-8 space-y-4">
+        <Newspaper className="w-10 h-10 mx-auto text-muted-foreground/50" />
+        <div>
+          <p className="font-medium">No sources found for this query</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Try adjusting your search or region settings
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 items-center">
+          <Link href="/sources">
+            <Button variant="outline" size="sm">
+              <Plus className="w-4 h-4 mr-1" />
+              Add Source Manually
+            </Button>
+          </Link>
+          <p className="text-xs text-muted-foreground">
+            Or create topic anyway - it will start inactive until sources are added
+          </p>
+        </div>
       </div>
     );
   }
@@ -769,6 +785,8 @@ function TopicCard({
 
 export default function TopicsPage() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
+  const searchString = useSearch();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [settingsTopic, setSettingsTopic] = useState<Topic | null>(null);
   const [wizardStep, setWizardStep] = useState<1 | 2>(1);
@@ -785,6 +803,16 @@ export default function TopicsPage() {
     contentIntent: "news_monitoring" as ContentIntent,
     outputVolumePerDay: 5,
   });
+
+  // Auto-open create dialog from query param (e.g., /topics?create=1)
+  useEffect(() => {
+    const params = new URLSearchParams(searchString);
+    if (params.get("create") === "1") {
+      setShowCreateDialog(true);
+      // Clear the query param to prevent re-triggering
+      setLocation("/topics", { replace: true });
+    }
+  }, [searchString, setLocation]);
 
   const { data: topics, isLoading, isError } = useQuery<(Topic & { enabledSourceCount: number })[]>({
     queryKey: ["/api/topics"],
@@ -804,12 +832,15 @@ export default function TopicsPage() {
         language: newTopic.language,
         workspaceId: "demo-workspace",
       });
-      const data = response as { candidates: RecommendedSource[]; defaultEnabled: string[] };
-      setRecommendedSources(data.candidates);
-      setSelectedSourceIds(new Set(data.defaultEnabled));
-    } catch (error) {
+      const data = await response.json() as { candidates: RecommendedSource[]; defaultEnabled: string[] };
+      setRecommendedSources(data.candidates ?? []);
+      setSelectedSourceIds(new Set(data.defaultEnabled ?? []));
+    } catch (error: any) {
       console.error("Failed to fetch recommended sources:", error);
-      toast({ title: "Failed to load sources", variant: "destructive" });
+      const errorMsg = error?.message?.includes("401") 
+        ? "Please sign in to discover sources" 
+        : "Failed to load sources";
+      toast({ title: errorMsg, variant: "destructive" });
     } finally {
       setIsLoadingSources(false);
     }
@@ -827,10 +858,11 @@ export default function TopicsPage() {
 
   const createTopicMutation = useMutation({
     mutationFn: async (data: typeof newTopic) => {
-      return await apiRequest("POST", "/api/topics", {
+      const response = await apiRequest("POST", "/api/topics", {
         ...data,
         workspaceId: "demo-workspace",
       });
+      return await response.json();
     },
     onSuccess: async (result: any) => {
       if (selectedSourceIds.size > 0 && result?.id) {
@@ -949,13 +981,12 @@ export default function TopicsPage() {
     e.preventDefault();
     if (!newTopic.name.trim()) return;
     
+    // Allow creating without sources - topic will be inactive
     if (selectedSourceIds.size === 0) {
       toast({ 
-        title: "No sources selected", 
-        description: "Please select at least one source for this topic",
-        variant: "destructive" 
+        title: "Creating inactive topic", 
+        description: "Add and enable sources later to activate this topic",
       });
-      return;
     }
     
     createTopicMutation.mutate(newTopic);
@@ -1266,13 +1297,18 @@ export default function TopicsPage() {
                 </Button>
                 <Button 
                   type="submit" 
-                  disabled={selectedSourceIds.size === 0 || createTopicMutation.isPending}
+                  disabled={createTopicMutation.isPending}
+                  variant={selectedSourceIds.size === 0 ? "outline" : "default"}
                   data-testid="button-submit-create-topic"
                 >
                   {createTopicMutation.isPending ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                       Creating...
+                    </>
+                  ) : selectedSourceIds.size === 0 ? (
+                    <>
+                      Create Inactive
                     </>
                   ) : (
                     <>

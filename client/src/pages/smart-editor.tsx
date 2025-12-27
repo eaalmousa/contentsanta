@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { 
   Sparkles, 
@@ -8,9 +9,6 @@ import {
   Edit3,
   ChevronRight,
   Globe,
-  BookOpen,
-  FileText,
-  Shuffle,
   Clock,
   ExternalLink,
   Loader2,
@@ -43,7 +41,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Draft, Topic, ContentIntent, Story } from "@shared/schema";
+import type { Draft, Topic, Story } from "@shared/schema";
 
 interface StorySource {
   name: string;
@@ -57,33 +55,6 @@ interface StoryWithProvenance extends Story {
   sources: StorySource[];
   featuredImage: any | null;
 }
-
-const contentIntentOptions: { value: ContentIntent; label: string; description: string; icon: any }[] = [
-  { 
-    value: "news_monitoring", 
-    label: "News Monitoring", 
-    description: "Track breaking news and updates from trusted sources",
-    icon: Globe 
-  },
-  { 
-    value: "informational", 
-    label: "Informational", 
-    description: "Educational content and research-based articles",
-    icon: BookOpen 
-  },
-  { 
-    value: "evergreen", 
-    label: "Evergreen", 
-    description: "Timeless content for blogs and long-term value",
-    icon: FileText 
-  },
-  { 
-    value: "mixed", 
-    label: "Mixed", 
-    description: "Combination of news, informational, and evergreen content",
-    icon: Shuffle 
-  },
-];
 
 function getTierBadgeVariant(tier: string): "default" | "secondary" | "outline" {
   switch (tier) {
@@ -509,148 +480,8 @@ function StoryDetailsDialog({
   );
 }
 
-function ContentIntentStep({ 
-  selectedIntent,
-  onSelect 
-}: { 
-  selectedIntent: ContentIntent | null;
-  onSelect: (intent: ContentIntent) => void;
-}) {
-  return (
-    <div className="space-y-4">
-      <div className="text-center mb-6">
-        <h2 className="text-xl font-semibold">What type of content are you creating?</h2>
-        <p className="text-muted-foreground mt-1">
-          This helps us find the right sources and generate appropriate drafts
-        </p>
-      </div>
-      
-      <div className="grid gap-3 md:grid-cols-2">
-        {contentIntentOptions.map((option) => {
-          const Icon = option.icon;
-          const isSelected = selectedIntent === option.value;
-          
-          return (
-            <Card 
-              key={option.value}
-              className={`cursor-pointer transition-all hover-elevate overflow-visible ${
-                isSelected ? "border-primary bg-primary/5" : ""
-              }`}
-              onClick={() => onSelect(option.value)}
-              data-testid={`intent-${option.value}`}
-            >
-              <CardContent className="flex items-start gap-4 p-4">
-                <div className={`p-2 rounded-md ${isSelected ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
-                  <Icon className="w-5 h-5" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-medium">{option.label}</h3>
-                  <p className="text-sm text-muted-foreground">{option.description}</p>
-                </div>
-                {isSelected && (
-                  <Check className="w-5 h-5 text-primary" />
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function TopicSetupStep({
-  onCreateTopic,
-  isCreating
-}: {
-  onCreateTopic: (data: { name: string; query: string; language: string }) => void;
-  isCreating: boolean;
-}) {
-  const [name, setName] = useState("");
-  const [query, setQuery] = useState("");
-  const [language, setLanguage] = useState("en");
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim() || !query.trim()) return;
-    onCreateTopic({ name, query, language });
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="text-center mb-6">
-        <h2 className="text-xl font-semibold">Define Your Topic</h2>
-        <p className="text-muted-foreground mt-1">
-          Tell us what you want to track and create content about
-        </p>
-      </div>
-
-      <div className="space-y-4 max-w-lg mx-auto">
-        <div>
-          <label className="text-sm font-medium mb-1 block">Topic Name</label>
-          <Input
-            placeholder="e.g., AI Industry News, Tech Startups"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            data-testid="input-topic-name"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm font-medium mb-1 block">What to Track</label>
-          <Textarea
-            placeholder="e.g., artificial intelligence announcements, machine learning breakthroughs, OpenAI updates"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="resize-none"
-            rows={3}
-            data-testid="input-topic-query"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm font-medium mb-1 block">Language</label>
-          <Select value={language} onValueChange={setLanguage}>
-            <SelectTrigger data-testid="select-language">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="en">English</SelectItem>
-              <SelectItem value="ar">Arabic</SelectItem>
-              <SelectItem value="es">Spanish</SelectItem>
-              <SelectItem value="fr">French</SelectItem>
-              <SelectItem value="de">German</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <Button 
-          type="submit" 
-          className="w-full" 
-          disabled={!name.trim() || !query.trim() || isCreating}
-          data-testid="button-create-topic"
-        >
-          {isCreating ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Creating...
-            </>
-          ) : (
-            <>
-              Create Topic
-              <ChevronRight className="w-4 h-4 ml-2" />
-            </>
-          )}
-        </Button>
-      </div>
-    </form>
-  );
-}
-
 export default function SmartEditorPage() {
   const { toast } = useToast();
-  const [selectedIntent, setSelectedIntent] = useState<ContentIntent | null>(null);
-  const [showSetup, setShowSetup] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [activeTab, setActiveTab] = useState("stories");
   const [selectedStory, setSelectedStory] = useState<StoryWithProvenance | null>(null);
@@ -694,21 +525,6 @@ export default function SmartEditorPage() {
     },
   });
 
-  const createTopicMutation = useMutation({
-    mutationFn: async (data: { name: string; query: string; language: string; contentIntent: ContentIntent }) => {
-      return await apiRequest("POST", "/api/topics", {
-        ...data,
-        workspaceId: "demo-workspace",
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
-      toast({ title: "Topic created", description: "Your topic is now active" });
-      setShowSetup(false);
-      setSelectedIntent(null);
-    },
-  });
-
   const handleApprove = (draftId: string) => {
     updateDraftMutation.mutate({ id: draftId, status: "approved" });
     toast({ title: "Draft approved", description: "Ready for publishing" });
@@ -732,14 +548,6 @@ export default function SmartEditorPage() {
     createDraftMutation.mutate(story);
   };
 
-  const handleCreateTopic = (data: { name: string; query: string; language: string }) => {
-    if (!selectedIntent) return;
-    createTopicMutation.mutate({
-      ...data,
-      contentIntent: selectedIntent,
-    });
-  };
-
   const filteredDrafts = drafts?.filter(d => 
     statusFilter === "all" || d.status === statusFilter
   ) || [];
@@ -751,43 +559,6 @@ export default function SmartEditorPage() {
   const hasTopics = topics && topics.length > 0;
   const hasContent = (stories && stories.length > 0) || (drafts && drafts.length > 0);
 
-  if (showSetup) {
-    return (
-      <div className="container max-w-3xl py-8">
-        <Button 
-          variant="ghost" 
-          onClick={() => {
-            if (selectedIntent) {
-              setSelectedIntent(null);
-            } else {
-              setShowSetup(false);
-            }
-          }}
-          className="mb-4"
-          data-testid="button-back"
-        >
-          Back
-        </Button>
-        
-        <Card className="overflow-visible">
-          <CardContent className="p-6">
-            {!selectedIntent ? (
-              <ContentIntentStep 
-                selectedIntent={selectedIntent} 
-                onSelect={(intent) => setSelectedIntent(intent)} 
-              />
-            ) : (
-              <TopicSetupStep 
-                onCreateTopic={handleCreateTopic}
-                isCreating={createTopicMutation.isPending}
-              />
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="container py-6 space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -797,11 +568,6 @@ export default function SmartEditorPage() {
             Review stories and manage your content pipeline
           </p>
         </div>
-        
-        <Button onClick={() => setShowSetup(true)} data-testid="button-new-topic">
-          <Sparkles className="w-4 h-4 mr-2" />
-          New Topic
-        </Button>
       </div>
 
       {!hasTopics && !hasContent ? (
@@ -814,12 +580,14 @@ export default function SmartEditorPage() {
             </div>
             <h2 className="text-xl font-semibold mb-2">Welcome to Smart Editor</h2>
             <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-              Start by creating your first topic. We'll automatically discover sources and generate drafts for you to review.
+              Create your first topic to start discovering content and generating drafts.
             </p>
-            <Button onClick={() => setShowSetup(true)} data-testid="button-get-started">
-              Get Started
-              <ChevronRight className="w-4 h-4 ml-2" />
-            </Button>
+            <Link href="/topics?create=1">
+              <Button data-testid="button-get-started">
+                Create Your First Topic
+                <ChevronRight className="w-4 h-4 ml-2" />
+              </Button>
+            </Link>
           </CardContent>
         </Card>
       ) : (
