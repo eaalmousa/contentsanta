@@ -544,11 +544,13 @@ function SourceSelector({
   selectedSourceIds,
   onToggleSource,
   isLoading,
+  onRetryBroader,
 }: {
   sources: RecommendedSource[];
   selectedSourceIds: Set<string>;
   onToggleSource: (id: string) => void;
   isLoading: boolean;
+  onRetryBroader?: () => void;
 }) {
   // Ensure sources is always an array to prevent crashes
   const safeSources = Array.isArray(sources) ? sources : [];
@@ -579,17 +581,23 @@ function SourceSelector({
             Try adjusting your search or region settings
           </p>
         </div>
-        <div className="flex flex-col gap-2 items-center">
+        <div className="flex gap-2 justify-center">
+          {onRetryBroader && (
+            <Button variant="outline" size="sm" onClick={onRetryBroader} data-testid="button-try-broader">
+              <RefreshCw className="w-4 h-4 mr-1" />
+              Try Broader Query
+            </Button>
+          )}
           <Link href="/sources">
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" data-testid="button-add-source-manual">
               <Plus className="w-4 h-4 mr-1" />
               Add Source Manually
             </Button>
           </Link>
-          <p className="text-xs text-muted-foreground">
-            Or create topic anyway - it will start inactive until sources are added
-          </p>
         </div>
+        <p className="text-xs text-muted-foreground">
+          Or create topic anyway - it will start inactive until sources are added
+        </p>
       </div>
     );
   }
@@ -696,7 +704,7 @@ function TopicCard({
   const intent = contentIntentConfig[topic.contentIntent as ContentIntent] || contentIntentConfig.mixed;
   const IntentIcon = intent.icon;
   const isLive = topic.isLive === "true";
-  const hasRules = topic.taxonomyRules && Object.keys(topic.taxonomyRules).length > 0;
+  const hasRules = topic.taxonomyRules && typeof topic.taxonomyRules === 'object' && Object.keys(topic.taxonomyRules as object).length > 0;
   const canActivate = enabledSourceCount > 0 || isLive;
 
   return (
@@ -755,7 +763,7 @@ function TopicCard({
             </Badge>
             {topic.outputVolumePerDay && (
               <Badge variant="outline" className="text-xs">
-                {topic.outputVolumePerDay}/day
+                {String(topic.outputVolumePerDay)}/day
               </Badge>
             )}
             {hasRules && (
@@ -1289,6 +1297,7 @@ export default function TopicsPage() {
                 selectedSourceIds={selectedSourceIds}
                 onToggleSource={handleToggleSource}
                 isLoading={isLoadingSources}
+                onRetryBroader={handlePreviousStep}
               />
 
               <DialogFooter>
