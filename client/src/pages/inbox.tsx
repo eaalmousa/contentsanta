@@ -51,7 +51,7 @@ export default function InboxPage() {
     return queryString ? `/api/source-items?${queryString}` : "/api/source-items";
   };
 
-  const { data: items, isLoading, isError } = useQuery<SourceItem[]>({
+  const { data: items, isLoading, isError, refetch } = useQuery<SourceItem[]>({
     queryKey: [buildSourceItemsUrl()],
   });
 
@@ -138,8 +138,9 @@ export default function InboxPage() {
               There was an error loading your inbox items. Please try again.
             </p>
           </div>
-          <Button onClick={() => window.location.reload()} variant="outline">
-            Refresh Page
+          <Button onClick={() => refetch()} variant="outline">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Try Again
           </Button>
         </div>
       </div>
