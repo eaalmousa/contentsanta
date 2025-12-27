@@ -1519,6 +1519,108 @@ export async function registerRoutes(
     }
   });
 
+  // Topic Source Recommendations
+  app.post("/api/topics/recommend-sources", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicQuery, contentType, region, countries, language, workspaceId = "demo-workspace" } = req.body;
+      
+      const { getSourceRecommendations, getDefaultEnabledSources } = await import("./services/source-recommendation-service");
+      
+      const result = await getSourceRecommendations({
+        topicQuery: topicQuery || "",
+        contentType: contentType || "news_monitoring",
+        region,
+        countries,
+        language,
+        workspaceId,
+      });
+      
+      const defaultEnabled = getDefaultEnabledSources(result.candidates);
+      
+      res.json({
+        ...result,
+        defaultEnabled,
+      });
+    } catch (error: any) {
+      console.error("[API] recommend-sources error:", error);
+      res.status(500).json({ error: error.message || "Failed to get source recommendations" });
+    }
+  });
+
+  // Topic Sources Management
+  app.get("/api/topics/:topicId/sources", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      const topicSources = await storage.getTopicSources(topicId);
+      
+      const sourcesWithDetails = await Promise.all(
+        topicSources.map(async (ts) => {
+          const source = await storage.getSource(ts.sourceId);
+          return {
+            ...ts,
+            source,
+          };
+        })
+      );
+      
+      res.json(sourcesWithDetails);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch topic sources" });
+    }
+  });
+
+  app.post("/api/topics/:topicId/sources", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      const { sourceSelections } = req.body;
+      
+      if (!Array.isArray(sourceSelections)) {
+        return res.status(400).json({ error: "sourceSelections must be an array" });
+      }
+      
+      for (const selection of sourceSelections) {
+        await storage.upsertTopicSource({
+          topicId,
+          sourceId: selection.sourceId,
+          isEnabled: selection.isEnabled,
+        });
+      }
+      
+      const enabledCount = sourceSelections.filter((s: any) => s.isEnabled).length;
+      
+      res.json({ 
+        success: true, 
+        savedCount: sourceSelections.length,
+        enabledCount,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to save topic sources" });
+    }
+  });
+
+  app.patch("/api/topics/:topicId/sources/:sourceId", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId, sourceId } = req.params;
+      const { isEnabled } = req.body;
+      
+      await storage.setTopicSourceEnabled(topicId, sourceId, isEnabled);
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update topic source" });
+    }
+  });
+
+  app.get("/api/topics/:topicId/enabled-source-count", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      const enabledIds = await storage.getEnabledSourceIdsForTopic(topicId);
+      res.json({ count: enabledIds.length });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get enabled source count" });
+    }
+  });
+
   // ==================== DRAFTS ====================
   
   app.get("/api/drafts", isAuthenticated, async (req: Request, res: Response) => {
