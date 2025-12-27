@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { 
   Plus,
@@ -20,6 +20,10 @@ import {
   ChevronRight,
   ChevronDown,
   Check,
+  Newspaper,
+  CheckCircle2,
+  Circle,
+  Star,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -512,6 +516,147 @@ function TopicSettingsDialog({
   );
 }
 
+interface RecommendedSource {
+  sourceId?: string;
+  candidateId?: string;
+  name: string;
+  domain: string;
+  country?: string;
+  language?: string;
+  tier: 1 | 2 | 3;
+  score: number;
+  reasons: string[];
+  isVerified: boolean;
+  isExisting: boolean;
+}
+
+const tierBadgeColors: Record<number, string> = {
+  1: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
+  2: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+  3: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+};
+
+function SourceSelector({
+  sources,
+  selectedSourceIds,
+  onToggleSource,
+  isLoading,
+}: {
+  sources: RecommendedSource[];
+  selectedSourceIds: Set<string>;
+  onToggleSource: (id: string) => void;
+  isLoading: boolean;
+}) {
+  const groupedByTier = useMemo(() => {
+    const tier1 = sources.filter(s => s.tier === 1);
+    const tier2 = sources.filter(s => s.tier === 2);
+    const tier3 = sources.filter(s => s.tier === 3);
+    return { tier1, tier2, tier3 };
+  }, [sources]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-muted-foreground">Finding sources...</span>
+      </div>
+    );
+  }
+
+  if (sources.length === 0) {
+    return (
+      <div className="text-center py-8 text-muted-foreground">
+        <Newspaper className="w-8 h-8 mx-auto mb-2 opacity-50" />
+        <p>No sources available for this workspace.</p>
+        <p className="text-sm">Add RSS sources in the Sources section first.</p>
+      </div>
+    );
+  }
+
+  const renderSourceRow = (source: RecommendedSource) => {
+    const id = source.sourceId || source.candidateId || source.domain;
+    if (!source.sourceId) return null;
+    
+    const isSelected = selectedSourceIds.has(source.sourceId);
+    
+    return (
+      <div
+        key={id}
+        className={`flex items-center gap-3 p-2 rounded-md cursor-pointer hover-elevate ${
+          isSelected ? "bg-accent" : ""
+        }`}
+        onClick={() => source.sourceId && onToggleSource(source.sourceId)}
+        data-testid={`source-row-${source.sourceId}`}
+      >
+        <div className="flex-shrink-0">
+          {isSelected ? (
+            <CheckCircle2 className="w-5 h-5 text-primary" />
+          ) : (
+            <Circle className="w-5 h-5 text-muted-foreground" />
+          )}
+        </div>
+        
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-sm truncate">{source.name}</div>
+          <div className="text-xs text-muted-foreground truncate">{source.domain}</div>
+        </div>
+        
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {source.tier === 1 && (
+            <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+          )}
+          <Badge variant="outline" className={`text-xs ${tierBadgeColors[source.tier]}`}>
+            Tier {source.tier}
+          </Badge>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <ScrollArea className="h-[300px]">
+      <div className="space-y-4">
+        {groupedByTier.tier1.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+              <span className="text-sm font-medium">Tier 1 - Major Outlets</span>
+              <Badge variant="secondary" className="text-xs">{groupedByTier.tier1.length}</Badge>
+            </div>
+            <div className="space-y-1">
+              {groupedByTier.tier1.map(renderSourceRow)}
+            </div>
+          </div>
+        )}
+        
+        {groupedByTier.tier2.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-medium">Tier 2 - Recognized Sources</span>
+              <Badge variant="secondary" className="text-xs">{groupedByTier.tier2.length}</Badge>
+            </div>
+            <div className="space-y-1">
+              {groupedByTier.tier2.map(renderSourceRow)}
+            </div>
+          </div>
+        )}
+        
+        {groupedByTier.tier3.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-medium">Tier 3 - Other Sources</span>
+              <Badge variant="secondary" className="text-xs">{groupedByTier.tier3.length}</Badge>
+            </div>
+            <div className="space-y-1">
+              {groupedByTier.tier3.map(renderSourceRow)}
+            </div>
+          </div>
+        )}
+      </div>
+    </ScrollArea>
+  );
+}
+
 function TopicCard({ 
   topic, 
   onToggleLive,
@@ -618,6 +763,10 @@ export default function TopicsPage() {
   const { toast } = useToast();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [settingsTopic, setSettingsTopic] = useState<Topic | null>(null);
+  const [wizardStep, setWizardStep] = useState<1 | 2>(1);
+  const [recommendedSources, setRecommendedSources] = useState<RecommendedSource[]>([]);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
+  const [isLoadingSources, setIsLoadingSources] = useState(false);
   const [newTopic, setNewTopic] = useState({
     name: "",
     description: "",
@@ -631,6 +780,36 @@ export default function TopicsPage() {
     queryKey: ["/api/topics"],
   });
 
+  const fetchRecommendedSources = async () => {
+    setIsLoadingSources(true);
+    try {
+      const response = await apiRequest("POST", "/api/topics/recommend-sources", {
+        topicQuery: newTopic.query,
+        contentType: newTopic.contentIntent,
+        language: newTopic.language,
+        workspaceId: "demo-workspace",
+      });
+      const data = response as { candidates: RecommendedSource[]; defaultEnabled: string[] };
+      setRecommendedSources(data.candidates);
+      setSelectedSourceIds(new Set(data.defaultEnabled));
+    } catch (error) {
+      console.error("Failed to fetch recommended sources:", error);
+      toast({ title: "Failed to load sources", variant: "destructive" });
+    } finally {
+      setIsLoadingSources(false);
+    }
+  };
+
+  const saveTopicSourcesMutation = useMutation({
+    mutationFn: async ({ topicId, sourceIds }: { topicId: string; sourceIds: string[] }) => {
+      const sourceSelections = sourceIds.map(sourceId => ({
+        sourceId,
+        isEnabled: true,
+      }));
+      return await apiRequest("POST", `/api/topics/${topicId}/sources`, { sourceSelections });
+    },
+  });
+
   const createTopicMutation = useMutation({
     mutationFn: async (data: typeof newTopic) => {
       return await apiRequest("POST", "/api/topics", {
@@ -638,20 +817,38 @@ export default function TopicsPage() {
         workspaceId: "demo-workspace",
       });
     },
-    onSuccess: () => {
+    onSuccess: async (result: any) => {
+      if (selectedSourceIds.size > 0 && result?.id) {
+        try {
+          await saveTopicSourcesMutation.mutateAsync({
+            topicId: result.id,
+            sourceIds: Array.from(selectedSourceIds),
+          });
+        } catch (error) {
+          console.error("Failed to save topic sources:", error);
+        }
+      }
+      
       queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
-      toast({ title: "Topic created" });
-      setShowCreateDialog(false);
-      setNewTopic({
-        name: "",
-        description: "",
-        query: "",
-        language: "en",
-        contentIntent: "news_monitoring",
-        outputVolumePerDay: 5,
-      });
+      toast({ title: "Topic created", description: `${selectedSourceIds.size} sources enabled` });
+      resetCreateDialog();
     },
   });
+
+  const resetCreateDialog = () => {
+    setShowCreateDialog(false);
+    setWizardStep(1);
+    setRecommendedSources([]);
+    setSelectedSourceIds(new Set());
+    setNewTopic({
+      name: "",
+      description: "",
+      query: "",
+      language: "en",
+      contentIntent: "news_monitoring",
+      outputVolumePerDay: 5,
+    });
+  };
 
   const updateTopicMutation = useMutation({
     mutationFn: async ({ id, isLive }: { id: string; isLive: string }) => {
@@ -686,9 +883,43 @@ export default function TopicsPage() {
     }
   };
 
+  const handleNextStep = async () => {
+    if (wizardStep === 1) {
+      if (!newTopic.name.trim()) return;
+      setWizardStep(2);
+      await fetchRecommendedSources();
+    }
+  };
+
+  const handlePreviousStep = () => {
+    if (wizardStep === 2) {
+      setWizardStep(1);
+    }
+  };
+
+  const handleToggleSource = (sourceId: string) => {
+    const newSet = new Set(selectedSourceIds);
+    if (newSet.has(sourceId)) {
+      newSet.delete(sourceId);
+    } else {
+      newSet.add(sourceId);
+    }
+    setSelectedSourceIds(newSet);
+  };
+
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTopic.name.trim()) return;
+    
+    if (selectedSourceIds.size === 0) {
+      toast({ 
+        title: "No sources selected", 
+        description: "Please select at least one source for this topic",
+        variant: "destructive" 
+      });
+      return;
+    }
+    
     createTopicMutation.mutate(newTopic);
   };
 
@@ -781,116 +1012,175 @@ export default function TopicsPage() {
         </div>
       )}
 
-      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-        <DialogContent className="sm:max-w-md">
+      <Dialog open={showCreateDialog} onOpenChange={(open) => !open && resetCreateDialog()}>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Create Topic</DialogTitle>
+            <DialogTitle>
+              {wizardStep === 1 ? "Create Topic" : "Select Sources"}
+            </DialogTitle>
             <DialogDescription>
-              Define a new content topic to track and generate drafts
+              {wizardStep === 1 
+                ? "Define a new content topic to track and generate drafts"
+                : "Choose which sources to enable for this topic"
+              }
             </DialogDescription>
           </DialogHeader>
           
-          <form onSubmit={handleCreate} className="space-y-4">
-            <div>
-              <Label htmlFor="name">Topic Name</Label>
-              <Input
-                id="name"
-                value={newTopic.name}
-                onChange={(e) => setNewTopic({ ...newTopic, name: e.target.value })}
-                placeholder="e.g., AI Industry News"
-                data-testid="input-create-topic-name"
-              />
+          <div className="flex items-center gap-2 mb-4">
+            <div className={`flex items-center gap-1 text-sm ${wizardStep >= 1 ? "text-primary" : "text-muted-foreground"}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${wizardStep >= 1 ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                1
+              </div>
+              <span>Details</span>
             </div>
-
-            <div>
-              <Label htmlFor="intent">Content Type</Label>
-              <Select 
-                value={newTopic.contentIntent} 
-                onValueChange={(v) => setNewTopic({ ...newTopic, contentIntent: v as ContentIntent })}
-              >
-                <SelectTrigger data-testid="select-create-topic-intent">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="news_monitoring">News Monitoring</SelectItem>
-                  <SelectItem value="informational">Informational</SelectItem>
-                  <SelectItem value="evergreen">Evergreen</SelectItem>
-                  <SelectItem value="mixed">Mixed</SelectItem>
-                </SelectContent>
-              </Select>
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            <div className={`flex items-center gap-1 text-sm ${wizardStep >= 2 ? "text-primary" : "text-muted-foreground"}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${wizardStep >= 2 ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                2
+              </div>
+              <span>Sources</span>
             </div>
-
-            <div>
-              <Label htmlFor="query">What to Track</Label>
-              <Textarea
-                id="query"
-                value={newTopic.query}
-                onChange={(e) => setNewTopic({ ...newTopic, query: e.target.value })}
-                placeholder="e.g., OpenAI announcements, AI regulations, machine learning breakthroughs"
-                className="resize-none"
-                rows={2}
-                data-testid="input-create-topic-query"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+          </div>
+          
+          {wizardStep === 1 ? (
+            <div className="space-y-4">
               <div>
-                <Label htmlFor="language">Language</Label>
+                <Label htmlFor="name">Topic Name</Label>
+                <Input
+                  id="name"
+                  value={newTopic.name}
+                  onChange={(e) => setNewTopic({ ...newTopic, name: e.target.value })}
+                  placeholder="e.g., AI Industry News"
+                  data-testid="input-create-topic-name"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="intent">Content Type</Label>
                 <Select 
-                  value={newTopic.language} 
-                  onValueChange={(v) => setNewTopic({ ...newTopic, language: v })}
+                  value={newTopic.contentIntent} 
+                  onValueChange={(v) => setNewTopic({ ...newTopic, contentIntent: v as ContentIntent })}
                 >
-                  <SelectTrigger data-testid="select-create-topic-language">
+                  <SelectTrigger data-testid="select-create-topic-intent">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="ar">Arabic</SelectItem>
-                    <SelectItem value="es">Spanish</SelectItem>
-                    <SelectItem value="fr">French</SelectItem>
+                    <SelectItem value="news_monitoring">News Monitoring</SelectItem>
+                    <SelectItem value="informational">Informational</SelectItem>
+                    <SelectItem value="evergreen">Evergreen</SelectItem>
+                    <SelectItem value="mixed">Mixed</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div>
-                <Label htmlFor="volume">Drafts per Day</Label>
-                <Select 
-                  value={String(newTopic.outputVolumePerDay)} 
-                  onValueChange={(v) => setNewTopic({ ...newTopic, outputVolumePerDay: parseInt(v) })}
-                >
-                  <SelectTrigger data-testid="select-create-topic-volume">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1</SelectItem>
-                    <SelectItem value="3">3</SelectItem>
-                    <SelectItem value="5">5</SelectItem>
-                    <SelectItem value="10">10</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="query">What to Track</Label>
+                <Textarea
+                  id="query"
+                  value={newTopic.query}
+                  onChange={(e) => setNewTopic({ ...newTopic, query: e.target.value })}
+                  placeholder="e.g., OpenAI announcements, AI regulations, machine learning breakthroughs"
+                  className="resize-none"
+                  rows={2}
+                  data-testid="input-create-topic-query"
+                />
               </div>
-            </div>
 
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowCreateDialog(false)}>
-                Cancel
-              </Button>
-              <Button 
-                type="submit" 
-                disabled={!newTopic.name.trim() || createTopicMutation.isPending}
-                data-testid="button-submit-create-topic"
-              >
-                {createTopicMutation.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  "Create Topic"
-                )}
-              </Button>
-            </DialogFooter>
-          </form>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="language">Language</Label>
+                  <Select 
+                    value={newTopic.language} 
+                    onValueChange={(v) => setNewTopic({ ...newTopic, language: v })}
+                  >
+                    <SelectTrigger data-testid="select-create-topic-language">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="en">English</SelectItem>
+                      <SelectItem value="ar">Arabic</SelectItem>
+                      <SelectItem value="es">Spanish</SelectItem>
+                      <SelectItem value="fr">French</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="volume">Drafts per Day</Label>
+                  <Select 
+                    value={String(newTopic.outputVolumePerDay)} 
+                    onValueChange={(v) => setNewTopic({ ...newTopic, outputVolumePerDay: parseInt(v) })}
+                  >
+                    <SelectTrigger data-testid="select-create-topic-volume">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1</SelectItem>
+                      <SelectItem value="3">3</SelectItem>
+                      <SelectItem value="5">5</SelectItem>
+                      <SelectItem value="10">10</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={resetCreateDialog}>
+                  Cancel
+                </Button>
+                <Button 
+                  type="button"
+                  onClick={handleNextStep}
+                  disabled={!newTopic.name.trim()}
+                  data-testid="button-wizard-next"
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <form onSubmit={handleCreate} className="space-y-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-muted-foreground">
+                  Topic: <span className="font-medium text-foreground">{newTopic.name}</span>
+                </span>
+                <Badge variant="secondary">
+                  {selectedSourceIds.size} selected
+                </Badge>
+              </div>
+              
+              <SourceSelector
+                sources={recommendedSources}
+                selectedSourceIds={selectedSourceIds}
+                onToggleSource={handleToggleSource}
+                isLoading={isLoadingSources}
+              />
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={handlePreviousStep}>
+                  Back
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={selectedSourceIds.size === 0 || createTopicMutation.isPending}
+                  data-testid="button-submit-create-topic"
+                >
+                  {createTopicMutation.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      Create Topic
+                      <Check className="w-4 h-4 ml-1" />
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 
