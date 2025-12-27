@@ -15,6 +15,7 @@ import {
   History,
   ArrowRight,
   Target,
+  AlertCircle,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -190,6 +191,25 @@ export default function AutomationsPage() {
           {[1, 2].map((i) => (
             <Skeleton key={i} className="h-48" />
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col gap-6 p-6">
+        <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
+          <AlertCircle className="h-16 w-16 text-destructive/50" />
+          <div className="flex flex-col items-center gap-2 text-center">
+            <h3 className="text-xl font-semibold">Failed to load automations</h3>
+            <p className="max-w-sm text-muted-foreground">
+              There was an error loading your automations. Please try again.
+            </p>
+          </div>
+          <Button onClick={() => window.location.reload()} variant="outline">
+            Refresh Page
+          </Button>
         </div>
       </div>
     );
