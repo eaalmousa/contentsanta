@@ -24,6 +24,10 @@ import {
   discoveryJobs, type DiscoveryJob, type InsertDiscoveryJob,
   discoveredSources, type DiscoveredSource, type InsertDiscoveredSource,
   contentPlans, type ContentPlan, type InsertContentPlan,
+  stories, type Story, type InsertStory,
+  storyItems, type StoryItem, type InsertStoryItem,
+  drafts, type Draft, type InsertDraft,
+  topics, type Topic, type InsertTopic,
   type RoleType,
   type RunStatus,
   type AssetStatus,
@@ -31,6 +35,7 @@ import {
   type AutomationRunStatus,
   type DiscoveryJobStatus,
   type DiscoveredSourceStatus,
+  type DraftStatus,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
@@ -200,6 +205,32 @@ export interface IStorage {
   getContentPlan(id: string): Promise<ContentPlan | undefined>;
   createContentPlan(data: InsertContentPlan): Promise<ContentPlan>;
   updateContentPlan(id: string, data: Partial<ContentPlan>): Promise<ContentPlan | undefined>;
+  
+  // Stories (clustering)
+  getStories(workspaceId: string, dateBucket?: string): Promise<Story[]>;
+  getStory(id: string): Promise<Story | undefined>;
+  createStory(data: InsertStory): Promise<Story>;
+  updateStory(id: string, data: Partial<Story>): Promise<Story | undefined>;
+  findStoriesBySimilarity(workspaceId: string, similarityHash: string, dateBucket: string): Promise<Story[]>;
+  
+  // Story Items
+  getStoryItems(storyId: string): Promise<StoryItem[]>;
+  createStoryItem(data: InsertStoryItem): Promise<StoryItem>;
+  
+  // Drafts
+  getDrafts(workspaceId: string, status?: DraftStatus, topicId?: string): Promise<Draft[]>;
+  getDraft(id: string): Promise<Draft | undefined>;
+  createDraft(data: InsertDraft): Promise<Draft>;
+  updateDraft(id: string, data: Partial<Draft>): Promise<Draft | undefined>;
+  deleteDraft(id: string): Promise<void>;
+  
+  // Topics
+  getTopics(workspaceId: string): Promise<Topic[]>;
+  getTopic(id: string): Promise<Topic | undefined>;
+  createTopic(data: InsertTopic): Promise<Topic>;
+  updateTopic(id: string, data: Partial<Topic>): Promise<Topic | undefined>;
+  deleteTopic(id: string): Promise<void>;
+  getLiveTopics(): Promise<Topic[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -882,6 +913,116 @@ export class DatabaseStorage implements IStorage {
   async updateContentPlan(id: string, data: Partial<ContentPlan>): Promise<ContentPlan | undefined> {
     const [plan] = await db.update(contentPlans).set(data).where(eq(contentPlans.id, id)).returning();
     return plan;
+  }
+
+  // Stories (clustering)
+  async getStories(workspaceId: string, dateBucket?: string): Promise<Story[]> {
+    if (dateBucket) {
+      return await db.select().from(stories)
+        .where(and(eq(stories.workspaceId, workspaceId), eq(stories.publishedDateBucket, dateBucket)))
+        .orderBy(desc(stories.firstSeenAt));
+    }
+    return await db.select().from(stories)
+      .where(eq(stories.workspaceId, workspaceId))
+      .orderBy(desc(stories.firstSeenAt));
+  }
+
+  async getStory(id: string): Promise<Story | undefined> {
+    const [story] = await db.select().from(stories).where(eq(stories.id, id));
+    return story;
+  }
+
+  async createStory(data: InsertStory): Promise<Story> {
+    const [story] = await db.insert(stories).values(data).returning();
+    return story;
+  }
+
+  async updateStory(id: string, data: Partial<Story>): Promise<Story | undefined> {
+    const [story] = await db.update(stories).set(data).where(eq(stories.id, id)).returning();
+    return story;
+  }
+
+  async findStoriesBySimilarity(workspaceId: string, similarityHash: string, dateBucket: string): Promise<Story[]> {
+    return await db.select().from(stories)
+      .where(and(
+        eq(stories.workspaceId, workspaceId),
+        eq(stories.similarityHash, similarityHash),
+        eq(stories.publishedDateBucket, dateBucket)
+      ));
+  }
+
+  // Story Items
+  async getStoryItems(storyId: string): Promise<StoryItem[]> {
+    return await db.select().from(storyItems)
+      .where(eq(storyItems.storyId, storyId))
+      .orderBy(desc(storyItems.createdAt));
+  }
+
+  async createStoryItem(data: InsertStoryItem): Promise<StoryItem> {
+    const [item] = await db.insert(storyItems).values(data).returning();
+    return item;
+  }
+
+  // Drafts
+  async getDrafts(workspaceId: string, status?: DraftStatus, topicId?: string): Promise<Draft[]> {
+    let conditions = [eq(drafts.workspaceId, workspaceId)];
+    if (status) conditions.push(eq(drafts.status, status));
+    if (topicId) conditions.push(eq(drafts.topicId, topicId));
+    
+    return await db.select().from(drafts)
+      .where(and(...conditions))
+      .orderBy(desc(drafts.createdAt));
+  }
+
+  async getDraft(id: string): Promise<Draft | undefined> {
+    const [draft] = await db.select().from(drafts).where(eq(drafts.id, id));
+    return draft;
+  }
+
+  async createDraft(data: InsertDraft): Promise<Draft> {
+    const [draft] = await db.insert(drafts).values(data).returning();
+    return draft;
+  }
+
+  async updateDraft(id: string, data: Partial<Draft>): Promise<Draft | undefined> {
+    const [draft] = await db.update(drafts).set({ ...data, updatedAt: new Date() }).where(eq(drafts.id, id)).returning();
+    return draft;
+  }
+
+  async deleteDraft(id: string): Promise<void> {
+    await db.delete(drafts).where(eq(drafts.id, id));
+  }
+
+  // Topics
+  async getTopics(workspaceId: string): Promise<Topic[]> {
+    return await db.select().from(topics)
+      .where(eq(topics.workspaceId, workspaceId))
+      .orderBy(desc(topics.createdAt));
+  }
+
+  async getTopic(id: string): Promise<Topic | undefined> {
+    const [topic] = await db.select().from(topics).where(eq(topics.id, id));
+    return topic;
+  }
+
+  async createTopic(data: InsertTopic): Promise<Topic> {
+    const [topic] = await db.insert(topics).values(data).returning();
+    return topic;
+  }
+
+  async updateTopic(id: string, data: Partial<Topic>): Promise<Topic | undefined> {
+    const [topic] = await db.update(topics).set(data).where(eq(topics.id, id)).returning();
+    return topic;
+  }
+
+  async deleteTopic(id: string): Promise<void> {
+    await db.delete(topics).where(eq(topics.id, id));
+  }
+
+  async getLiveTopics(): Promise<Topic[]> {
+    return await db.select().from(topics)
+      .where(eq(topics.isLive, "true"))
+      .orderBy(desc(topics.createdAt));
   }
 }
 

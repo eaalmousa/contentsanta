@@ -1,0 +1,265 @@
+You are the Replit AI agent working on ContentSanta.
+
+CONTEXT
+ContentSanta is NOT a generic AI editor, RSS reader, or automation dashboard.
+It is a Smart Content Automation platform designed to let users:
+
+Search → Choose content intent → Select sources → Connect publishing → Schedule → Activate
+
+All existing backend systems (RSS ingestion, deduplication, retries, logging, fetch_runs, publishing, WordPress integration) are CORRECT and must remain intact.
+These systems are INFRASTRUCTURE and should not be directly exposed to end users.
+
+Your task is to evolve ContentSanta into a SMART, SAFE, and SIMPLE editorial system by:
+1) Refocusing the UX
+2) Adding intelligent source discovery (RSS + non-RSS)
+3) Preventing duplicate news even when titles/styles differ
+
+DO NOT:
+- Remove or weaken existing RSS ingestion, dedupe, retry, or logging logic
+- Break database integrity or existing APIs
+- Turn ContentSanta into a visible “tools dashboard”
+
+DO:
+- Treat existing functionality as backend plumbing
+- Introduce higher-level abstractions (Topics, Stories, Smart Editor)
+- Improve intelligence without increasing user complexity
+
+────────────────────────────────
+CORE PRODUCT MODEL
+────────────────────────────────
+
+ContentSanta operates around THREE hidden layers and ONE visible flow.
+
+Hidden layers:
+- Source ingestion (RSS, sitemap, site checks)
+- Deduplication (content-level + story-level)
+- Automation & scheduling
+
+Visible flow:
+- Smart Editor (guided experience)
+
+────────────────────────────────
+1) CONTENT INTENT — STEP BEFORE RSS
+────────────────────────────────
+
+Introduce a mandatory first step BEFORE any source or RSS logic:
+
+Content Intent selection:
+- News monitoring
+- Informational / educational
+- Evergreen / blog content
+- Mixed
+
+Rules:
+- RSS-based discovery is used ONLY when “News monitoring” is selected
+- Other intents may use lighter discovery (sitemaps, curated sources, future connectors)
+- This choice determines backend pipelines but is NOT shown as technical detail
+
+────────────────────────────────
+2) SMART SOURCE DISCOVERY (RSS + NON-RSS)
+────────────────────────────────
+
+Users must NEVER be asked to paste RSS URLs.
+
+Instead:
+- Users define parameters:
+  - query / topic
+  - language
+  - country / region
+  - publication type (news, blog, research, etc.)
+
+The system then automatically discovers sources using this order:
+1) RSS / Atom feeds (preferred)
+2) XML sitemaps
+3) Known publisher patterns
+4) Approved fallback extraction (only if explicitly allowed)
+
+For each candidate source:
+- Validate feed availability
+- Validate XML correctness
+- Apply existing RSS hardening rules
+- Assign a trust tier
+
+────────────────────────────────
+3) MEDIA TIERS (SAFETY & QUALITY)
+────────────────────────────────
+
+Introduce Media Tiers that affect system behavior (not just labels):
+
+Tier 1 — Authoritative
+- Major, trusted publishers
+- Eligible for auto-publish
+
+Tier 2 — Credible
+- Standard outlets
+- Eligible for publish with review or stricter thresholds
+
+Tier 3 — Unknown / Unverified
+- Manual review only
+- Never auto-published
+
+Tiers affect:
+- Deduplication strictness
+- Publishing permissions
+- Default review mode
+
+────────────────────────────────
+4) STORY-LEVEL DEDUPLICATION (CRITICAL)
+────────────────────────────────
+
+Current content-hash deduplication is correct and MUST remain.
+Add a SECOND layer: story-level clustering.
+
+Goal:
+Prevent duplicate stories even when:
+- Titles differ
+- Writing styles differ
+- URLs differ
+- Sources differ
+
+Implementation (incremental, safe):
+- Introduce Story Clusters
+
+Conceptual model:
+- source_items → canonical ingested items (existing)
+- stories → represent a single real-world event/topic
+- story_items → link multiple source_items to one story
+
+Clustering logic:
+- Use normalized title + excerpt
+- Extract key entities (ORG, PERSON, LOCATION)
+- Use publish date bucket (e.g., same day)
+- Apply semantic similarity (or SimHash/MinHash initially)
+
+Rules:
+- If similarity ≥ threshold → attach to existing story
+- Else → create new story
+
+Result:
+- ONE story per event
+- Multiple sources attached as provenance
+
+────────────────────────────────
+5) SMART EDITOR — PRIMARY UX
+────────────────────────────────
+
+Create or refactor a primary page called “Smart Editor”.
+
+This is the HOME.
+
+Responsibilities:
+- Define topic/query
+- Choose content intent
+- Set filters (language, region, time range)
+- Preview discovered sources (toggle-based, no URLs)
+- View generated DRAFTS (not raw source items)
+- Edit / approve / reject drafts
+
+Users NEVER see:
+- RSS
+- inbox
+- fetch runs
+- raw source items
+
+They see:
+- Drafts derived from stories
+
+Each draft shows:
+- Headline
+- Angle / summary
+- Provenance (“Based on: BBC, Reuters”)
+- Actions: Edit / Approve / Reject
+
+────────────────────────────────
+6) TOPICS (NOT “AUTOMATIONS”)
+────────────────────────────────
+
+Rename and refactor Automations → Topics.
+
+A Topic represents:
+- Content intent
+- Query + filters
+- Source set (auto-discovered)
+- Media tier rules
+- Schedule
+- Output volume
+- Review mode
+- Live toggle (ON / OFF)
+
+Users interact with Topics as the unit they activate.
+
+────────────────────────────────
+7) PUBLISHING (UNCHANGED, VISIBLE)
+────────────────────────────────
+
+Keep Publishing as a visible navigation item.
+
+Responsibilities:
+- Connect WordPress (existing)
+- Configure:
+  - categories
+  - tags
+  - canonical links
+  - attribution format
+- One-time setup per destination
+
+No backend changes required.
+
+────────────────────────────────
+8) HIDE BACKEND MECHANICS
+────────────────────────────────
+
+The following must be hidden from normal users:
+- Sources
+- Inbox (raw items)
+- Fetch runs
+- Logs
+
+They may remain accessible as:
+- Admin-only routes
+- Diagnostics / Advanced
+
+Inbox must conceptually become an INTERNAL Draft Queue.
+Never render “Unknown Source” as a separate item.
+
+────────────────────────────────
+9) NAVIGATION UPDATE
+────────────────────────────────
+
+Final navigation:
+- Smart Editor (home)
+- Topics
+- Publishing
+- Library (drafts + published archive)
+
+Remove or hide:
+- Sources
+- Inbox
+- Automations
+
+────────────────────────────────
+IMPLEMENTATION GUIDANCE
+────────────────────────────────
+
+- Reuse existing APIs and services wherever possible
+- Prefer query consolidation over new duplication logic
+- Group UI rendering by canonical story or source_item.id
+- Do NOT introduce frontend-only hacks for dedupe
+- Backend correctness > UI speed
+
+────────────────────────────────
+DELIVERABLES
+────────────────────────────────
+
+1) Smart Editor page scaffold
+2) Content Intent step implemented
+3) Source discovery abstraction (RSS + non-RSS)
+4) Story-level clustering model (even minimal)
+5) Topics UX refactor
+6) Clean navigation
+7) No regression in ingestion, dedupe, or publishing
+
+After completion:
+- Provide a short summary of changes
+- List any remaining gaps
+- Do NOT ask what to do next

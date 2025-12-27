@@ -383,6 +383,7 @@ export const sources = pgTable("sources", {
   language: text("language").default("en"),
   region: text("region"),
   tags: text("tags").array(),
+  mediaTier: text("media_tier").default("tier_3"),
   isActive: text("is_active").default("true"),
   fetchIntervalMinutes: integer("fetch_interval_minutes").default(60),
   lastFetchedAt: timestamp("last_fetched_at"),
@@ -771,4 +772,143 @@ export const discoveredSourcesRelations = relations(discoveredSources, ({ one })
 
 export const contentPlansRelations = relations(contentPlans, ({ one }) => ({
   contentGoal: one(contentGoals, { fields: [contentPlans.contentGoalId], references: [contentGoals.id] }),
+}));
+
+// ============ STORY CLUSTERING & DRAFTS ============
+
+// Media tiers for source trust levels
+export const mediaTiers = ["tier_1", "tier_2", "tier_3"] as const;
+export type MediaTier = typeof mediaTiers[number];
+
+// Content intents
+export const contentIntents = ["news_monitoring", "informational", "evergreen", "mixed"] as const;
+export type ContentIntent = typeof contentIntents[number];
+
+// Draft statuses
+export const draftStatuses = ["pending", "draft", "in_review", "approved", "rejected", "published"] as const;
+export type DraftStatus = typeof draftStatuses[number];
+
+// Stories (clusters of related source items representing a single real-world event)
+export const stories = pgTable("stories", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  canonicalTitle: text("canonical_title").notNull(),
+  normalizedTitle: text("normalized_title").notNull(),
+  excerpt: text("excerpt"),
+  entities: jsonb("entities").default([]),
+  publishedDateBucket: text("published_date_bucket"),
+  similarityHash: text("similarity_hash"),
+  sourceCount: integer("source_count").default(1),
+  firstSeenAt: timestamp("first_seen_at").defaultNow(),
+  lastUpdatedAt: timestamp("last_updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_stories_workspace").on(table.workspaceId),
+  index("idx_stories_similarity").on(table.similarityHash),
+  index("idx_stories_date_bucket").on(table.publishedDateBucket),
+]);
+
+export const insertStorySchema = createInsertSchema(stories).omit({ id: true, createdAt: true, firstSeenAt: true, lastUpdatedAt: true });
+export type InsertStory = z.infer<typeof insertStorySchema>;
+export type Story = typeof stories.$inferSelect;
+
+// Story Items (links source items to stories for provenance)
+export const storyItems = pgTable("story_items", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  storyId: varchar("story_id", { length: 36 }).notNull(),
+  sourceItemId: varchar("source_item_id", { length: 36 }).notNull(),
+  sourceName: text("source_name"),
+  sourceUrl: text("source_url"),
+  similarityScore: numeric("similarity_score"),
+  isPrimary: text("is_primary").default("false"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_story_items_story").on(table.storyId),
+  index("idx_story_items_source_item").on(table.sourceItemId),
+  unique("story_item_unique").on(table.storyId, table.sourceItemId),
+]);
+
+export const insertStoryItemSchema = createInsertSchema(storyItems).omit({ id: true, createdAt: true });
+export type InsertStoryItem = z.infer<typeof insertStoryItemSchema>;
+export type StoryItem = typeof storyItems.$inferSelect;
+
+// Drafts (content derived from stories for editorial workflow)
+export const drafts = pgTable("drafts", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  topicId: varchar("topic_id", { length: 36 }),
+  storyId: varchar("story_id", { length: 36 }),
+  sourceItemId: varchar("source_item_id", { length: 36 }),
+  title: text("title").notNull(),
+  angle: text("angle"),
+  body: text("body"),
+  provenance: jsonb("provenance").default([]),
+  status: text("status").notNull().$type<DraftStatus>().default("pending"),
+  reviewNotes: text("review_notes"),
+  assetId: varchar("asset_id", { length: 36 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_drafts_workspace").on(table.workspaceId),
+  index("idx_drafts_topic").on(table.topicId),
+  index("idx_drafts_story").on(table.storyId),
+  index("idx_drafts_status").on(table.status),
+]);
+
+export const insertDraftSchema = createInsertSchema(drafts).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertDraft = z.infer<typeof insertDraftSchema>;
+export type Draft = typeof drafts.$inferSelect;
+
+// Topics (evolved from automations - user-facing content configurations)
+export const topics = pgTable("topics", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  contentIntent: text("content_intent").notNull().$type<ContentIntent>().default("news_monitoring"),
+  query: text("query"),
+  language: text("language").default("en"),
+  region: text("region"),
+  filters: jsonb("filters").default({}),
+  sourceIds: text("source_ids").array(),
+  mediaTierRules: jsonb("media_tier_rules").default({}),
+  schedule: text("schedule"),
+  outputVolumePerDay: integer("output_volume_per_day").default(5),
+  reviewMode: text("review_mode").default("manual"),
+  autoPublish: text("auto_publish").default("false"),
+  publishingTargetId: varchar("publishing_target_id", { length: 36 }),
+  isLive: text("is_live").default("false"),
+  lastRunAt: timestamp("last_run_at"),
+  nextRunAt: timestamp("next_run_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_topics_workspace").on(table.workspaceId),
+]);
+
+export const insertTopicSchema = createInsertSchema(topics).omit({ id: true, createdAt: true, lastRunAt: true, nextRunAt: true });
+export type InsertTopic = z.infer<typeof insertTopicSchema>;
+export type Topic = typeof topics.$inferSelect;
+
+// Relations for stories and drafts
+export const storiesRelations = relations(stories, ({ one, many }) => ({
+  workspace: one(workspaces, { fields: [stories.workspaceId], references: [workspaces.id] }),
+  storyItems: many(storyItems),
+  drafts: many(drafts),
+}));
+
+export const storyItemsRelations = relations(storyItems, ({ one }) => ({
+  story: one(stories, { fields: [storyItems.storyId], references: [stories.id] }),
+  sourceItem: one(sourceItems, { fields: [storyItems.sourceItemId], references: [sourceItems.id] }),
+}));
+
+export const draftsRelations = relations(drafts, ({ one }) => ({
+  workspace: one(workspaces, { fields: [drafts.workspaceId], references: [workspaces.id] }),
+  topic: one(topics, { fields: [drafts.topicId], references: [topics.id] }),
+  story: one(stories, { fields: [drafts.storyId], references: [stories.id] }),
+  sourceItem: one(sourceItems, { fields: [drafts.sourceItemId], references: [sourceItems.id] }),
+}));
+
+export const topicsRelations = relations(topics, ({ one, many }) => ({
+  workspace: one(workspaces, { fields: [topics.workspaceId], references: [workspaces.id] }),
+  drafts: many(drafts),
 }));
