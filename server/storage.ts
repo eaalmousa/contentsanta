@@ -13,9 +13,16 @@ import {
   publishingTargets, type PublishingTarget, type InsertPublishingTarget,
   publishJobs, type PublishJob, type InsertPublishJob,
   usageLedger, type UsageLedger, type InsertUsageLedger,
+  sources, type Source, type InsertSource,
+  sourceItems, type SourceItem, type InsertSourceItem,
+  automations, type Automation, type InsertAutomation,
+  automationRuns, type AutomationRun, type InsertAutomationRun,
+  automationRunItems, type AutomationRunItem, type InsertAutomationRunItem,
   type RoleType,
   type RunStatus,
   type AssetStatus,
+  type SourceItemStatus,
+  type AutomationRunStatus,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
@@ -120,6 +127,41 @@ export interface IStorage {
     workflowRuns: number;
     approvedAssets: number;
   }>;
+  
+  // Sources
+  getSources(workspaceId: string): Promise<Source[]>;
+  getSource(id: string): Promise<Source | undefined>;
+  createSource(data: InsertSource): Promise<Source>;
+  updateSource(id: string, data: Partial<Source>): Promise<Source | undefined>;
+  deleteSource(id: string): Promise<void>;
+  getActiveSources(): Promise<Source[]>;
+  
+  // Source Items
+  getSourceItems(workspaceId: string, status?: SourceItemStatus, sourceId?: string): Promise<SourceItem[]>;
+  getSourceItem(id: string): Promise<SourceItem | undefined>;
+  createSourceItem(data: InsertSourceItem): Promise<SourceItem>;
+  updateSourceItem(id: string, data: Partial<SourceItem>): Promise<SourceItem | undefined>;
+  getNewSourceItems(workspaceId: string, sourceIds?: string[]): Promise<SourceItem[]>;
+  sourceItemExists(workspaceId: string, contentHash: string): Promise<boolean>;
+  
+  // Automations
+  getAutomations(workspaceId: string): Promise<Automation[]>;
+  getAutomation(id: string): Promise<Automation | undefined>;
+  createAutomation(data: InsertAutomation): Promise<Automation>;
+  updateAutomation(id: string, data: Partial<Automation>): Promise<Automation | undefined>;
+  deleteAutomation(id: string): Promise<void>;
+  getActiveAutomations(): Promise<Automation[]>;
+  
+  // Automation Runs
+  getAutomationRuns(automationId: string): Promise<AutomationRun[]>;
+  getAutomationRun(id: string): Promise<AutomationRun | undefined>;
+  createAutomationRun(data: InsertAutomationRun): Promise<AutomationRun>;
+  updateAutomationRun(id: string, data: Partial<AutomationRun>): Promise<AutomationRun | undefined>;
+  
+  // Automation Run Items
+  getAutomationRunItems(runId: string): Promise<AutomationRunItem[]>;
+  createAutomationRunItem(data: InsertAutomationRunItem): Promise<AutomationRunItem>;
+  updateAutomationRunItem(id: string, data: Partial<AutomationRunItem>): Promise<AutomationRunItem | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -526,6 +568,151 @@ export class DatabaseStorage implements IStorage {
       workflowRuns: Number(runCount),
       approvedAssets: Number(approvedCount),
     };
+  }
+
+  // Sources
+  async getSources(workspaceId: string): Promise<Source[]> {
+    return await db.select().from(sources)
+      .where(eq(sources.workspaceId, workspaceId))
+      .orderBy(desc(sources.createdAt));
+  }
+
+  async getSource(id: string): Promise<Source | undefined> {
+    const [source] = await db.select().from(sources).where(eq(sources.id, id));
+    return source;
+  }
+
+  async createSource(data: InsertSource): Promise<Source> {
+    const [source] = await db.insert(sources).values(data).returning();
+    return source;
+  }
+
+  async updateSource(id: string, data: Partial<Source>): Promise<Source | undefined> {
+    const [source] = await db.update(sources).set(data).where(eq(sources.id, id)).returning();
+    return source;
+  }
+
+  async deleteSource(id: string): Promise<void> {
+    await db.delete(sources).where(eq(sources.id, id));
+  }
+
+  async getActiveSources(): Promise<Source[]> {
+    return await db.select().from(sources).where(eq(sources.isActive, "true"));
+  }
+
+  // Source Items
+  async getSourceItems(workspaceId: string, status?: SourceItemStatus, sourceId?: string): Promise<SourceItem[]> {
+    let conditions = [eq(sourceItems.workspaceId, workspaceId)];
+    if (status) conditions.push(eq(sourceItems.status, status));
+    if (sourceId) conditions.push(eq(sourceItems.sourceId, sourceId));
+    
+    return await db.select().from(sourceItems)
+      .where(and(...conditions))
+      .orderBy(desc(sourceItems.createdAt));
+  }
+
+  async getSourceItem(id: string): Promise<SourceItem | undefined> {
+    const [item] = await db.select().from(sourceItems).where(eq(sourceItems.id, id));
+    return item;
+  }
+
+  async createSourceItem(data: InsertSourceItem): Promise<SourceItem> {
+    const [item] = await db.insert(sourceItems).values(data).returning();
+    return item;
+  }
+
+  async updateSourceItem(id: string, data: Partial<SourceItem>): Promise<SourceItem | undefined> {
+    const [item] = await db.update(sourceItems).set(data).where(eq(sourceItems.id, id)).returning();
+    return item;
+  }
+
+  async getNewSourceItems(workspaceId: string, sourceIds?: string[]): Promise<SourceItem[]> {
+    let conditions = [
+      eq(sourceItems.workspaceId, workspaceId),
+      eq(sourceItems.status, "new")
+    ];
+    
+    if (sourceIds && sourceIds.length > 0) {
+      conditions.push(sql`${sourceItems.sourceId} IN ${sourceIds}`);
+    }
+    
+    return await db.select().from(sourceItems)
+      .where(and(...conditions))
+      .orderBy(desc(sourceItems.publishedAt));
+  }
+
+  async sourceItemExists(workspaceId: string, contentHash: string): Promise<boolean> {
+    const [item] = await db.select({ id: sourceItems.id }).from(sourceItems)
+      .where(and(eq(sourceItems.workspaceId, workspaceId), eq(sourceItems.contentHash, contentHash)));
+    return !!item;
+  }
+
+  // Automations
+  async getAutomations(workspaceId: string): Promise<Automation[]> {
+    return await db.select().from(automations)
+      .where(eq(automations.workspaceId, workspaceId))
+      .orderBy(desc(automations.createdAt));
+  }
+
+  async getAutomation(id: string): Promise<Automation | undefined> {
+    const [automation] = await db.select().from(automations).where(eq(automations.id, id));
+    return automation;
+  }
+
+  async createAutomation(data: InsertAutomation): Promise<Automation> {
+    const [automation] = await db.insert(automations).values(data).returning();
+    return automation;
+  }
+
+  async updateAutomation(id: string, data: Partial<Automation>): Promise<Automation | undefined> {
+    const [automation] = await db.update(automations).set(data).where(eq(automations.id, id)).returning();
+    return automation;
+  }
+
+  async deleteAutomation(id: string): Promise<void> {
+    await db.delete(automations).where(eq(automations.id, id));
+  }
+
+  async getActiveAutomations(): Promise<Automation[]> {
+    return await db.select().from(automations).where(eq(automations.isActive, "true"));
+  }
+
+  // Automation Runs
+  async getAutomationRuns(automationId: string): Promise<AutomationRun[]> {
+    return await db.select().from(automationRuns)
+      .where(eq(automationRuns.automationId, automationId))
+      .orderBy(desc(automationRuns.createdAt));
+  }
+
+  async getAutomationRun(id: string): Promise<AutomationRun | undefined> {
+    const [run] = await db.select().from(automationRuns).where(eq(automationRuns.id, id));
+    return run;
+  }
+
+  async createAutomationRun(data: InsertAutomationRun): Promise<AutomationRun> {
+    const [run] = await db.insert(automationRuns).values(data).returning();
+    return run;
+  }
+
+  async updateAutomationRun(id: string, data: Partial<AutomationRun>): Promise<AutomationRun | undefined> {
+    const [run] = await db.update(automationRuns).set(data).where(eq(automationRuns.id, id)).returning();
+    return run;
+  }
+
+  // Automation Run Items
+  async getAutomationRunItems(runId: string): Promise<AutomationRunItem[]> {
+    return await db.select().from(automationRunItems)
+      .where(eq(automationRunItems.runId, runId));
+  }
+
+  async createAutomationRunItem(data: InsertAutomationRunItem): Promise<AutomationRunItem> {
+    const [item] = await db.insert(automationRunItems).values(data).returning();
+    return item;
+  }
+
+  async updateAutomationRunItem(id: string, data: Partial<AutomationRunItem>): Promise<AutomationRunItem | undefined> {
+    const [item] = await db.update(automationRunItems).set(data).where(eq(automationRunItems.id, id)).returning();
+    return item;
   }
 }
 

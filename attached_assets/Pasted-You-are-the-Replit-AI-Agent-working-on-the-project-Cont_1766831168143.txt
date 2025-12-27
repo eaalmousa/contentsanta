@@ -1,0 +1,130 @@
+You are the Replit AI Agent working on the project: “Content Santa” (AI Content Platform).
+
+Context / Current State (do not ignore):
+- The app already has: Create Content (Plain Text / URL / Content Brief), AI Workflows (SEO Blog, Press Release, Social Pack, translations, summarize, etc.), Templates, Publishing Targets (including WordPress), Team roles (Owner/Admin/Editor/Reviewer/Viewer), and Admin dashboard.
+- Right now the system is MANUAL: user inputs content → runs workflow → optionally publishes.
+- The original product vision requires AUTOMATION: monitor specialized news → generate articles → publish to WordPress (with optional approvals).
+- Database target: Postgres on Neon.
+
+Your task:
+Add the missing “Source Discovery & Automation Layer” while preserving the existing UI and features.
+
+High-Level Requirements:
+1) Add a new sidebar section: “Sources” (or “News Monitor”).
+2) Add a new concept: “Automations” (scheduled pipelines) distinct from existing “AI Workflows” (content transformers).
+3) Implement scheduled fetching of RSS/web sources, deduplication, and creation of “source items”.
+4) Implement automation pipelines that can:
+   - Trigger on new source items
+   - Filter by keywords/categories
+   - Run one or more existing AI workflows (e.g., SEO Blog)
+   - Produce a draft asset in Content Library
+   - Optionally route through approval (Reviewer) before publishing
+   - Publish to a connected target (WordPress) when approved or when auto-publish is enabled
+5) Provide a clear end-to-end “Daily News → Article → WP” path in the UI.
+
+Scope: Build MVP automation end-to-end for WordPress publishing. Other platforms can remain “coming soon”.
+
+Functional Specs (MVP):
+A) Sources
+- Source types: RSS feed (required for MVP), Web URL scraping (optional; can be stubbed as “coming soon”).
+- Fields: name, type, feed_url, description, language, region, tags/keywords (array), is_active, fetch_interval_minutes, last_fetched_at.
+- UI: list sources, add/edit/delete source, test fetch button, show last fetch status and item count.
+
+B) Source Items (ingested news)
+- Store each discovered item with: source_id, title, url, published_at, author (optional), excerpt/summary (optional), raw_content (optional), hash/fingerprint, status (new/processed/ignored), metadata JSON.
+- Deduplication: by canonical URL + hash of title+url; prevent duplicates globally per workspace.
+- UI: an “Inbox” view under Sources showing newly fetched items with filters (source, date, keyword match, status), and actions: “Generate Draft”, “Ignore”, “Add to Queue”.
+
+C) Automations (scheduled pipelines)
+- Automation fields: name, description, is_active, schedule (cron or interval), filters (keywords include/exclude, language, sources), workflow_chain (one or more existing AI workflows), output_type (e.g., SEO Blog), approval_required (boolean), auto_publish (boolean), publishing_target_id (WordPress target), category/tags mapping for WP (optional), run_limit_per_cycle (optional).
+- Triggers:
+  - “On New Items” trigger (runs when new items arrive)
+  - “Scheduled Digest” trigger (runs daily at X time and processes top N)
+- UI: list automations, create/edit automation wizard:
+  1) Select sources + filters
+  2) Select workflow(s) to run
+  3) Select approval rules
+  4) Select WordPress target + mapping
+  5) Set schedule + limits
+- Run History: show each run, which items were processed, outputs, errors, published links.
+
+D) Publishing to WordPress
+- Use WordPress REST API.
+- Support credentials in the Publishing Target:
+  - site_url
+  - username + application password (store encrypted/securely; use env secret if needed)
+- Publish fields: title, content (HTML/Markdown converted), excerpt, tags/categories if available.
+- On publish success, store: wp_post_id, wp_post_url, published_at, status.
+
+E) Approvals
+- Add content status states: draft → in_review → approved → published (or scheduled).
+- If approval_required=true: automation generates draft and sets status=in_review; Reviewer approves; then publish (if auto_publish enabled) OR move to “Ready to Publish”.
+- If approval_required=false and auto_publish=true: publish immediately after draft generation.
+
+Non-Functional Requirements:
+- Use Neon Postgres as the single source of truth.
+- Implement background jobs in Replit:
+  - A scheduler (cron-like) for periodic fetches and scheduled automations
+  - A worker queue for processing items (avoid blocking web requests)
+- Robust structured logging:
+  - request_id / job_id
+  - workspace_id / user_id
+  - source_id / automation_id / item_id
+  - error_code, error_detail, stack trace
+- Error handling:
+  - Source fetch failures should not crash the app
+  - Store last_error and last_success_at per source/automation
+- Security:
+  - Workspace isolation for all tables (multi-tenant)
+  - Only Owner/Admin can manage Sources/Automations/Publishing Targets
+  - Editors can generate drafts but cannot change targets
+  - Reviewers can approve content
+- Maintain existing UI but integrate new nav items and flows coherently.
+
+Database Design (Must Deliver):
+Create migrations for Neon Postgres with tables (minimum):
+- workspaces (if not already)
+- sources
+- source_items
+- automations
+- automation_runs
+- automation_run_items (join between run and source_items)
+- publishing_targets (extend existing if present)
+- assets/content_items (extend existing to support statuses + relations)
+- approvals (optional table or store in asset status + audit trail)
+- audit_log (recommended)
+
+API / Backend (Must Deliver):
+- CRUD endpoints for Sources and Automations
+- Job endpoints or internal services for:
+  - fetchSources()
+  - processSourceItems()
+  - runAutomation(automation_id)
+  - publishToWordPress(asset_id, target_id)
+
+UI (Must Deliver):
+- Sources page + Inbox page
+- Automations page + Create Automation wizard
+- A simple “Create Daily News Automation” preset button
+- Clear linking between:
+  source item → generated asset → approval → publish history
+
+Acceptance Criteria (Definition of Done):
+1) I can add an RSS source, test fetch, and see items in an Inbox.
+2) I can create an Automation:
+   - selects that source
+   - filters by keyword
+   - runs “SEO Blog” workflow
+   - requires approval
+   - publishes to WordPress when approved
+3) New RSS items automatically create draft assets and appear in Content Library.
+4) Approval flow works and publishing creates a WP post and stores the WP URL.
+5) Run History shows what happened and errors are visible with details.
+
+Implementation Notes:
+- Start with RSS only for MVP (use a solid RSS parser).
+- Keep web scraping as “coming soon” unless already easy.
+- Prefer idempotent jobs (safe to re-run).
+- Keep code modular: services for sources, automations, publishing, and workflows.
+
+Now implement this end-to-end MVP, ensuring the UI matches the existing style and the new features integrate smoothly.

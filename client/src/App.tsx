@@ -21,6 +21,9 @@ import Team from "@/pages/team";
 import BrandVoice from "@/pages/brand-voice";
 import Settings from "@/pages/settings";
 import AdminDashboard from "@/pages/admin";
+import Sources from "@/pages/sources";
+import Inbox from "@/pages/inbox";
+import Automations from "@/pages/automations";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -37,6 +40,9 @@ function Router() {
       <Route path="/brand" component={BrandVoice} />
       <Route path="/settings" component={Settings} />
       <Route path="/admin" component={AdminDashboard} />
+      <Route path="/sources" component={Sources} />
+      <Route path="/inbox" component={Inbox} />
+      <Route path="/automations" component={Automations} />
       <Route component={NotFound} />
     </Switch>
   );

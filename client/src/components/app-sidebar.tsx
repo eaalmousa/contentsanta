@@ -12,6 +12,9 @@ import {
   BarChart3,
   Users,
   Shield,
+  Rss,
+  Inbox,
+  Zap,
 } from "lucide-react";
 import {
   Sidebar,
@@ -35,6 +38,12 @@ const mainNavItems = [
   { title: "Publishing", url: "/publishing", icon: Send },
   { title: "Usage", url: "/usage", icon: BarChart3 },
   { title: "Team", url: "/team", icon: Users },
+];
+
+const automationNavItems = [
+  { title: "Sources", url: "/sources", icon: Rss },
+  { title: "Inbox", url: "/inbox", icon: Inbox },
+  { title: "Automations", url: "/automations", icon: Zap },
 ];
 
 const settingsNavItems = [
@@ -72,6 +81,33 @@ export function AppSidebar() {
               {mainNavItems.map((item) => {
                 const isActive = location === item.url || 
                   (item.url !== "/" && location.startsWith(item.url));
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isActive}
+                      className="gap-3"
+                    >
+                      <Link href={item.url} data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                        <item.icon className="h-5 w-5" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup className="py-4">
+          <SidebarGroupLabel className="px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Automation
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {automationNavItems.map((item) => {
+                const isActive = location === item.url;
                 return (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton

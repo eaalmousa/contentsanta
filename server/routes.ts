@@ -14,12 +14,19 @@ import {
   insertWorkspaceSchema,
   insertPublishingTargetSchema,
   insertPublishJobSchema,
+  insertSourceSchema,
+  insertAutomationSchema,
   workflowMeta,
   type WorkflowType,
   type AssetStatus,
   type ChannelType,
+  type SourceItemStatus,
 } from "@shared/schema";
 import { z } from "zod";
+import { fetchRSSSource, testRSSFeed } from "./services/rss-service";
+import { runAutomation } from "./services/automation-service";
+import { testWordPressConnection, publishToWordPress } from "./services/wordpress-service";
+import { startScheduler } from "./services/scheduler";
 
 // Legacy simulated AI workflow processing (fallback)
 async function processWorkflowLegacy(
@@ -904,6 +911,270 @@ export async function registerRoutes(
       res.json(usersWithStats);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  // ============ SOURCES API ============
+  
+  app.get("/api/sources", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const sources = await storage.getSources("demo-workspace");
+      res.json(sources);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch sources" });
+    }
+  });
+
+  app.get("/api/sources/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const source = await storage.getSource(req.params.id);
+      if (!source) return res.status(404).json({ error: "Source not found" });
+      res.json(source);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch source" });
+    }
+  });
+
+  app.post("/api/sources", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const data = insertSourceSchema.parse({
+        ...req.body,
+        workspaceId: "demo-workspace",
+      });
+      const source = await storage.createSource(data);
+      res.status(201).json(source);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid source data" });
+    }
+  });
+
+  app.patch("/api/sources/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const source = await storage.updateSource(req.params.id, req.body);
+      if (!source) return res.status(404).json({ error: "Source not found" });
+      res.json(source);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update source" });
+    }
+  });
+
+  app.delete("/api/sources/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteSource(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete source" });
+    }
+  });
+
+  app.post("/api/sources/:id/fetch", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const source = await storage.getSource(req.params.id);
+      if (!source) return res.status(404).json({ error: "Source not found" });
+      
+      const result = await fetchRSSSource(source);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch source" });
+    }
+  });
+
+  app.post("/api/sources/test-feed", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: "URL is required" });
+      
+      const result = await testRSSFeed(url);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to test feed" });
+    }
+  });
+
+  // ============ SOURCE ITEMS API ============
+
+  app.get("/api/source-items", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const status = req.query.status as SourceItemStatus | undefined;
+      const sourceId = req.query.sourceId as string | undefined;
+      const items = await storage.getSourceItems("demo-workspace", status, sourceId);
+      res.json(items);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch source items" });
+    }
+  });
+
+  app.get("/api/source-items/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const item = await storage.getSourceItem(req.params.id);
+      if (!item) return res.status(404).json({ error: "Source item not found" });
+      res.json(item);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch source item" });
+    }
+  });
+
+  app.patch("/api/source-items/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const item = await storage.updateSourceItem(req.params.id, req.body);
+      if (!item) return res.status(404).json({ error: "Source item not found" });
+      res.json(item);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update source item" });
+    }
+  });
+
+  app.post("/api/source-items/:id/generate", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const item = await storage.getSourceItem(req.params.id);
+      if (!item) return res.status(404).json({ error: "Source item not found" });
+      
+      const workflowType = (req.body.workflowType || "seo_blog") as WorkflowType;
+      
+      const input = await storage.createInput({
+        workspaceId: "demo-workspace",
+        type: "url",
+        title: item.title,
+        sourceUrl: item.url,
+        rawText: item.rawContent || item.excerpt || item.title,
+        language: "en",
+      });
+      
+      const workflowRun = await storage.createWorkflowRun({
+        workspaceId: "demo-workspace",
+        inputId: input.id,
+        workflowType,
+      });
+      
+      const asset = await storage.createAsset({
+        workspaceId: "demo-workspace",
+        inputId: input.id,
+        status: "draft",
+        primaryLanguage: "en",
+      });
+      
+      await storage.updateSourceItem(item.id, { status: "queued" });
+      
+      processWorkflowWithAI(workflowRun.id, input.id, workflowType, undefined, asset.id)
+        .then(async () => {
+          await storage.updateSourceItem(item.id, { status: "processed" });
+        })
+        .catch(async () => {
+          await storage.updateSourceItem(item.id, { status: "new" });
+        });
+      
+      res.json({ 
+        success: true, 
+        runId: workflowRun.id, 
+        assetId: asset.id,
+        message: "Content generation started" 
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to generate content" });
+    }
+  });
+
+  // ============ AUTOMATIONS API ============
+
+  app.get("/api/automations", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const automations = await storage.getAutomations("demo-workspace");
+      res.json(automations);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch automations" });
+    }
+  });
+
+  app.get("/api/automations/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const automation = await storage.getAutomation(req.params.id);
+      if (!automation) return res.status(404).json({ error: "Automation not found" });
+      res.json(automation);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch automation" });
+    }
+  });
+
+  app.post("/api/automations", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const data = insertAutomationSchema.parse({
+        ...req.body,
+        workspaceId: "demo-workspace",
+      });
+      const automation = await storage.createAutomation(data);
+      res.status(201).json(automation);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid automation data" });
+    }
+  });
+
+  app.patch("/api/automations/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const automation = await storage.updateAutomation(req.params.id, req.body);
+      if (!automation) return res.status(404).json({ error: "Automation not found" });
+      res.json(automation);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update automation" });
+    }
+  });
+
+  app.delete("/api/automations/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteAutomation(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete automation" });
+    }
+  });
+
+  app.post("/api/automations/:id/run", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const automation = await storage.getAutomation(req.params.id);
+      if (!automation) return res.status(404).json({ error: "Automation not found" });
+      
+      const result = await runAutomation(automation);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to run automation" });
+    }
+  });
+
+  app.get("/api/automations/:id/runs", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const runs = await storage.getAutomationRuns(req.params.id);
+      res.json(runs);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch automation runs" });
+    }
+  });
+
+  app.get("/api/automation-runs/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const run = await storage.getAutomationRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Automation run not found" });
+      
+      const items = await storage.getAutomationRunItems(run.id);
+      res.json({ ...run, items });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch automation run" });
+    }
+  });
+
+  // ============ WORDPRESS TESTING ============
+
+  app.post("/api/publishing-targets/:id/test", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) return res.status(404).json({ error: "Target not found" });
+      
+      if (target.type === "wordpress") {
+        const result = await testWordPressConnection(target);
+        res.json(result);
+      } else {
+        res.json({ success: false, error: "Only WordPress testing is supported" });
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to test connection" });
     }
   });
 

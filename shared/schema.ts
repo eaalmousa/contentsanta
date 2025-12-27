@@ -356,6 +356,165 @@ export const assetVersionsRelations = relations(assetVersions, ({ one, many }) =
   comments: many(comments),
 }));
 
+// Source types
+export const sourceTypes = ["rss", "web"] as const;
+export type SourceType = typeof sourceTypes[number];
+
+// Source item statuses
+export const sourceItemStatuses = ["new", "queued", "processed", "ignored"] as const;
+export type SourceItemStatus = typeof sourceItemStatuses[number];
+
+// Automation trigger types
+export const automationTriggerTypes = ["on_new_items", "scheduled"] as const;
+export type AutomationTriggerType = typeof automationTriggerTypes[number];
+
+// Automation run statuses
+export const automationRunStatuses = ["pending", "running", "completed", "failed"] as const;
+export type AutomationRunStatus = typeof automationRunStatuses[number];
+
+// Sources (RSS feeds, web URLs to monitor)
+export const sources = pgTable("sources", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  name: text("name").notNull(),
+  type: text("type").notNull().$type<SourceType>().default("rss"),
+  feedUrl: text("feed_url").notNull(),
+  description: text("description"),
+  language: text("language").default("en"),
+  region: text("region"),
+  tags: text("tags").array(),
+  isActive: text("is_active").default("true"),
+  fetchIntervalMinutes: integer("fetch_interval_minutes").default(60),
+  lastFetchedAt: timestamp("last_fetched_at"),
+  lastSuccessAt: timestamp("last_success_at"),
+  lastError: text("last_error"),
+  itemCount: integer("item_count").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_sources_workspace").on(table.workspaceId),
+]);
+
+export const insertSourceSchema = createInsertSchema(sources).omit({ id: true, createdAt: true, lastFetchedAt: true, lastSuccessAt: true, lastError: true, itemCount: true });
+export type InsertSource = z.infer<typeof insertSourceSchema>;
+export type Source = typeof sources.$inferSelect;
+
+// Source Items (ingested news/content from sources)
+export const sourceItems = pgTable("source_items", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  sourceId: varchar("source_id", { length: 36 }).notNull(),
+  title: text("title").notNull(),
+  url: text("url").notNull(),
+  publishedAt: timestamp("published_at"),
+  author: text("author"),
+  excerpt: text("excerpt"),
+  rawContent: text("raw_content"),
+  contentHash: text("content_hash").notNull(),
+  status: text("status").notNull().$type<SourceItemStatus>().default("new"),
+  metadataJson: jsonb("metadata_json").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_source_items_workspace").on(table.workspaceId),
+  index("idx_source_items_source").on(table.sourceId),
+  index("idx_source_items_status").on(table.status),
+  unique("source_item_hash_unique").on(table.workspaceId, table.contentHash),
+]);
+
+export const insertSourceItemSchema = createInsertSchema(sourceItems).omit({ id: true, createdAt: true });
+export type InsertSourceItem = z.infer<typeof insertSourceItemSchema>;
+export type SourceItem = typeof sourceItems.$inferSelect;
+
+// Automations (scheduled pipelines)
+export const automations = pgTable("automations", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  isActive: text("is_active").default("true"),
+  triggerType: text("trigger_type").notNull().$type<AutomationTriggerType>().default("on_new_items"),
+  schedule: text("schedule"),
+  sourceIds: text("source_ids").array(),
+  filterKeywordsInclude: text("filter_keywords_include").array(),
+  filterKeywordsExclude: text("filter_keywords_exclude").array(),
+  filterLanguage: text("filter_language"),
+  workflowType: text("workflow_type").notNull().$type<WorkflowType>().default("seo_blog"),
+  approvalRequired: text("approval_required").default("true"),
+  autoPublish: text("auto_publish").default("false"),
+  publishingTargetId: varchar("publishing_target_id", { length: 36 }),
+  categoryMapping: jsonb("category_mapping").default({}),
+  runLimitPerCycle: integer("run_limit_per_cycle").default(10),
+  lastRunAt: timestamp("last_run_at"),
+  nextRunAt: timestamp("next_run_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_automations_workspace").on(table.workspaceId),
+]);
+
+export const insertAutomationSchema = createInsertSchema(automations).omit({ id: true, createdAt: true, lastRunAt: true, nextRunAt: true });
+export type InsertAutomation = z.infer<typeof insertAutomationSchema>;
+export type Automation = typeof automations.$inferSelect;
+
+// Automation Runs (execution history)
+export const automationRuns = pgTable("automation_runs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  automationId: varchar("automation_id", { length: 36 }).notNull(),
+  status: text("status").notNull().$type<AutomationRunStatus>().default("pending"),
+  itemsProcessed: integer("items_processed").default(0),
+  itemsSucceeded: integer("items_succeeded").default(0),
+  itemsFailed: integer("items_failed").default(0),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  logJson: jsonb("log_json").default([]),
+  errorJson: jsonb("error_json"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_automation_runs_automation").on(table.automationId),
+]);
+
+export const insertAutomationRunSchema = createInsertSchema(automationRuns).omit({ id: true, createdAt: true, startedAt: true, completedAt: true });
+export type InsertAutomationRun = z.infer<typeof insertAutomationRunSchema>;
+export type AutomationRun = typeof automationRuns.$inferSelect;
+
+// Automation Run Items (join between run and source items)
+export const automationRunItems = pgTable("automation_run_items", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  runId: varchar("run_id", { length: 36 }).notNull(),
+  sourceItemId: varchar("source_item_id", { length: 36 }).notNull(),
+  assetId: varchar("asset_id", { length: 36 }),
+  status: text("status").notNull().$type<AutomationRunStatus>().default("pending"),
+  publishedUrl: text("published_url"),
+  wpPostId: text("wp_post_id"),
+  errorJson: jsonb("error_json"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_run_items_run").on(table.runId),
+]);
+
+export const insertAutomationRunItemSchema = createInsertSchema(automationRunItems).omit({ id: true, createdAt: true });
+export type InsertAutomationRunItem = z.infer<typeof insertAutomationRunItemSchema>;
+export type AutomationRunItem = typeof automationRunItems.$inferSelect;
+
+// Relations for sources
+export const sourcesRelations = relations(sources, ({ one, many }) => ({
+  workspace: one(workspaces, { fields: [sources.workspaceId], references: [workspaces.id] }),
+  items: many(sourceItems),
+}));
+
+export const sourceItemsRelations = relations(sourceItems, ({ one }) => ({
+  source: one(sources, { fields: [sourceItems.sourceId], references: [sources.id] }),
+}));
+
+export const automationsRelations = relations(automations, ({ one, many }) => ({
+  workspace: one(workspaces, { fields: [automations.workspaceId], references: [workspaces.id] }),
+  runs: many(automationRuns),
+}));
+
+export const automationRunsRelations = relations(automationRuns, ({ one, many }) => ({
+  automation: one(automations, { fields: [automationRuns.automationId], references: [automations.id] }),
+  items: many(automationRunItems),
+}));
+
 // Workflow metadata for UI
 export const workflowMeta: Record<WorkflowType, { label: string; description: string; icon: string }> = {
   headline_pack: { 
