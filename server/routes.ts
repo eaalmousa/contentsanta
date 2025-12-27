@@ -28,7 +28,8 @@ import { runAutomation } from "./services/automation-service";
 import { testWordPressConnection, publishToWordPress } from "./services/wordpress-service";
 import { startScheduler } from "./services/scheduler";
 import { runDiscoveryJob, convertDiscoveredSourceToSource } from "./services/discovery-service";
-import { insertContentGoalSchema } from "@shared/schema";
+import { insertContentGoalSchema, insertTopicSchema, insertDraftSchema } from "@shared/schema";
+import { fromZodError } from "zod-validation-error";
 
 // Legacy simulated AI workflow processing (fallback)
 async function processWorkflowLegacy(
@@ -1341,6 +1342,151 @@ export async function registerRoutes(
       res.json(jobs);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to fetch discovery jobs" });
+    }
+  });
+
+  // ==================== TOPICS ====================
+  
+  app.get("/api/topics", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const topics = await storage.getTopics(workspaceId);
+      res.json(topics);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch topics" });
+    }
+  });
+
+  app.get("/api/topics/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const topic = await storage.getTopic(req.params.id);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+      res.json(topic);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch topic" });
+    }
+  });
+
+  app.post("/api/topics", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const validation = insertTopicSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: fromZodError(validation.error).message });
+      }
+      const topic = await storage.createTopic(validation.data);
+      res.status(201).json(topic);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to create topic" });
+    }
+  });
+
+  app.patch("/api/topics/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const topic = await storage.updateTopic(req.params.id, req.body);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+      res.json(topic);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update topic" });
+    }
+  });
+
+  app.delete("/api/topics/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteTopic(req.params.id);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to delete topic" });
+    }
+  });
+
+  // ==================== DRAFTS ====================
+  
+  app.get("/api/drafts", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const status = req.query.status as string | undefined;
+      const topicId = req.query.topicId as string | undefined;
+      const drafts = await storage.getDrafts(workspaceId, status as any, topicId);
+      res.json(drafts);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch drafts" });
+    }
+  });
+
+  app.get("/api/drafts/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const draft = await storage.getDraft(req.params.id);
+      if (!draft) {
+        return res.status(404).json({ error: "Draft not found" });
+      }
+      res.json(draft);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch draft" });
+    }
+  });
+
+  app.post("/api/drafts", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const validation = insertDraftSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: fromZodError(validation.error).message });
+      }
+      const draft = await storage.createDraft(validation.data);
+      res.status(201).json(draft);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to create draft" });
+    }
+  });
+
+  app.patch("/api/drafts/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const draft = await storage.updateDraft(req.params.id, req.body);
+      if (!draft) {
+        return res.status(404).json({ error: "Draft not found" });
+      }
+      res.json(draft);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update draft" });
+    }
+  });
+
+  app.delete("/api/drafts/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteDraft(req.params.id);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to delete draft" });
+    }
+  });
+
+  // ==================== STORIES ====================
+  
+  app.get("/api/stories", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const dateBucket = req.query.dateBucket as string | undefined;
+      const stories = await storage.getStories(workspaceId, dateBucket);
+      res.json(stories);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch stories" });
+    }
+  });
+
+  app.get("/api/stories/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const story = await storage.getStory(req.params.id);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+      
+      const storyItems = await storage.getStoryItems(req.params.id);
+      res.json({ ...story, items: storyItems });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch story" });
     }
   });
 

@@ -1,21 +1,21 @@
 import { Link, useLocation } from "wouter";
 import {
-  LayoutDashboard,
-  FileText,
-  Sparkles,
+  Edit3,
   FolderOpen,
   Palette,
   Settings,
   Gift,
-  LayoutTemplate,
   Send,
-  BarChart3,
-  Users,
   Shield,
+  Target,
+  LayoutDashboard,
   Rss,
   Inbox,
   Zap,
-  Target,
+  LayoutTemplate,
+  Sparkles,
+  BarChart3,
+  Users,
 } from "lucide-react";
 import {
   Sidebar,
@@ -31,21 +31,26 @@ import {
 } from "@/components/ui/sidebar";
 
 const mainNavItems = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Content Library", url: "/library", icon: FolderOpen },
-  { title: "Create Content", url: "/create", icon: FileText },
+  { title: "Smart Editor", url: "/", icon: Edit3 },
+  { title: "Topics", url: "/topics", icon: Target },
+  { title: "Publishing", url: "/publishing", icon: Send },
+  { title: "Library", url: "/library", icon: FolderOpen },
+];
+
+const advancedNavItems = [
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+  { title: "Create Content", url: "/create", icon: Sparkles },
   { title: "AI Workflows", url: "/workflows", icon: Sparkles },
   { title: "Templates", url: "/templates", icon: LayoutTemplate },
-  { title: "Publishing", url: "/publishing", icon: Send },
   { title: "Usage", url: "/usage", icon: BarChart3 },
   { title: "Team", url: "/team", icon: Users },
 ];
 
-const automationNavItems = [
-  { title: "Content Goals", url: "/content-goals", icon: Target },
+const adminNavItems = [
   { title: "Sources", url: "/sources", icon: Rss },
   { title: "Inbox", url: "/inbox", icon: Inbox },
   { title: "Automations", url: "/automations", icon: Zap },
+  { title: "Content Goals", url: "/content-goals", icon: Target },
 ];
 
 const settingsNavItems = [
@@ -68,16 +73,13 @@ export function AppSidebar() {
             <span className="font-serif text-lg font-semibold tracking-tight">
               Content Santa
             </span>
-            <span className="text-xs text-muted-foreground">AI Content Platform</span>
+            <span className="text-xs text-muted-foreground">Smart Content Platform</span>
           </div>
         </Link>
       </SidebarHeader>
 
       <SidebarContent className="px-2">
         <SidebarGroup className="py-4">
-          <SidebarGroupLabel className="px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Main
-          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {mainNavItems.map((item) => {
@@ -104,11 +106,11 @@ export function AppSidebar() {
 
         <SidebarGroup className="py-4">
           <SidebarGroupLabel className="px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Automation
+            Advanced
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {automationNavItems.map((item) => {
+              {advancedNavItems.map((item) => {
                 const isActive = location === item.url;
                 return (
                   <SidebarMenuItem key={item.title}>
@@ -143,6 +145,33 @@ export function AppSidebar() {
                       asChild
                       isActive={isActive}
                       className="gap-3"
+                    >
+                      <Link href={item.url} data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                        <item.icon className="h-5 w-5" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup className="py-4">
+          <SidebarGroupLabel className="px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Admin Tools
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {adminNavItems.map((item) => {
+                const isActive = location === item.url;
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isActive}
+                      className="gap-3 text-muted-foreground"
                     >
                       <Link href={item.url} data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, '-')}`}>
                         <item.icon className="h-5 w-5" />

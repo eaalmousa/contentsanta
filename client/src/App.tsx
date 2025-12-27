@@ -25,17 +25,21 @@ import Sources from "@/pages/sources";
 import Inbox from "@/pages/inbox";
 import Automations from "@/pages/automations";
 import ContentGoals from "@/pages/content-goals";
+import SmartEditor from "@/pages/smart-editor";
+import Topics from "@/pages/topics";
 import NotFound from "@/pages/not-found";
 
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
+      <Route path="/" component={SmartEditor} />
+      <Route path="/topics" component={Topics} />
       <Route path="/library" component={ContentLibrary} />
+      <Route path="/publishing" component={Publishing} />
+      <Route path="/dashboard" component={Dashboard} />
       <Route path="/create" component={CreateContent} />
       <Route path="/workflows" component={Workflows} />
       <Route path="/templates" component={Templates} />
-      <Route path="/publishing" component={Publishing} />
       <Route path="/usage" component={Usage} />
       <Route path="/team" component={Team} />
       <Route path="/brand" component={BrandVoice} />
