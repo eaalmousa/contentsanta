@@ -1497,12 +1497,13 @@ export async function registerRoutes(
               const sourceName = source?.name || getSourceNameFromUrl(sourceItem.url);
               const mediaTier = source?.mediaTier || 'tier_3';
               
+              const metadata = sourceItem.metadataJson as any;
               return {
                 name: sourceName,
                 url: sourceItem.url,
                 mediaTier,
                 isPrimary: item.isPrimary === 'true',
-                imageUrl: sourceItem.imageUrl,
+                imageUrl: metadata?.thumbnail || null,
               };
             })
           );
@@ -1546,6 +1547,7 @@ export async function registerRoutes(
           const sourceName = source?.name || getSourceNameFromUrl(sourceItem.url);
           const mediaTier = source?.mediaTier || 'tier_3';
           
+          const metadata = sourceItem.metadataJson as any;
           return {
             id: item.id,
             name: sourceName,
@@ -1554,7 +1556,7 @@ export async function registerRoutes(
             isPrimary: item.isPrimary === 'true',
             title: sourceItem.title,
             excerpt: sourceItem.excerpt,
-            imageUrl: sourceItem.imageUrl,
+            imageUrl: metadata?.thumbnail || null,
             publishedAt: sourceItem.publishedAt,
           };
         })
@@ -1657,6 +1659,72 @@ export async function registerRoutes(
       res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to delete image asset" });
+    }
+  });
+
+  // Generate image endpoint with premium entitlement check
+  app.post("/api/image-assets/generate", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { workspaceId, storyId, prompt, style } = req.body;
+      
+      if (!workspaceId || !prompt) {
+        return res.status(400).json({ error: "workspaceId and prompt are required" });
+      }
+      
+      // Check workspace entitlement
+      const workspace = await storage.getWorkspace(workspaceId);
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+      
+      const features = workspace.features as any || {};
+      if (!features.generate_images) {
+        return res.status(403).json({ 
+          error: "Image generation is a premium feature",
+          code: "FEATURE_NOT_ENTITLED",
+          feature: "generate_images"
+        });
+      }
+      
+      // Create placeholder record for generated image
+      // In production, this would queue an async job to generate the image
+      const imageAsset = await storage.createImageAsset({
+        workspaceId,
+        storyId: storyId || null,
+        originType: "generated",
+        generatedPrompt: prompt,
+        metadataJson: {
+          style: style || "photorealistic",
+          status: "pending",
+          requestedAt: new Date().toISOString(),
+        },
+      });
+      
+      res.status(202).json({
+        message: "Image generation queued",
+        imageAsset,
+        status: "pending",
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to generate image" });
+    }
+  });
+
+  // Check workspace feature entitlement
+  app.get("/api/workspaces/:id/features", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspace = await storage.getWorkspace(req.params.id);
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+      
+      const features = workspace.features as any || {};
+      res.json({
+        generate_images: !!features.generate_images,
+        // Add more feature flags as needed
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch workspace features" });
     }
   });
 

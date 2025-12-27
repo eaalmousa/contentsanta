@@ -17,6 +17,8 @@ import {
   Image as ImageIcon,
   Send,
   Eye,
+  Lock,
+  Wand2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -89,6 +91,127 @@ function getTierBadgeVariant(tier: string): "default" | "secondary" | "outline" 
     case "tier_2": return "secondary";
     default: return "outline";
   }
+}
+
+function GenerateImageButton({ 
+  storyId, 
+  workspaceId,
+  onSuccess 
+}: { 
+  storyId: string;
+  workspaceId: string;
+  onSuccess?: () => void;
+}) {
+  const [prompt, setPrompt] = useState("");
+  const [showPromptInput, setShowPromptInput] = useState(false);
+  const { toast } = useToast();
+  
+  const { data: features } = useQuery<{ generate_images: boolean }>({
+    queryKey: ['/api/workspaces', workspaceId, 'features'],
+  });
+  
+  const generateMutation = useMutation({
+    mutationFn: async (data: { prompt: string }) => {
+      const response = await apiRequest("POST", "/api/image-assets/generate", {
+        workspaceId,
+        storyId,
+        prompt: data.prompt,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.status === "pending") {
+        toast({
+          title: "Image generation queued",
+          description: "Your image is being generated. This may take a moment.",
+        });
+      }
+      setShowPromptInput(false);
+      setPrompt("");
+      onSuccess?.();
+    },
+    onError: (error: any) => {
+      if (error.message?.includes("FEATURE_NOT_ENTITLED")) {
+        toast({
+          title: "Premium Feature",
+          description: "Image generation requires a premium plan.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Generation Failed",
+          description: error.message || "Failed to generate image",
+          variant: "destructive",
+        });
+      }
+    },
+  });
+  
+  const isEntitled = features?.generate_images ?? false;
+  
+  if (!isEntitled) {
+    return (
+      <Button 
+        variant="outline" 
+        size="sm" 
+        disabled
+        className="gap-2 opacity-60"
+        data-testid="button-generate-image-locked"
+      >
+        <Lock className="w-3 h-3" />
+        <Wand2 className="w-4 h-4" />
+        Generate Image
+        <Badge variant="secondary" className="ml-1 text-xs">Premium</Badge>
+      </Button>
+    );
+  }
+  
+  if (showPromptInput) {
+    return (
+      <div className="flex gap-2 items-center">
+        <Input
+          placeholder="Describe the image..."
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          className="text-sm"
+          data-testid="input-generate-prompt"
+        />
+        <Button
+          size="sm"
+          onClick={() => generateMutation.mutate({ prompt })}
+          disabled={!prompt.trim() || generateMutation.isPending}
+          data-testid="button-generate-submit"
+        >
+          {generateMutation.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Wand2 className="w-4 h-4" />
+          )}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setShowPromptInput(false)}
+          data-testid="button-generate-cancel"
+        >
+          <X className="w-4 h-4" />
+        </Button>
+      </div>
+    );
+  }
+  
+  return (
+    <Button 
+      variant="outline" 
+      size="sm" 
+      onClick={() => setShowPromptInput(true)}
+      className="gap-2"
+      data-testid="button-generate-image"
+    >
+      <Wand2 className="w-4 h-4" />
+      Generate Image
+    </Button>
+  );
 }
 
 function StoryCard({ 
@@ -347,9 +470,16 @@ function StoryDetailsDialog({
             </div>
           </div>
           
-          {story.featuredImage?.originalUrl && (
-            <div>
-              <h4 className="text-sm font-medium mb-2">Featured Image</h4>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-medium">Featured Image</h4>
+              <GenerateImageButton 
+                storyId={story.id}
+                workspaceId={story.workspaceId}
+                onSuccess={() => queryClient.invalidateQueries({ queryKey: ['/api/stories', story.id] })}
+              />
+            </div>
+            {story.featuredImage?.originalUrl ? (
               <div className="rounded-md overflow-hidden bg-muted">
                 <img 
                   src={story.featuredImage.originalUrl} 
@@ -363,8 +493,12 @@ function StoryDetailsDialog({
                   </p>
                 )}
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="rounded-md bg-muted/50 border-2 border-dashed border-muted-foreground/25 h-32 flex items-center justify-center">
+                <p className="text-sm text-muted-foreground">No featured image available</p>
+              </div>
+            )}
+          </div>
         </div>
         
         <DialogFooter>

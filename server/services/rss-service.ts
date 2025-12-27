@@ -240,17 +240,84 @@ export function parsePublishedAt(dateStr: string | undefined): Date | null {
   }
 }
 
+interface ExtractedImage {
+  url: string;
+  source: "media:thumbnail" | "media:content" | "enclosure";
+  width?: number;
+  height?: number;
+  type?: string;
+}
+
+function extractAllImages(item: any): ExtractedImage[] {
+  const images: ExtractedImage[] = [];
+  const seenUrls = new Set<string>();
+  
+  // Helper to add image if not duplicate
+  const addImage = (img: ExtractedImage) => {
+    if (img.url && !seenUrls.has(img.url)) {
+      seenUrls.add(img.url);
+      images.push(img);
+    }
+  };
+  
+  // Handle media:thumbnail (can be object or array)
+  if (item.mediaThumbnail) {
+    const thumbnails = Array.isArray(item.mediaThumbnail) ? item.mediaThumbnail : [item.mediaThumbnail];
+    for (const thumb of thumbnails) {
+      if (thumb?.$?.url) {
+        addImage({
+          url: thumb.$.url,
+          source: "media:thumbnail",
+          width: thumb.$.width ? parseInt(thumb.$.width, 10) : undefined,
+          height: thumb.$.height ? parseInt(thumb.$.height, 10) : undefined,
+        });
+      }
+    }
+  }
+  
+  // Handle media:content (can be object or array)
+  if (item.mediaContent) {
+    const contents = Array.isArray(item.mediaContent) ? item.mediaContent : [item.mediaContent];
+    for (const content of contents) {
+      if (content?.$?.url && content?.$?.type?.startsWith("image")) {
+        addImage({
+          url: content.$.url,
+          source: "media:content",
+          width: content.$.width ? parseInt(content.$.width, 10) : undefined,
+          height: content.$.height ? parseInt(content.$.height, 10) : undefined,
+          type: content.$.type,
+        });
+      } else if (content?.$?.url && content?.$?.medium === "image") {
+        addImage({
+          url: content.$.url,
+          source: "media:content",
+          width: content.$.width ? parseInt(content.$.width, 10) : undefined,
+          height: content.$.height ? parseInt(content.$.height, 10) : undefined,
+        });
+      }
+    }
+  }
+  
+  // Handle enclosure (can be object or array)
+  if (item.enclosure) {
+    const enclosures = Array.isArray(item.enclosure) ? item.enclosure : [item.enclosure];
+    for (const enc of enclosures) {
+      if (enc?.url && enc?.type?.startsWith("image")) {
+        addImage({
+          url: enc.url,
+          source: "enclosure",
+          type: enc.type,
+        });
+      }
+    }
+  }
+  
+  return images;
+}
+
 function extractThumbnail(item: any): string | null {
-  if (item.mediaThumbnail?.$.url) {
-    return item.mediaThumbnail.$.url;
-  }
-  if (item.mediaContent?.$.url) {
-    return item.mediaContent.$.url;
-  }
-  if (item.enclosure?.url && item.enclosure.type?.startsWith("image")) {
-    return item.enclosure.url;
-  }
-  return null;
+  const images = extractAllImages(item);
+  return images.length > 0 ? images[0].url : null;
 }
 
 export interface FetchResult {
@@ -337,7 +404,8 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
         continue;
       }
 
-      const thumbnail = extractThumbnail(item);
+      const images = extractAllImages(item);
+      const thumbnail = images.length > 0 ? images[0].url : null;
       const publishedAt = parsePublishedAt(item.pubDate || item.isoDate);
 
       const itemAny = item as any;
@@ -357,6 +425,7 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
           categories: item.categories || [],
           guid: item.guid,
           thumbnail,
+          images, // All extracted images with metadata
         },
       };
 

@@ -24,6 +24,19 @@ export const insertWorkspaceSchema = createInsertSchema(workspaces).omit({ id: t
 export type InsertWorkspace = z.infer<typeof insertWorkspaceSchema>;
 export type Workspace = typeof workspaces.$inferSelect;
 
+// Workspace features for premium entitlements
+export interface WorkspaceFeatures {
+  generate_images?: boolean;
+  // Future feature flags can be added here
+}
+
+// Helper to check if workspace has a feature enabled
+export function hasWorkspaceFeature(workspace: Workspace | null | undefined, feature: keyof WorkspaceFeatures): boolean {
+  if (!workspace) return false;
+  const features = workspace.features as WorkspaceFeatures | null;
+  return !!features?.[feature];
+}
+
 // Workspace Users (multi-tenant permissions)
 export const workspaceUsers = pgTable("workspace_users", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),

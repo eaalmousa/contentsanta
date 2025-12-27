@@ -69,6 +69,20 @@ Preferred communication style: Simple, everyday language.
 - **History**: Full version history maintained for each asset
 - **API**: GET /api/assets returns assets with latestVersion included
 
+### Visual Intelligence System
+- **Image Assets**: `image_assets` table stores images linked to stories and source items
+- **Image Origins**: "source" (extracted from RSS) or "generated" (AI-created placeholder)
+- **RSS Extraction**: Extracts from media:thumbnail, media:content, enclosure (image/* types)
+- **Deduplication**: Images are deduplicated per story by URL
+- **Primary Selection**: Auto-selects best image based on source tier (tier_1 > tier_2 > tier_3)
+- **Premium Entitlement**: `workspace.features.generate_images` flag gates AI image generation
+
+### WordPress Publishing
+- **Secure Image Download**: HTTPS-only, SSRF protection (blocks private IPs), MIME validation
+- **Media Upload**: Uploads to WordPress Media Library with caption/credit
+- **Featured Image**: Sets `featured_media` on posts automatically
+- **Image Usages**: Tracks where images are published via `image_usages` table
+
 ### Recent Changes (December 2025)
 - Migrated from in-memory storage to PostgreSQL with 13 tables
 - Implemented Replit Auth with OpenID Connect
@@ -77,6 +91,9 @@ Preferred communication style: Simple, everyday language.
 - Integrated OpenAI via Replit AI Integrations for real AI processing
 - Added templates, comments, and publishing targets support
 - Updated frontend for authentication with landing page for visitors
+- Added Visual Intelligence Phase 1: RSS image extraction with tier-based primary selection
+- Implemented WordPress featured image upload with SSRF protection and MIME validation
+- Added workspace feature flags for premium entitlements (generate_images)
 
 ### Project Structure
 ```

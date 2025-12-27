@@ -1,6 +1,21 @@
 import { storage } from "../storage";
-import type { SourceItem, InsertStory, InsertStoryItem } from "@shared/schema";
+import type { SourceItem, InsertStory, InsertStoryItem, InsertImageAsset } from "@shared/schema";
 import crypto from "crypto";
+
+// Media tier priority: tier_1 = authoritative, tier_2 = credible, tier_3 = unknown
+const TIER_PRIORITY: Record<string, number> = {
+  tier_1: 1,
+  tier_2: 2,
+  tier_3: 3,
+};
+
+interface ExtractedImage {
+  url: string;
+  source: string;
+  width?: number;
+  height?: number;
+  type?: string;
+}
 
 const SIMILARITY_THRESHOLD = 0.6;
 
@@ -64,10 +79,95 @@ function calculateSimilarity(item1: { title: string; excerpt?: string | null }, 
   return jaccardSimilarity(keywords1, keywords2);
 }
 
+async function createImageAssetsForStory(
+  storyId: string, 
+  sourceItem: SourceItem, 
+  mediaTier: string
+): Promise<void> {
+  const metadata = sourceItem.metadataJson as any;
+  const images: ExtractedImage[] = metadata?.images || [];
+  
+  if (images.length === 0) return;
+  
+  // Get existing image URLs for this story to deduplicate
+  const existingAssets = await storage.getImageAssets(sourceItem.workspaceId, storyId);
+  const existingUrls = new Set(existingAssets.map(a => a.originalUrl));
+  
+  for (const img of images) {
+    if (existingUrls.has(img.url)) continue; // Skip duplicates
+    
+    const imageAsset: InsertImageAsset = {
+      workspaceId: sourceItem.workspaceId,
+      storyId,
+      sourceItemId: sourceItem.id,
+      originType: "source",
+      originalUrl: img.url,
+      metadataJson: {
+        rssSource: img.source,
+        width: img.width,
+        height: img.height,
+        mimeType: img.type,
+        mediaTier,
+      },
+    };
+    
+    try {
+      await storage.createImageAsset(imageAsset);
+    } catch (err: any) {
+      // Ignore duplicate key errors
+      if (err.code !== "23505") {
+        console.error(`[Image Asset] Error creating asset for ${img.url}:`, err.message);
+      }
+    }
+  }
+}
+
+async function selectPrimaryImage(storyId: string, workspaceId: string): Promise<void> {
+  const assets = await storage.getImageAssets(workspaceId, storyId);
+  if (assets.length === 0) return;
+  
+  // Sort by tier priority (tier_1 first), then by creation date (oldest first = first seen)
+  const sorted = [...assets].sort((a, b) => {
+    const aTier = (a.metadataJson as any)?.mediaTier || "tier_3";
+    const bTier = (b.metadataJson as any)?.mediaTier || "tier_3";
+    const tierDiff = (TIER_PRIORITY[aTier] || 3) - (TIER_PRIORITY[bTier] || 3);
+    if (tierDiff !== 0) return tierDiff;
+    
+    // Prefer images with dimensions (likely higher quality)
+    const aHasDims = (a.metadataJson as any)?.width > 0;
+    const bHasDims = (b.metadataJson as any)?.width > 0;
+    if (aHasDims && !bHasDims) return -1;
+    if (!aHasDims && bHasDims) return 1;
+    
+    return 0;
+  });
+  
+  // Clear previous primary flags and set new primary
+  for (let i = 0; i < sorted.length; i++) {
+    const asset = sorted[i];
+    const currentMeta = asset.metadataJson as any || {};
+    const shouldBePrimary = i === 0;
+    
+    // Only update if isPrimary status needs to change
+    if (currentMeta.isPrimary !== shouldBePrimary) {
+      await storage.updateImageAsset(asset.id, {
+        metadataJson: {
+          ...currentMeta,
+          isPrimary: shouldBePrimary,
+        },
+      });
+    }
+  }
+}
+
 export async function clusterSourceItem(sourceItem: SourceItem): Promise<{ storyId: string; isNew: boolean }> {
   const workspaceId = sourceItem.workspaceId;
   const dateBucket = getDateBucket(sourceItem.publishedAt);
   const similarityHash = generateSimilarityHash(sourceItem.title, sourceItem.excerpt);
+  
+  // Get source to determine media tier
+  const source = await storage.getSource(sourceItem.sourceId);
+  const mediaTier = source?.mediaTier || "tier_3";
   
   const existingStories = await storage.findStoriesBySimilarity(
     workspaceId,
@@ -98,6 +198,10 @@ export async function clusterSourceItem(sourceItem: SourceItem): Promise<{ story
         lastUpdatedAt: new Date(),
       });
 
+      // Create image assets from source item and update primary selection
+      await createImageAssetsForStory(story.id, sourceItem, mediaTier);
+      await selectPrimaryImage(story.id, workspaceId);
+
       return { storyId: story.id, isNew: false };
     }
   }
@@ -125,6 +229,10 @@ export async function clusterSourceItem(sourceItem: SourceItem): Promise<{ story
   };
 
   await storage.createStoryItem(storyItemData);
+  
+  // Create image assets from source item and select primary
+  await createImageAssetsForStory(newStory.id, sourceItem, mediaTier);
+  await selectPrimaryImage(newStory.id, workspaceId);
 
   return { storyId: newStory.id, isNew: true };
 }
