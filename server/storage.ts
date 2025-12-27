@@ -28,6 +28,8 @@ import {
   storyItems, type StoryItem, type InsertStoryItem,
   drafts, type Draft, type InsertDraft,
   topics, type Topic, type InsertTopic,
+  topicSources, type TopicSource, type InsertTopicSource,
+  topicSourceRecommendations, type TopicSourceRecommendation,
   imageAssets, type ImageAsset, type InsertImageAsset,
   imageUsages, type ImageUsage, type InsertImageUsage,
   wpTaxonomyCache, type WpTaxonomyCache, type InsertWpTaxonomyCache, type WpTaxonomyType,
@@ -234,6 +236,14 @@ export interface IStorage {
   updateTopic(id: string, data: Partial<Topic>): Promise<Topic | undefined>;
   deleteTopic(id: string): Promise<void>;
   getLiveTopics(): Promise<Topic[]>;
+  
+  // Topic Sources
+  getTopicSources(topicId: string): Promise<TopicSource[]>;
+  getEnabledSourceIdsForTopic(topicId: string): Promise<string[]>;
+  upsertTopicSource(data: InsertTopicSource): Promise<TopicSource>;
+  setTopicSourceEnabled(topicId: string, sourceId: string, isEnabled: boolean): Promise<void>;
+  deleteTopicSources(topicId: string): Promise<void>;
+  saveTopicSourceRecommendation(topicId: string, payload: any): Promise<TopicSourceRecommendation>;
   
   // Image Assets
   getImageAssets(workspaceId: string, storyId?: string, sourceItemId?: string): Promise<ImageAsset[]>;
@@ -1047,6 +1057,57 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(topics)
       .where(eq(topics.isLive, "true"))
       .orderBy(desc(topics.createdAt));
+  }
+
+  // Topic Sources
+  async getTopicSources(topicId: string): Promise<TopicSource[]> {
+    return await db.select().from(topicSources)
+      .where(eq(topicSources.topicId, topicId))
+      .orderBy(desc(topicSources.createdAt));
+  }
+
+  async getEnabledSourceIdsForTopic(topicId: string): Promise<string[]> {
+    const rows = await db.select({ sourceId: topicSources.sourceId })
+      .from(topicSources)
+      .where(and(
+        eq(topicSources.topicId, topicId),
+        eq(topicSources.isEnabled, true)
+      ));
+    return rows.map(r => r.sourceId);
+  }
+
+  async upsertTopicSource(data: InsertTopicSource): Promise<TopicSource> {
+    const existing = await db.select().from(topicSources)
+      .where(and(
+        eq(topicSources.topicId, data.topicId),
+        eq(topicSources.sourceId, data.sourceId)
+      ));
+    
+    if (existing.length > 0) {
+      const [updated] = await db.update(topicSources)
+        .set({ isEnabled: data.isEnabled, updatedAt: new Date() })
+        .where(eq(topicSources.id, existing[0].id))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(topicSources).values(data).returning();
+      return created;
+    }
+  }
+
+  async setTopicSourceEnabled(topicId: string, sourceId: string, isEnabled: boolean): Promise<void> {
+    await this.upsertTopicSource({ topicId, sourceId, isEnabled });
+  }
+
+  async deleteTopicSources(topicId: string): Promise<void> {
+    await db.delete(topicSources).where(eq(topicSources.topicId, topicId));
+  }
+
+  async saveTopicSourceRecommendation(topicId: string, payload: any): Promise<TopicSourceRecommendation> {
+    const [rec] = await db.insert(topicSourceRecommendations)
+      .values({ topicId, payloadJson: payload })
+      .returning();
+    return rec;
   }
 
   // Image Assets
