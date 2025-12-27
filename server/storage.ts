@@ -613,10 +613,19 @@ export class DatabaseStorage implements IStorage {
     if (status) conditions.push(eq(sourceItems.status, status));
     if (sourceId) conditions.push(eq(sourceItems.sourceId, sourceId));
     
+    // Query canonical source_items only (no joins with mentions)
     // Stable sort: publishedAt DESC NULLS LAST, createdAt DESC, id DESC
-    return await db.select().from(sourceItems)
+    const items = await db.select().from(sourceItems)
       .where(and(...conditions))
       .orderBy(sql`${sourceItems.publishedAt} DESC NULLS LAST`, desc(sourceItems.createdAt), desc(sourceItems.id));
+    
+    // Dedupe by ID at application layer as safety measure
+    const seen = new Set<string>();
+    return items.filter(item => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
   }
 
   async getSourceItem(id: string): Promise<SourceItem | undefined> {

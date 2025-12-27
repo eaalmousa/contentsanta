@@ -103,8 +103,10 @@ export default function InboxPage() {
     }
   };
 
-  const getSourceName = (sourceId: string) => {
-    return sources?.find((s) => s.id === sourceId)?.name || "Unknown Source";
+  const getSourceName = (sourceId: string | null | undefined): string | null => {
+    if (!sourceId) return null;
+    const source = sources?.find((s) => s.id === sourceId);
+    return source?.name || null;
   };
 
   if (isLoading) {
@@ -218,10 +220,12 @@ export default function InboxPage() {
                     <p className="text-xs text-muted-foreground line-clamp-2 mb-2">{item.excerpt}</p>
                   )}
                   <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Rss className="h-3 w-3" />
-                      {getSourceName(item.sourceId)}
-                    </span>
+                    {getSourceName(item.sourceId) && (
+                      <span className="flex items-center gap-1">
+                        <Rss className="h-3 w-3" />
+                        {getSourceName(item.sourceId)}
+                      </span>
+                    )}
                     {item.publishedAt && (
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3" />
