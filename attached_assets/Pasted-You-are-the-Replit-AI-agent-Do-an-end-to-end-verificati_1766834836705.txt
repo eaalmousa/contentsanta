@@ -1,0 +1,79 @@
+You are the Replit AI agent. Do an end-to-end verification of RSS hardening and produce proof.
+
+DO NOT ask questions. DO NOT generalize. Execute the steps, capture evidence, and report results with exact outputs.
+
+GOAL
+Prove RSS ingestion is production-reliable across success + failure cases, and that the UI accurately reflects each state.
+
+1) DATABASE + SCHEMA VERIFICATION (show raw evidence)
+A. Print the relevant table schemas (or describe exact columns + indexes) for:
+   - sources
+   - source_items (or equivalent)
+   - fetch_runs (new)
+B. Show the EXACT unique constraint(s) used for dedupe.
+C. Confirm timestamps stored as UTC.
+D. Confirm sorting clause in storage queries is exactly:
+   ORDER BY publishedAt DESC NULLS LAST, createdAt DESC, id DESC
+
+2) HTTP + COMPRESSION PROOF (must include headers)
+Run fetch against BBC Technology feed and log:
+- url
+- httpStatus
+- content-type
+- content-encoding
+- bytesCompressed
+- bytesDecompressed
+- parsedItemsCount
+- insertedCount
+- dedupedCount
+- durationMs
+Also confirm the fetched payload ends with </rss> (or valid feed termination).
+If it’s Atom, show equivalent proof for </feed>.
+
+3) DEDUPE PROOF (must be deterministic)
+Run fetch twice for the same feed.
+- First run must insert >0
+- Second run must insert 0 and dedupe >0
+Show the two fetch_run records and counts.
+Then add a SECOND source pointing to the SAME feed in the SAME workspace.
+Show whether your dedupe policy is per-source or cross-source, and prove it with counts.
+(We must see that behavior is intentional and consistent with your constraint design.)
+
+4) FAILURE MODES (must store runs + display UI errors)
+For each case below, prove:
+- fetch_run saved with status=fail, errorName, errorDetail, httpStatus (when available)
+- UI shows a clear error message (screenshot not possible? then describe exact toast/message text and where it appears)
+Cases:
+A) Non-RSS URL: https://www.bbc.co.uk/news/technology (HTML page)
+B) 403/blocked example (use any feed that returns 403 in practice, or simulate by hitting a test endpoint and forcing 403)
+C) Timeout simulation (set a short timeout and hit a slow endpoint OR simulate using a local mock route)
+D) 429 simulation (mock route that returns 429)
+E) Malformed XML (mock route that returns truncated XML)
+
+5) RETRY POLICY PROOF
+For 429 and 5xx:
+- show attempts count
+- show backoff timings or at least attempt timestamps
+- show final status (success after retries OR fail after max retries)
+
+6) SECURITY + UX PROOF
+A) Confirm all mutations require authentication.
+   - show the exact middleware/guard used
+   - show the HTTP response when unauthenticated (status + body)
+B) External links in Inbox:
+   - confirm target="_blank" AND rel="noopener noreferrer"
+C) Validate page:
+   - confirm it explains “why invalid” with specific reason categories (DNS, 403, parse error, empty feed).
+   - show examples.
+
+7) TESTS PROOF
+Run test runner and print final output.
+Then briefly list the 5 most important test cases by name and what they verify.
+
+DELIVERABLE FORMAT
+Return a report with:
+- Evidence logs (copy/paste)
+- Queries executed (if any)
+- Pass/Fail for each numbered section
+- Known limitations (if any) with precise scope
+Only after all PASS, suggest publishing.
