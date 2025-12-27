@@ -1518,11 +1518,21 @@ export async function registerRoutes(
     try {
       console.log(`[topics:create] requestId=${requestId} payloadKeys=${Object.keys(req.body).join(",")}`);
       
+      // Normalize region: empty/missing -> "global"
+      const rawRegion = req.body.region;
+      const normalizedRegion = (typeof rawRegion === "string" && rawRegion.trim()) ? rawRegion.trim() : "global";
+      
+      // Normalize countries: coerce null/undefined/non-array -> []
+      const rawCountries = req.body.countries;
+      const normalizedCountries = Array.isArray(rawCountries) ? rawCountries.filter((c: unknown) => typeof c === "string") : [];
+      
       // Override any client-provided workspaceId with server-derived value
       const bodyWithServerWorkspace = {
         ...req.body,
         workspaceId: serverWorkspaceId,
         isLive: "false" as const, // Always create inactive - must have sources to activate
+        region: normalizedRegion,
+        countries: normalizedCountries,
       };
       
       const validation = insertTopicSchema.safeParse(bodyWithServerWorkspace);
@@ -1573,9 +1583,23 @@ export async function registerRoutes(
         }
       }
       
+      // Normalize region if provided: empty string -> "global"
+      let normalizedRegion = req.body.region;
+      if (normalizedRegion !== undefined) {
+        normalizedRegion = (typeof normalizedRegion === "string" && normalizedRegion.trim()) ? normalizedRegion.trim() : "global";
+      }
+      
+      // Normalize countries if provided: coerce null/undefined/non-array -> []
+      let normalizedCountries = req.body.countries;
+      if (normalizedCountries !== undefined) {
+        normalizedCountries = Array.isArray(normalizedCountries) ? normalizedCountries.filter((c: unknown) => typeof c === "string") : [];
+      }
+      
       const updateData = {
         ...req.body,
         isLive: isLiveValue === true ? "true" : isLiveValue === false ? "false" : isLiveValue,
+        ...(normalizedRegion !== undefined && { region: normalizedRegion }),
+        ...(normalizedCountries !== undefined && { countries: normalizedCountries }),
       };
       
       const topic = await storage.updateTopic(req.params.id, updateData);
