@@ -1500,6 +1500,16 @@ export async function registerRoutes(
 
   app.patch("/api/topics/:id", isAuthenticated, async (req: Request, res: Response) => {
     try {
+      if (req.body.isLive === "true") {
+        const enabledSources = await storage.getEnabledSourceIdsForTopic(req.params.id);
+        if (enabledSources.length === 0) {
+          return res.status(400).json({ 
+            error: "Cannot activate topic without enabled sources",
+            code: "NO_SOURCES_ENABLED"
+          });
+        }
+      }
+      
       const topic = await storage.updateTopic(req.params.id, req.body);
       if (!topic) {
         return res.status(404).json({ error: "Topic not found" });

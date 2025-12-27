@@ -857,6 +857,21 @@ export default function TopicsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
     },
+    onError: (error: any) => {
+      if (error?.code === "NO_SOURCES_ENABLED") {
+        toast({
+          title: "Cannot activate topic",
+          description: "Please enable at least one source in topic settings first",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Failed to update topic",
+          description: error?.message || "An error occurred",
+          variant: "destructive",
+        });
+      }
+    },
   });
 
   const deleteTopicMutation = useMutation({
@@ -871,10 +886,16 @@ export default function TopicsPage() {
 
   const handleToggleLive = (topic: Topic) => {
     const newIsLive = topic.isLive === "true" ? "false" : "true";
-    updateTopicMutation.mutate({ id: topic.id, isLive: newIsLive });
-    toast({ 
-      title: newIsLive === "true" ? "Topic activated" : "Topic paused" 
-    });
+    updateTopicMutation.mutate(
+      { id: topic.id, isLive: newIsLive },
+      {
+        onSuccess: () => {
+          toast({ 
+            title: newIsLive === "true" ? "Topic activated" : "Topic paused" 
+          });
+        },
+      }
+    );
   };
 
   const handleDelete = (topicId: string) => {
