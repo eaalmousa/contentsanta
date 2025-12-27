@@ -1465,12 +1465,65 @@ export async function registerRoutes(
 
   // ==================== STORIES ====================
   
+  // Helper to resolve source name from URL domain
+  function getSourceNameFromUrl(url: string): string {
+    try {
+      const hostname = new URL(url).hostname.replace(/^www\./, '');
+      const parts = hostname.split('.');
+      if (parts.length >= 2) {
+        return parts[parts.length - 2].charAt(0).toUpperCase() + parts[parts.length - 2].slice(1);
+      }
+      return hostname;
+    } catch {
+      return 'Source';
+    }
+  }
+  
   app.get("/api/stories", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const workspaceId = req.query.workspaceId as string || "demo-workspace";
       const dateBucket = req.query.dateBucket as string | undefined;
-      const stories = await storage.getStories(workspaceId, dateBucket);
-      res.json(stories);
+      const rawStories = await storage.getStories(workspaceId, dateBucket);
+      
+      const storiesWithProvenance = await Promise.all(
+        rawStories.map(async (story) => {
+          const storyItems = await storage.getStoryItems(story.id);
+          const sources = await Promise.all(
+            storyItems.map(async (item) => {
+              const sourceItem = await storage.getSourceItem(item.sourceItemId);
+              if (!sourceItem) return null;
+              
+              const source = await storage.getSource(sourceItem.sourceId);
+              const sourceName = source?.name || getSourceNameFromUrl(sourceItem.url);
+              const mediaTier = source?.mediaTier || 'tier_3';
+              
+              return {
+                name: sourceName,
+                url: sourceItem.url,
+                mediaTier,
+                isPrimary: item.isPrimary === 'true',
+                imageUrl: sourceItem.imageUrl,
+              };
+            })
+          );
+          
+          const validSources = sources.filter((s): s is NonNullable<typeof s> => s !== null);
+          validSources.sort((a, b) => {
+            const tierOrder = { tier_1: 0, tier_2: 1, tier_3: 2 };
+            return tierOrder[a.mediaTier as keyof typeof tierOrder] - tierOrder[b.mediaTier as keyof typeof tierOrder];
+          });
+          
+          const images = await storage.getImageAssets(workspaceId, story.id);
+          
+          return {
+            ...story,
+            sources: validSources,
+            featuredImage: images[0] || null,
+          };
+        })
+      );
+      
+      res.json(storiesWithProvenance);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to fetch stories" });
     }
@@ -1484,7 +1537,42 @@ export async function registerRoutes(
       }
       
       const storyItems = await storage.getStoryItems(req.params.id);
-      res.json({ ...story, items: storyItems });
+      const sources = await Promise.all(
+        storyItems.map(async (item) => {
+          const sourceItem = await storage.getSourceItem(item.sourceItemId);
+          if (!sourceItem) return null;
+          
+          const source = await storage.getSource(sourceItem.sourceId);
+          const sourceName = source?.name || getSourceNameFromUrl(sourceItem.url);
+          const mediaTier = source?.mediaTier || 'tier_3';
+          
+          return {
+            id: item.id,
+            name: sourceName,
+            url: sourceItem.url,
+            mediaTier,
+            isPrimary: item.isPrimary === 'true',
+            title: sourceItem.title,
+            excerpt: sourceItem.excerpt,
+            imageUrl: sourceItem.imageUrl,
+            publishedAt: sourceItem.publishedAt,
+          };
+        })
+      );
+      
+      const validSources = sources.filter((s): s is NonNullable<typeof s> => s !== null);
+      validSources.sort((a, b) => {
+        const tierOrder = { tier_1: 0, tier_2: 1, tier_3: 2 };
+        return tierOrder[a.mediaTier as keyof typeof tierOrder] - tierOrder[b.mediaTier as keyof typeof tierOrder];
+      });
+      
+      const images = await storage.getImageAssets(story.workspaceId, story.id);
+      
+      res.json({ 
+        ...story, 
+        sources: validSources,
+        images,
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to fetch story" });
     }
@@ -1508,6 +1596,119 @@ export async function registerRoutes(
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to convert to source" });
+    }
+  });
+
+  // ==================== IMAGE ASSETS ====================
+  
+  app.get("/api/image-assets", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const storyId = req.query.storyId as string | undefined;
+      const sourceItemId = req.query.sourceItemId as string | undefined;
+      const assets = await storage.getImageAssets(workspaceId, storyId, sourceItemId);
+      res.json(assets);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch image assets" });
+    }
+  });
+
+  app.get("/api/image-assets/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const asset = await storage.getImageAsset(req.params.id);
+      if (!asset) {
+        return res.status(404).json({ error: "Image asset not found" });
+      }
+      res.json(asset);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch image asset" });
+    }
+  });
+
+  app.post("/api/image-assets", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const asset = await storage.createImageAsset(req.body);
+      res.status(201).json(asset);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to create image asset" });
+    }
+  });
+
+  app.patch("/api/image-assets/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const asset = await storage.updateImageAsset(req.params.id, req.body);
+      if (!asset) {
+        return res.status(404).json({ error: "Image asset not found" });
+      }
+      res.json(asset);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update image asset" });
+    }
+  });
+
+  app.delete("/api/image-assets/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteImageAsset(req.params.id);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to delete image asset" });
+    }
+  });
+
+  // ==================== PUBLISHING TEST ====================
+  
+  app.post("/api/publishing-targets/:id/test", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) {
+        return res.status(404).json({ error: "Publishing target not found" });
+      }
+      
+      if (target.targetType !== "wordpress") {
+        return res.status(400).json({ error: "Only WordPress connections can be tested" });
+      }
+      
+      const result = await testWordPressConnection(
+        target.config as any
+      );
+      
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to test connection" });
+    }
+  });
+
+  app.post("/api/publishing-targets/:id/test-post", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) {
+        return res.status(404).json({ error: "Publishing target not found" });
+      }
+      
+      if (target.targetType !== "wordpress") {
+        return res.status(400).json({ error: "Only WordPress connections can be tested" });
+      }
+      
+      const config = target.config as any;
+      const testPost = {
+        title: `ContentSanta Test Post - ${new Date().toISOString()}`,
+        content: "<p>This is a test post created by ContentSanta to verify your WordPress connection.</p><p>You can safely delete this post.</p>",
+        status: "draft" as const,
+      };
+      
+      const result = await publishToWordPress(config, testPost);
+      
+      res.json({
+        success: true,
+        message: "Test draft created successfully",
+        postId: result.postId,
+        postUrl: result.postUrl,
+      });
+    } catch (error: any) {
+      res.status(500).json({ 
+        success: false,
+        error: error.message || "Failed to create test post" 
+      });
     }
   });
 
