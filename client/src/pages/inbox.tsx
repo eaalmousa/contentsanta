@@ -203,7 +203,8 @@ export default function InboxPage() {
                     <a 
                       href={item.url} 
                       target="_blank" 
-                      rel="noopener noreferrer" 
+                      rel="noopener noreferrer nofollow" 
+                      referrerPolicy="no-referrer"
                       className="font-medium text-sm leading-tight line-clamp-2 hover:underline"
                       data-testid={`link-item-${item.id}`}
                     >
@@ -285,7 +286,7 @@ export default function InboxPage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => window.open(item.url, "_blank")}
+                    onClick={() => window.open(item.url, "_blank", "noopener,noreferrer")}
                     data-testid={`button-open-${item.id}`}
                   >
                     <ExternalLink className="h-4 w-4" />
