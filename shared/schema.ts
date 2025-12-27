@@ -637,3 +637,137 @@ export const workflowMeta: Record<WorkflowType, { label: string; description: st
     icon: "Image" 
   },
 };
+
+// ============ CONTENT GOALS & DISCOVERY ============
+
+// Content Goal types
+export const contentGoalTypes = ["news_rss", "evergreen", "light_content", "mixed"] as const;
+export type ContentGoalType = typeof contentGoalTypes[number];
+
+// Publication types
+export const publicationTypes = ["mainstream", "trade", "government", "corporate_blog", "academic"] as const;
+export type PublicationType = typeof publicationTypes[number];
+
+// Discovery job statuses
+export const discoveryJobStatuses = ["pending", "running", "completed", "failed"] as const;
+export type DiscoveryJobStatus = typeof discoveryJobStatuses[number];
+
+// Discovered source validation statuses
+export const discoveredSourceStatuses = ["pending", "valid", "invalid", "added"] as const;
+export type DiscoveredSourceStatus = typeof discoveredSourceStatuses[number];
+
+// Content Goals (workspace-scoped content strategy)
+export const contentGoals = pgTable("content_goals", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  name: text("name").notNull(),
+  goalType: text("goal_type").notNull().$type<ContentGoalType>(),
+  country: text("country"),
+  region: text("region"),
+  language: text("language").default("en"),
+  categories: text("categories").array(),
+  topics: text("topics").array(),
+  publicationTypes: text("publication_types").array(),
+  isActive: text("is_active").default("true"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_content_goals_workspace").on(table.workspaceId),
+]);
+
+export const insertContentGoalSchema = createInsertSchema(contentGoals).omit({ id: true, createdAt: true });
+export type InsertContentGoal = z.infer<typeof insertContentGoalSchema>;
+export type ContentGoal = typeof contentGoals.$inferSelect;
+
+// Discovery Jobs (RSS feed discovery runs)
+export const discoveryJobs = pgTable("discovery_jobs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  contentGoalId: varchar("content_goal_id", { length: 36 }).notNull(),
+  status: text("status").notNull().$type<DiscoveryJobStatus>().default("pending"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  candidatesFound: integer("candidates_found").default(0),
+  validatedCount: integer("validated_count").default(0),
+  errorJson: jsonb("error_json"),
+  logsJson: jsonb("logs_json").default([]),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_discovery_jobs_workspace").on(table.workspaceId),
+  index("idx_discovery_jobs_goal").on(table.contentGoalId),
+]);
+
+export const insertDiscoveryJobSchema = createInsertSchema(discoveryJobs).omit({ id: true, createdAt: true, startedAt: true, completedAt: true });
+export type InsertDiscoveryJob = z.infer<typeof insertDiscoveryJobSchema>;
+export type DiscoveryJob = typeof discoveryJobs.$inferSelect;
+
+// Discovered Sources (candidate feeds from discovery)
+export const discoveredSources = pgTable("discovered_sources", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  discoveryJobId: varchar("discovery_job_id", { length: 36 }).notNull(),
+  feedUrl: text("feed_url").notNull(),
+  feedTitle: text("feed_title"),
+  siteUrl: text("site_url"),
+  domain: text("domain"),
+  description: text("description"),
+  language: text("language"),
+  lastPublishDate: timestamp("last_publish_date"),
+  itemCount: integer("item_count"),
+  score: integer("score").default(0),
+  scoreBreakdown: jsonb("score_breakdown").default({}),
+  status: text("status").notNull().$type<DiscoveredSourceStatus>().default("pending"),
+  validationError: text("validation_error"),
+  httpStatus: integer("http_status"),
+  convertedSourceId: varchar("converted_source_id", { length: 36 }),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_discovered_sources_job").on(table.discoveryJobId),
+  index("idx_discovered_sources_workspace").on(table.workspaceId),
+  unique("discovered_source_url_unique").on(table.discoveryJobId, table.feedUrl),
+]);
+
+export const insertDiscoveredSourceSchema = createInsertSchema(discoveredSources).omit({ id: true, createdAt: true });
+export type InsertDiscoveredSource = z.infer<typeof insertDiscoveredSourceSchema>;
+export type DiscoveredSource = typeof discoveredSources.$inferSelect;
+
+// Content Plans (for evergreen/light content goals)
+export const contentPlans = pgTable("content_plans", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  contentGoalId: varchar("content_goal_id", { length: 36 }).notNull(),
+  name: text("name").notNull(),
+  planType: text("plan_type").default("editorial_calendar"),
+  weekStartDate: timestamp("week_start_date"),
+  topicsJson: jsonb("topics_json").default([]),
+  outlinesJson: jsonb("outlines_json").default([]),
+  status: text("status").default("draft"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_content_plans_workspace").on(table.workspaceId),
+  index("idx_content_plans_goal").on(table.contentGoalId),
+]);
+
+export const insertContentPlanSchema = createInsertSchema(contentPlans).omit({ id: true, createdAt: true });
+export type InsertContentPlan = z.infer<typeof insertContentPlanSchema>;
+export type ContentPlan = typeof contentPlans.$inferSelect;
+
+// Relations for content goals
+export const contentGoalsRelations = relations(contentGoals, ({ one, many }) => ({
+  workspace: one(workspaces, { fields: [contentGoals.workspaceId], references: [workspaces.id] }),
+  discoveryJobs: many(discoveryJobs),
+  contentPlans: many(contentPlans),
+}));
+
+export const discoveryJobsRelations = relations(discoveryJobs, ({ one, many }) => ({
+  contentGoal: one(contentGoals, { fields: [discoveryJobs.contentGoalId], references: [contentGoals.id] }),
+  discoveredSources: many(discoveredSources),
+}));
+
+export const discoveredSourcesRelations = relations(discoveredSources, ({ one }) => ({
+  discoveryJob: one(discoveryJobs, { fields: [discoveredSources.discoveryJobId], references: [discoveryJobs.id] }),
+  convertedSource: one(sources, { fields: [discoveredSources.convertedSourceId], references: [sources.id] }),
+}));
+
+export const contentPlansRelations = relations(contentPlans, ({ one }) => ({
+  contentGoal: one(contentGoals, { fields: [contentPlans.contentGoalId], references: [contentGoals.id] }),
+}));

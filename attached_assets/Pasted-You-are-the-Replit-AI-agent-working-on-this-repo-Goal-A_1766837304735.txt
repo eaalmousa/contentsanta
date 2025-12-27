@@ -1,0 +1,66 @@
+You are the Replit AI agent working on this repo.
+
+Goal: Add a “Content Goal” step BEFORE RSS, and implement automatic RSS discovery + validation.
+
+Requirements:
+A) New Content Goal Wizard (UI)
+1) Add a new first-time setup screen (and a navigation entry) called “Content Goals”.
+2) Wizard step 1: choose goal_type:
+   - news_rss
+   - evergreen
+   - light_content
+   - mixed
+3) Wizard step 2: collect parameters:
+   - country/region
+   - language
+   - categories/topics (multi-select + free text)
+   - publication type (mainstream/trade/gov/corporate blogs/academic)
+4) Save as content_goals row (workspace-scoped).
+
+B) RSS Discovery (only when goal_type includes news_rss)
+1) Create server service: discovery-service.ts
+2) Implement discovery pipeline:
+   - Input: content_goal params
+   - Produce candidate feed URLs using:
+     i) search-query based discovery (pluggable adapter)
+     ii) on-domain discovery: fetch homepage/category pages and extract <link rel="alternate" type="application/rss+xml|application/atom+xml">
+     iii) common feed path probing (e.g. /rss, /feed, /atom.xml, /feeds/*) with rate limit
+3) For each candidate:
+   - Run the existing RSS validation (using rss-service hardening)
+   - Store result in discovered_sources with score + validation_status + detail
+4) Scoring:
+   - language match (best-effort heuristic)
+   - freshness (has recent pubDate within N days)
+   - item count
+   - domain quality signals (gov/edu/high authority optional)
+5) Expose API endpoints (auth required):
+   - POST /api/discovery/run (content_goal_id)
+   - GET /api/discovery/:jobId/results
+   - POST /api/discovered-sources/:id/convert-to-source (creates sources row)
+
+C) UI for Discovery Results
+1) “Discover Sources” page shows:
+   - job status + logs summary
+   - list of discovered sources with score, title, domain, last publish date, item count
+   - “Add” button to convert to source
+2) After adding, the source appears in Sources and can be fetched normally.
+
+D) Evergreen + Light Content paths (non-RSS)
+1) For evergreen/light_content, do NOT force sources.
+2) Provide starter templates:
+   - Generate editorial calendar (weekly)
+   - Generate article outlines from topic seeds
+Store these as “content plans” (new table optional) or reuse existing assets/drafts system.
+
+Acceptance criteria:
+- User can create a content_goal without knowing any RSS URL.
+- For a news_rss goal, discovery returns valid feeds and lets user add them.
+- Discovered feeds are validated using the current hardened RSS service (fetch_runs, retries, XML validation, etc.)
+- All new tables are workspace-scoped and protected with existing auth patterns.
+- Provide a short admin-only debug view of discovery_job logs/results.
+
+Deliverables:
+- DB migrations (Neon)
+- server services + routes
+- client pages + navigation
+- proof: screenshots + logs showing discovery -> add source -> inbox populated
