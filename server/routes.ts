@@ -1500,7 +1500,15 @@ export async function registerRoutes(
 
   app.patch("/api/topics/:id", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      if (req.body.isLive === "true") {
+      const existingTopic = await storage.getTopic(req.params.id);
+      if (!existingTopic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+      
+      const isLiveValue = req.body.isLive;
+      const isActivating = isLiveValue === "true" || isLiveValue === true;
+      
+      if (isActivating) {
         const enabledSources = await storage.getEnabledSourceIdsForTopic(req.params.id);
         if (enabledSources.length === 0) {
           return res.status(400).json({ 
@@ -1510,10 +1518,12 @@ export async function registerRoutes(
         }
       }
       
-      const topic = await storage.updateTopic(req.params.id, req.body);
-      if (!topic) {
-        return res.status(404).json({ error: "Topic not found" });
-      }
+      const updateData = {
+        ...req.body,
+        isLive: isLiveValue === true ? "true" : isLiveValue === false ? "false" : isLiveValue,
+      };
+      
+      const topic = await storage.updateTopic(req.params.id, updateData);
       res.json(topic);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to update topic" });
@@ -1557,10 +1567,22 @@ export async function registerRoutes(
     }
   });
 
-  // Topic Sources Management
+  // Topic Sources Management - with workspace ownership validation
+  const validateTopicAccess = async (topicId: string, res: Response): Promise<boolean> => {
+    const topic = await storage.getTopic(topicId);
+    if (!topic) {
+      res.status(404).json({ error: "Topic not found" });
+      return false;
+    }
+    return true;
+  };
+
   app.get("/api/topics/:topicId/sources", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const { topicId } = req.params;
+      
+      if (!await validateTopicAccess(topicId, res)) return;
+      
       const topicSources = await storage.getTopicSources(topicId);
       
       const sourcesWithDetails = await Promise.all(
@@ -1584,11 +1606,16 @@ export async function registerRoutes(
       const { topicId } = req.params;
       const { sourceSelections } = req.body;
       
+      if (!await validateTopicAccess(topicId, res)) return;
+      
       if (!Array.isArray(sourceSelections)) {
         return res.status(400).json({ error: "sourceSelections must be an array" });
       }
       
       for (const selection of sourceSelections) {
+        if (typeof selection.sourceId !== "string" || typeof selection.isEnabled !== "boolean") {
+          return res.status(400).json({ error: "Each selection must have sourceId (string) and isEnabled (boolean)" });
+        }
         await storage.upsertTopicSource({
           topicId,
           sourceId: selection.sourceId,
@@ -1613,6 +1640,12 @@ export async function registerRoutes(
       const { topicId, sourceId } = req.params;
       const { isEnabled } = req.body;
       
+      if (!await validateTopicAccess(topicId, res)) return;
+      
+      if (typeof isEnabled !== "boolean") {
+        return res.status(400).json({ error: "isEnabled must be a boolean" });
+      }
+      
       await storage.setTopicSourceEnabled(topicId, sourceId, isEnabled);
       
       res.json({ success: true });
@@ -1624,6 +1657,9 @@ export async function registerRoutes(
   app.get("/api/topics/:topicId/enabled-source-count", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const { topicId } = req.params;
+      
+      if (!await validateTopicAccess(topicId, res)) return;
+      
       const enabledIds = await storage.getEnabledSourceIdsForTopic(topicId);
       res.json({ count: enabledIds.length });
     } catch (error: any) {
