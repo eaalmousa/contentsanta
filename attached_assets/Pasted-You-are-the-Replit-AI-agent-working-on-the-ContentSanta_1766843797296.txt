@@ -1,0 +1,108 @@
+You are the Replit AI agent working on the ContentSanta repo.
+
+OBJECTIVE
+Implement the missing “Recommended Sources (toggle)” step in the Topic creation flow, based on our agreed product behavior:
+- The user defines: (1) content intent/type, (2) topic/query, (3) geo scope (region + country), language
+- THEN the system discovers and recommends sources
+- The user reviews the recommended sources and toggles which ones are allowed for this topic
+- No RSS setup is exposed to the user (feeds are internal)
+- Topic runs only on the enabled sources
+
+NON-NEGOTIABLE PRODUCT RULES
+1) Users do NOT add RSS links. Users only curate trust by toggling suggested sources.
+2) Geo scope is explicit and required: region + country (country can be multi-select if supported; if not, start with single country and design for multi-select later).
+3) Source recommendations must be tier-aware and quality-aware:
+   - tiers: TIER_1, TIER_2, TIER_3 (or numeric 1/2/3)
+   - include a score/explanation (freshness + relevance + credibility) and show it in UI
+4) Deduplication remains story-level later (not part of this step). This step only controls which sources can be used.
+5) UX must be simple: “Suggested sources” list + toggles + “Select all Tier 1” convenience.
+6) Everything must be persisted per Topic and respected by discovery/ingestion.
+
+SCOPE (WHAT TO BUILD)
+A) UI: Add a new step to the Topic wizard AFTER geo selection and BEFORE schedule/activation:
+   Step title: “Recommended Sources”
+   Subtitle: “Review suggested outlets and toggle which ones to use for this topic.”
+   UI requirements:
+   - List grouped by Tier (Tier 1 first) and/or by Country
+   - Each source card row shows: name, domain, country, language, tier badge, confidence/score, and a toggle
+   - Bulk actions: “Enable all Tier 1”, “Enable all”, “Disable all”
+   - Search/filter in list (by name/domain/country)
+   - Default behavior: Tier 1 enabled by default, Tier 2/3 disabled by default (unless no Tier 1 exists, then enable best available)
+   - Save and continue (must persist selections before proceeding)
+
+B) Backend: Implement a “Source Recommendation” endpoint/service that takes:
+   - topicQuery (string)
+   - contentType (enum: news|informational|evergreen|mixed)
+   - region (enum/string)
+   - countries (array or single)
+   - language (string)
+   Returns a ranked list of candidate sources with:
+   - sourceId (if existing) OR temporary candidate with domain + name
+   - name, domain, country, language
+   - tier (1/2/3)
+   - score (0–100)
+   - reasons (array of short strings: e.g. “High relevance”, “Frequent updates”, “Trusted outlet”)
+   - validation flags (rssAvailable, sitemapAvailable, reachable) — INTERNAL but can be summarized in UI as “Verified”
+   IMPORTANT: The endpoint should be deterministic enough for testing (seed/scoring based on stable factors).
+
+C) Data Model: Persist per-topic enabled sources.
+   Implement/extend tables with migrations:
+   1) Ensure a canonical sources table exists (if already exists, reuse):
+      sources: id, name, domain, country, language, tier, status, created_at, updated_at
+   2) Add topic_sources join table:
+      topic_sources: id, topic_id, source_id, is_enabled, created_at, updated_at
+      Unique constraint: (topic_id, source_id)
+   3) Optionally store the “last recommended set” for audit (optional but nice):
+      topic_source_recommendations: id, topic_id, payload_json, created_at
+
+D) Wiring to pipeline:
+   Wherever ingestion/discovery currently selects sources for a topic:
+   - Modify it to use ONLY the enabled sources from topic_sources for that topic
+   - If a topic has no enabled sources, it must not run and UI should warn “No sources enabled”
+   - Add a safe fallback: if topic is newly created and no topic_sources rows exist yet, run recommendation step must be required (block activation until saved)
+
+E) Admin / Source tools compatibility:
+   - If there is an Admin “Sources” section already, keep it as the master catalog.
+   - The recommendation step can create “pending” sources in the catalog if they don’t exist yet, but ONLY if they pass basic validation (reachable + has RSS OR sitemap).
+   - Otherwise keep them as candidates and do not allow enabling until verified.
+
+IMPLEMENTATION DETAILS / EXPECTATIONS
+1) Locate the Topic creation wizard component and add this step cleanly:
+   - Use existing UI patterns/components for steps, toggles, lists, badges.
+   - Keep styling consistent with the new layout.
+2) Implement API route(s) following the repo’s conventions:
+   - GET/POST endpoints naming consistent with existing routes
+   - Add structured logging with requestId
+   - Proper error handling and safe defaults
+3) Add a recommendation service module:
+   - It can start simple: use an internal curated seed list + lightweight discovery (search-based) if already present.
+   - If you already have an RSS discovery module, use it internally to validate candidates.
+   - Must support tier scoring and output reasons.
+4) Add migrations:
+   - Create/alter tables with correct indexes and constraints
+   - Update types/interfaces accordingly
+5) Add tests or at least a “dev seed” path:
+   - Provide a deterministic dev fixture response for recommendation endpoint
+   - Ensure UI can render with empty, partial, and large results
+6) Ensure no duplication of source selections:
+   - Use upsert into topic_sources
+7) Update any “Topic activation” logic:
+   - Topic cannot be set live unless at least 1 source is enabled
+
+DELIVERABLES
+- Code changes implementing the new wizard step + API + DB tables + pipeline enforcement
+- Updated types/interfaces
+- A brief README/dev note explaining:
+  - how recommendations are generated
+  - how tiers are assigned
+  - where source toggles are enforced in the pipeline
+
+ACCEPTANCE CRITERIA (MUST PASS)
+1) User creates a new Topic → selects content type + geo → sees “Recommended Sources” step.
+2) User can toggle sources and bulk enable Tier 1.
+3) Saving persists selections in DB (topic_sources).
+4) Discovery pipeline uses only enabled sources (verified by logs or by visible behavior).
+5) Topic cannot go live with zero enabled sources.
+6) No RSS links are exposed in UI. Only outlet names/domains, tiers, and verification/confidence.
+
+Now implement this in the existing repo, following its current structure and conventions. Do not rewrite the entire app—make targeted changes. Use the existing components and services where possible.

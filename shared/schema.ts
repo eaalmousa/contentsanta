@@ -1,4 +1,4 @@
-import { pgTable, text, varchar, timestamp, jsonb, integer, numeric, index, unique, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, jsonb, integer, numeric, index, unique, uniqueIndex, boolean } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -928,7 +928,46 @@ export const draftsRelations = relations(drafts, ({ one }) => ({
 export const topicsRelations = relations(topics, ({ one, many }) => ({
   workspace: one(workspaces, { fields: [topics.workspaceId], references: [workspaces.id] }),
   drafts: many(drafts),
+  topicSources: many(topicSources),
 }));
+
+// ============ TOPIC SOURCES (per-topic source enablement) ============
+
+export const topicSources = pgTable("topic_sources", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  topicId: varchar("topic_id", { length: 36 }).notNull(),
+  sourceId: varchar("source_id", { length: 36 }).notNull(),
+  isEnabled: boolean("is_enabled").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_topic_sources_topic").on(table.topicId),
+  index("idx_topic_sources_source").on(table.sourceId),
+  uniqueIndex("uniq_topic_source").on(table.topicId, table.sourceId),
+]);
+
+export const insertTopicSourceSchema = createInsertSchema(topicSources).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertTopicSource = z.infer<typeof insertTopicSourceSchema>;
+export type TopicSource = typeof topicSources.$inferSelect;
+
+export const topicSourcesRelations = relations(topicSources, ({ one }) => ({
+  topic: one(topics, { fields: [topicSources.topicId], references: [topics.id] }),
+  source: one(sources, { fields: [topicSources.sourceId], references: [sources.id] }),
+}));
+
+// Source recommendation candidates (persisted for audit)
+export const topicSourceRecommendations = pgTable("topic_source_recommendations", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  topicId: varchar("topic_id", { length: 36 }).notNull(),
+  payloadJson: jsonb("payload_json").default([]),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_topic_source_recommendations_topic").on(table.topicId),
+]);
+
+export const insertTopicSourceRecommendationSchema = createInsertSchema(topicSourceRecommendations).omit({ id: true, createdAt: true });
+export type InsertTopicSourceRecommendation = z.infer<typeof insertTopicSourceRecommendationSchema>;
+export type TopicSourceRecommendation = typeof topicSourceRecommendations.$inferSelect;
 
 // ============ VISUAL INTELLIGENCE ============
 
