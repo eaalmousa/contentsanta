@@ -658,6 +658,8 @@ function PublishDialog({
     queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
     queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
   });
+  
+  const safeDialogTargets = targets ?? [];
 
   const publishMutation = useMutation({
     mutationFn: async () => {
@@ -689,9 +691,9 @@ function PublishDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-4">
-          {targets && targets.length > 0 ? (
+          {safeDialogTargets.length > 0 ? (
             <div className="flex flex-col gap-2">
-              {targets.map((target) => (
+              {safeDialogTargets.map((target) => (
                 <button
                   key={target.id}
                   onClick={() => setSelectedTarget(target.id)}
@@ -956,9 +958,9 @@ export default function Publishing() {
                 <Skeleton key={i} className="h-16 w-full" />
               ))}
             </div>
-          ) : jobs && jobs.length > 0 ? (
+          ) : safeJobs.length > 0 ? (
             <div className="flex flex-col gap-3">
-              {jobs.map((job) => (
+              {safeJobs.map((job) => (
                 <PublishJobCard key={job.id} job={job} />
               ))}
             </div>

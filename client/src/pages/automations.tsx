@@ -489,7 +489,7 @@ export default function AutomationsPage() {
         </Dialog>
       </div>
 
-      {!automations || automations.length === 0 ? (
+      {safeAutomations.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-4 py-12">
             <Zap className="h-12 w-12 text-muted-foreground/50" />
@@ -507,7 +507,7 @@ export default function AutomationsPage() {
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {automations.map((automation) => (
+          {safeAutomations.map((automation) => (
             <Card
               key={automation.id}
               className={`cursor-pointer transition-all ${

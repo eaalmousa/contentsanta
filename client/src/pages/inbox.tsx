@@ -13,6 +13,7 @@ import {
   Rss,
   CheckCircle,
   XCircle,
+  AlertCircle,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,13 +51,17 @@ export default function InboxPage() {
     return queryString ? `/api/source-items?${queryString}` : "/api/source-items";
   };
 
-  const { data: items, isLoading } = useQuery<SourceItem[]>({
+  const { data: items, isLoading, isError } = useQuery<SourceItem[]>({
     queryKey: [buildSourceItemsUrl()],
   });
 
   const { data: sources } = useQuery<Source[]>({
     queryKey: ["/api/sources"],
   });
+  
+  // Safe arrays to prevent crashes on undefined
+  const safeItems = items ?? [];
+  const safeSources = sources ?? [];
 
   const invalidateItems = () => {
     queryClient.invalidateQueries({ predicate: (query) => 
@@ -105,7 +110,7 @@ export default function InboxPage() {
 
   const getSourceName = (sourceId: string | null | undefined): string | null => {
     if (!sourceId) return null;
-    const source = sources?.find((s) => s.id === sourceId);
+    const source = safeSources.find((s) => s.id === sourceId);
     return source?.name || null;
   };
 
@@ -122,7 +127,26 @@ export default function InboxPage() {
     );
   }
 
-  const newCount = items?.filter((i) => i.status === "new").length || 0;
+  if (isError) {
+    return (
+      <div className="flex flex-col gap-6 p-6">
+        <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
+          <AlertCircle className="h-16 w-16 text-destructive/50" />
+          <div className="flex flex-col items-center gap-2 text-center">
+            <h3 className="text-xl font-semibold">Failed to load inbox</h3>
+            <p className="max-w-sm text-muted-foreground">
+              There was an error loading your inbox items. Please try again.
+            </p>
+          </div>
+          <Button onClick={() => window.location.reload()} variant="outline">
+            Refresh Page
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const newCount = safeItems.filter((i) => i.status === "new").length;
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -168,7 +192,7 @@ export default function InboxPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Sources</SelectItem>
-            {sources?.map((source) => (
+            {safeSources.map((source) => (
               <SelectItem key={source.id} value={source.id}>
                 {source.name}
               </SelectItem>
@@ -177,27 +201,27 @@ export default function InboxPage() {
         </Select>
       </div>
 
-      {!items || items.length === 0 ? (
+      {safeItems.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-4 py-12">
             <InboxIcon className="h-12 w-12 text-muted-foreground/50" />
             <div className="text-center">
               <h3 className="font-medium">No items in inbox</h3>
               <p className="text-sm text-muted-foreground">
-                {sources?.length ? "Fetch your sources to discover new content" : "Add sources to start discovering content"}
+                {safeSources.length ? "Fetch your sources to discover new content" : "Add sources to start discovering content"}
               </p>
             </div>
             <Link href="/sources">
               <Button data-testid="button-go-to-sources">
                 <Rss className="mr-2 h-4 w-4" />
-                {sources?.length ? "Fetch Sources" : "Add Sources"}
+                {safeSources.length ? "Fetch Sources" : "Add Sources"}
               </Button>
             </Link>
           </CardContent>
         </Card>
       ) : (
         <div className="flex flex-col gap-3">
-          {items.map((item) => (
+          {safeItems.map((item) => (
             <Card key={item.id} className="hover-elevate" data-testid={`card-item-${item.id}`}>
               <CardContent className="flex items-start gap-4 p-4">
                 <div className="flex-1 min-w-0">
