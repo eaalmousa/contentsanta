@@ -102,12 +102,13 @@ async function createImageAssetsForStory(
       sourceItemId: sourceItem.id,
       originType: "source",
       originalUrl: img.url,
+      sourceTier: mediaTier,
+      isPrimary: false,
       metadataJson: {
         rssSource: img.source,
         width: img.width,
         height: img.height,
         mimeType: img.type,
-        mediaTier,
       },
     };
     
@@ -126,10 +127,10 @@ async function selectPrimaryImage(storyId: string, workspaceId: string): Promise
   const assets = await storage.getImageAssets(workspaceId, storyId);
   if (assets.length === 0) return;
   
-  // Sort by tier priority (tier_1 first), then by creation date (oldest first = first seen)
+  // Sort by tier priority (tier_1 first), then prefer images with dimensions
   const sorted = [...assets].sort((a, b) => {
-    const aTier = (a.metadataJson as any)?.mediaTier || "tier_3";
-    const bTier = (b.metadataJson as any)?.mediaTier || "tier_3";
+    const aTier = a.sourceTier || "tier_3";
+    const bTier = b.sourceTier || "tier_3";
     const tierDiff = (TIER_PRIORITY[aTier] || 3) - (TIER_PRIORITY[bTier] || 3);
     if (tierDiff !== 0) return tierDiff;
     
@@ -142,22 +143,9 @@ async function selectPrimaryImage(storyId: string, workspaceId: string): Promise
     return 0;
   });
   
-  // Clear previous primary flags and set new primary
-  for (let i = 0; i < sorted.length; i++) {
-    const asset = sorted[i];
-    const currentMeta = asset.metadataJson as any || {};
-    const shouldBePrimary = i === 0;
-    
-    // Only update if isPrimary status needs to change
-    if (currentMeta.isPrimary !== shouldBePrimary) {
-      await storage.updateImageAsset(asset.id, {
-        metadataJson: {
-          ...currentMeta,
-          isPrimary: shouldBePrimary,
-        },
-      });
-    }
-  }
+  // Use dedicated storage method to set exactly one primary
+  const bestAsset = sorted[0];
+  await storage.setPrimaryImageForStory(storyId, bestAsset.id);
 }
 
 export async function clusterSourceItem(sourceItem: SourceItem): Promise<{ storyId: string; isNew: boolean }> {
@@ -278,8 +266,19 @@ export async function getStoryWithProvenance(storyId: string): Promise<{
       
       const source = await storage.getSource(sourceItem.sourceId);
       
+      // Derive source name: prefer source.name, else extract domain from URL
+      let sourceName = source?.name;
+      if (!sourceName) {
+        try {
+          const urlObj = new URL(sourceItem.url);
+          sourceName = urlObj.hostname.replace(/^www\./, '');
+        } catch {
+          sourceName = 'Source';
+        }
+      }
+      
       return {
-        name: source?.name || 'Unknown Source',
+        name: sourceName,
         url: sourceItem.url,
         publishedAt: sourceItem.publishedAt?.toISOString(),
       };

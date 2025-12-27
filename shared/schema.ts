@@ -1,4 +1,4 @@
-import { pgTable, text, varchar, timestamp, jsonb, integer, numeric, index, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, jsonb, integer, numeric, index, unique, boolean } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -949,6 +949,8 @@ export const imageAssets = pgTable("image_assets", {
   credit: text("credit"),
   licenseType: text("license_type"),
   generatedPrompt: text("generated_prompt"),
+  isPrimary: boolean("is_primary").default(false),
+  sourceTier: text("source_tier"),
   metadataJson: jsonb("metadata_json").default({}),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [

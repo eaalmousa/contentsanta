@@ -592,6 +592,211 @@ function ContentModeration({ assets, loading }: { assets?: Asset[]; loading?: bo
   );
 }
 
+interface DiagnosticStory {
+  id: string;
+  canonicalTitle: string;
+  sourceCount: number;
+  dateBucket: string;
+  imageCount: number;
+  hasPrimaryImage: boolean;
+  primaryImageUrl: string | null;
+  createdAt: string;
+}
+
+interface StoryDiagnosticDetail {
+  story: {
+    id: string;
+    canonicalTitle: string;
+    sourceCount: number;
+    dateBucket: string;
+    createdAt: string;
+  };
+  linkedSourceItems: Array<{
+    id: string;
+    title: string;
+    url: string;
+    publishedAt: string;
+    sourceName: string;
+    sourceId: string;
+    mediaTier: string;
+    hasImages: boolean;
+    imageCount: number;
+  }>;
+  imageAssets: Array<{
+    id: string;
+    originType: string;
+    originalUrl: string;
+    isPrimary: boolean;
+    sourceTier: string;
+    sourceItemId: string;
+    createdAt: string;
+  }>;
+  primaryImageId: string | null;
+  primaryImageUrl: string | null;
+  summary: {
+    totalSources: number;
+    totalImages: number;
+    hasPrimaryImage: boolean;
+  };
+}
+
+function StoryDiagnostics() {
+  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+  
+  const storiesQuery = useQuery<DiagnosticStory[]>({
+    queryKey: ["/api/admin/diagnostics/stories"],
+  });
+  
+  const storyDetailQuery = useQuery<StoryDiagnosticDetail>({
+    queryKey: ["/api/admin/diagnostics/story", selectedStoryId],
+    enabled: !!selectedStoryId,
+  });
+  
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            Stories Overview
+          </CardTitle>
+          <CardDescription>Select a story to view detailed diagnostics</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {storiesQuery.isLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map(i => <Skeleton key={i} className="h-12" />)}
+            </div>
+          ) : storiesQuery.data?.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No stories found. Fetch RSS sources to create stories.
+            </p>
+          ) : (
+            <ScrollArea className="h-[400px]">
+              <div className="space-y-2">
+                {storiesQuery.data?.map(story => (
+                  <div
+                    key={story.id}
+                    onClick={() => setSelectedStoryId(story.id)}
+                    className={`p-3 rounded-md cursor-pointer hover-elevate ${
+                      selectedStoryId === story.id ? 'bg-accent' : 'bg-muted/50'
+                    }`}
+                    data-testid={`story-diag-${story.id}`}
+                  >
+                    <div className="font-medium text-sm truncate">{story.canonicalTitle}</div>
+                    <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                      <Badge variant="outline" className="text-xs">
+                        {story.sourceCount} sources
+                      </Badge>
+                      <Badge variant={story.hasPrimaryImage ? "default" : "destructive"} className="text-xs">
+                        {story.imageCount} images
+                      </Badge>
+                      <span>{story.dateBucket}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Eye className="h-5 w-5" />
+            Story Details
+          </CardTitle>
+          <CardDescription>
+            {selectedStoryId ? 'Diagnostic information' : 'Select a story to view details'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!selectedStoryId ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Search className="h-8 w-8 mb-2" />
+              <p className="text-sm">Select a story from the list</p>
+            </div>
+          ) : storyDetailQuery.isLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-20" />
+              <Skeleton className="h-32" />
+              <Skeleton className="h-32" />
+            </div>
+          ) : storyDetailQuery.data ? (
+            <ScrollArea className="h-[400px]">
+              <div className="space-y-4">
+                <div>
+                  <h4 className="font-medium text-sm mb-2">Summary</h4>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-2 bg-muted rounded-md">
+                      <div className="text-lg font-bold">{storyDetailQuery.data.summary.totalSources}</div>
+                      <div className="text-xs text-muted-foreground">Sources</div>
+                    </div>
+                    <div className="p-2 bg-muted rounded-md">
+                      <div className="text-lg font-bold">{storyDetailQuery.data.summary.totalImages}</div>
+                      <div className="text-xs text-muted-foreground">Images</div>
+                    </div>
+                    <div className={`p-2 rounded-md ${storyDetailQuery.data.summary.hasPrimaryImage ? 'bg-emerald-100 dark:bg-emerald-900' : 'bg-red-100 dark:bg-red-900'}`}>
+                      <div className="text-lg font-bold">{storyDetailQuery.data.summary.hasPrimaryImage ? 'Yes' : 'No'}</div>
+                      <div className="text-xs text-muted-foreground">Primary</div>
+                    </div>
+                  </div>
+                </div>
+
+                {storyDetailQuery.data.primaryImageUrl && (
+                  <div>
+                    <h4 className="font-medium text-sm mb-2">Featured Image</h4>
+                    <img 
+                      src={storyDetailQuery.data.primaryImageUrl} 
+                      alt="Featured" 
+                      className="w-full h-32 object-cover rounded-md border"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <h4 className="font-medium text-sm mb-2">Linked Sources ({storyDetailQuery.data.linkedSourceItems.length})</h4>
+                  <div className="space-y-2">
+                    {storyDetailQuery.data.linkedSourceItems.map(item => (
+                      <div key={item.id} className="p-2 bg-muted/50 rounded text-xs">
+                        <div className="font-medium truncate">{item.sourceName}</div>
+                        <div className="text-muted-foreground truncate">{item.title}</div>
+                        <div className="flex gap-1 mt-1">
+                          <Badge variant="outline" className="text-xs">{item.mediaTier}</Badge>
+                          <Badge variant={item.hasImages ? "default" : "secondary"} className="text-xs">
+                            {item.imageCount} img
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-medium text-sm mb-2">Image Assets ({storyDetailQuery.data.imageAssets.length})</h4>
+                  <div className="space-y-2">
+                    {storyDetailQuery.data.imageAssets.map(img => (
+                      <div key={img.id} className={`p-2 rounded text-xs ${img.isPrimary ? 'bg-emerald-100 dark:bg-emerald-900 border border-emerald-500' : 'bg-muted/50'}`}>
+                        <div className="flex items-center gap-2">
+                          {img.isPrimary && <Badge variant="default" className="text-xs">Primary</Badge>}
+                          <Badge variant="outline" className="text-xs">{img.originType}</Badge>
+                          <Badge variant="outline" className="text-xs">{img.sourceTier || 'tier_3'}</Badge>
+                        </div>
+                        <div className="text-muted-foreground truncate mt-1">{img.originalUrl}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </ScrollArea>
+          ) : null}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const { user } = useAuth();
   
@@ -666,6 +871,10 @@ export default function AdminDashboard() {
           <TabsTrigger value="system" data-testid="tab-system">
             <Server className="mr-2 h-4 w-4" />
             System
+          </TabsTrigger>
+          <TabsTrigger value="diagnostics" data-testid="tab-diagnostics">
+            <Database className="mr-2 h-4 w-4" />
+            Diagnostics
           </TabsTrigger>
         </TabsList>
 
@@ -808,6 +1017,10 @@ export default function AdminDashboard() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        <TabsContent value="diagnostics" className="space-y-6">
+          <StoryDiagnostics />
         </TabsContent>
       </Tabs>
     </div>

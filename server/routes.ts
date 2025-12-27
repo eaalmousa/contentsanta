@@ -917,6 +917,122 @@ export async function registerRoutes(
     }
   });
 
+  // Admin diagnostics - story debug info
+  app.get("/api/admin/diagnostics/story/:storyId", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { storyId } = req.params;
+      
+      // Get story
+      const story = await storage.getStory(storyId);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+      
+      // Get linked story items (source_item_ids)
+      const storyItems = await storage.getStoryItems(storyId);
+      const sourceItemIds = storyItems.map(si => si.sourceItemId);
+      
+      // Get source items with source details
+      const linkedSourceItems = await Promise.all(
+        storyItems.map(async (si) => {
+          const sourceItem = await storage.getSourceItem(si.sourceItemId);
+          if (!sourceItem) return null;
+          
+          const source = await storage.getSource(sourceItem.sourceId);
+          let derivedName = source?.name;
+          if (!derivedName) {
+            try {
+              const urlObj = new URL(sourceItem.url);
+              derivedName = urlObj.hostname.replace(/^www\./, '');
+            } catch {
+              derivedName = 'Unknown';
+            }
+          }
+          
+          return {
+            id: sourceItem.id,
+            title: sourceItem.title,
+            url: sourceItem.url,
+            publishedAt: sourceItem.publishedAt,
+            sourceName: derivedName,
+            sourceId: sourceItem.sourceId,
+            mediaTier: source?.mediaTier || 'tier_3',
+            hasImages: !!(sourceItem.metadataJson as any)?.images?.length,
+            imageCount: (sourceItem.metadataJson as any)?.images?.length || 0,
+          };
+        })
+      );
+      
+      // Get image assets
+      const imageAssets = await storage.getImageAssets(story.workspaceId, storyId);
+      const formattedImageAssets = imageAssets.map(img => ({
+        id: img.id,
+        originType: img.originType,
+        originalUrl: img.originalUrl,
+        isPrimary: img.isPrimary,
+        sourceTier: img.sourceTier,
+        sourceItemId: img.sourceItemId,
+        createdAt: img.createdAt,
+        metadataJson: img.metadataJson,
+      }));
+      
+      // Get primary image
+      const primaryImage = await storage.getPrimaryImageForStory(storyId);
+      
+      res.json({
+        story: {
+          id: story.id,
+          canonicalTitle: story.canonicalTitle,
+          sourceCount: story.sourceCount,
+          dateBucket: story.dateBucket,
+          createdAt: story.createdAt,
+        },
+        linkedSourceItems: linkedSourceItems.filter(Boolean),
+        imageAssets: formattedImageAssets,
+        primaryImageId: primaryImage?.id || null,
+        primaryImageUrl: primaryImage?.originalUrl || null,
+        summary: {
+          totalSources: storyItems.length,
+          totalImages: imageAssets.length,
+          hasPrimaryImage: !!primaryImage,
+        },
+      });
+    } catch (error: any) {
+      console.error("[Admin Diagnostics] Error:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch diagnostics" });
+    }
+  });
+
+  // Admin diagnostics - list all stories with basic info
+  app.get("/api/admin/diagnostics/stories", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const stories = await storage.getStories("demo-workspace");
+      
+      const storiesWithInfo = await Promise.all(
+        stories.slice(0, 50).map(async (story) => {
+          const imageAssets = await storage.getImageAssets(story.workspaceId, story.id);
+          const primaryImage = imageAssets.find(a => a.isPrimary);
+          
+          return {
+            id: story.id,
+            canonicalTitle: story.canonicalTitle,
+            sourceCount: story.sourceCount,
+            dateBucket: story.dateBucket,
+            imageCount: imageAssets.length,
+            hasPrimaryImage: !!primaryImage,
+            primaryImageUrl: primaryImage?.originalUrl || null,
+            createdAt: story.createdAt,
+          };
+        })
+      );
+      
+      res.json(storiesWithInfo);
+    } catch (error: any) {
+      console.error("[Admin Diagnostics] Error:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch stories" });
+    }
+  });
+
   // ============ SOURCES API ============
   
   app.get("/api/sources", isAuthenticated, async (req: Request, res: Response) => {
@@ -1514,12 +1630,12 @@ export async function registerRoutes(
             return tierOrder[a.mediaTier as keyof typeof tierOrder] - tierOrder[b.mediaTier as keyof typeof tierOrder];
           });
           
-          const images = await storage.getImageAssets(workspaceId, story.id);
+          const primaryImage = await storage.getPrimaryImageForStory(story.id);
           
           return {
             ...story,
             sources: validSources,
-            featuredImage: images[0] || null,
+            featuredImage: primaryImage || null,
           };
         })
       );
@@ -1569,12 +1685,13 @@ export async function registerRoutes(
       });
       
       const images = await storage.getImageAssets(story.workspaceId, story.id);
+      const primaryImage = await storage.getPrimaryImageForStory(story.id);
       
       res.json({ 
         ...story, 
         sources: validSources,
         images,
-        featuredImage: images[0] || null,
+        featuredImage: primaryImage || null,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to fetch story" });

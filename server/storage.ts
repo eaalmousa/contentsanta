@@ -238,9 +238,11 @@ export interface IStorage {
   // Image Assets
   getImageAssets(workspaceId: string, storyId?: string, sourceItemId?: string): Promise<ImageAsset[]>;
   getImageAsset(id: string): Promise<ImageAsset | undefined>;
+  getPrimaryImageForStory(storyId: string): Promise<ImageAsset | undefined>;
   createImageAsset(data: InsertImageAsset): Promise<ImageAsset>;
   updateImageAsset(id: string, data: Partial<ImageAsset>): Promise<ImageAsset | undefined>;
   deleteImageAsset(id: string): Promise<void>;
+  setPrimaryImageForStory(storyId: string, imageAssetId: string): Promise<void>;
   
   // Image Usages
   getImageUsages(imageAssetId: string): Promise<ImageUsage[]>;
@@ -1063,6 +1065,15 @@ export class DatabaseStorage implements IStorage {
     return asset;
   }
 
+  async getPrimaryImageForStory(storyId: string): Promise<ImageAsset | undefined> {
+    const [asset] = await db.select().from(imageAssets)
+      .where(and(
+        eq(imageAssets.storyId, storyId),
+        eq(imageAssets.isPrimary, true)
+      ));
+    return asset;
+  }
+
   async createImageAsset(data: InsertImageAsset): Promise<ImageAsset> {
     const [asset] = await db.insert(imageAssets).values(data).returning();
     return asset;
@@ -1075,6 +1086,16 @@ export class DatabaseStorage implements IStorage {
 
   async deleteImageAsset(id: string): Promise<void> {
     await db.delete(imageAssets).where(eq(imageAssets.id, id));
+  }
+
+  async setPrimaryImageForStory(storyId: string, imageAssetId: string): Promise<void> {
+    await db.update(imageAssets)
+      .set({ isPrimary: false })
+      .where(eq(imageAssets.storyId, storyId));
+    
+    await db.update(imageAssets)
+      .set({ isPrimary: true })
+      .where(eq(imageAssets.id, imageAssetId));
   }
 
   // Image Usages

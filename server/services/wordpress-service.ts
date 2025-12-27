@@ -313,6 +313,9 @@ export interface WordPressPublishResult {
   postId?: string;
   postUrl?: string;
   error?: string;
+  warnings?: string[];
+  featuredImageFailed?: boolean;
+  featuredImageError?: string;
 }
 
 function parseCredentials(target: PublishingTarget): WordPressCredentials | null {
@@ -406,6 +409,10 @@ export async function publishToWordPress(
     
     // Upload featured image if provided
     let featuredMediaId: number | undefined;
+    let featuredImageFailed = false;
+    let featuredImageError: string | undefined;
+    const warnings: string[] = [];
+    
     if (options?.featuredImage) {
       console.log(`[WordPress] Uploading featured image...`);
       const imageResult = await uploadFeaturedImage(target, options.featuredImage);
@@ -414,7 +421,10 @@ export async function publishToWordPress(
         postData.featured_media = featuredMediaId;
         console.log(`[WordPress] Featured image set: Media ID ${featuredMediaId}`);
       } else {
-        console.warn(`[WordPress] Featured image upload failed: ${imageResult.error}`);
+        featuredImageFailed = true;
+        featuredImageError = imageResult.error || "Unknown error";
+        warnings.push(`Featured image upload failed: ${featuredImageError}`);
+        console.warn(`[WordPress] Featured image upload failed: ${featuredImageError}`);
         // Continue without featured image
       }
     }
@@ -462,6 +472,9 @@ export async function publishToWordPress(
       success: true,
       postId: String(result.id),
       postUrl: result.link,
+      warnings: warnings.length > 0 ? warnings : undefined,
+      featuredImageFailed,
+      featuredImageError,
     };
   } catch (error: any) {
     console.error(`[WordPress] Error:`, error.message);
