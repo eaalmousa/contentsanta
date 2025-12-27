@@ -1,0 +1,79 @@
+1) Make the /api/topics 500 self-diagnosing
+
+In the backend handler for POST /api/topics, add structured logging and always return a safe error body:
+
+Log:
+
+requestId
+
+payload keys (Object.keys(body))
+
+workspaceId used
+
+final insert object
+
+Wrap DB call and return:
+
+errorCode: "DB_INSERT_FAILED"
+
+errorDetail: err.message
+
+errorConstraint / errorColumn if your DB layer provides it
+
+This will immediately tell you whether it’s “column does not exist” vs “NOT NULL constraint” vs “workspaceId missing” etc.
+
+2) Verify the DB schema matches the insert
+
+Run a schema check against the topics table:
+
+confirm the existence + exact names of:
+
+region / country (or countries)
+
+is_active
+
+any workspace_id foreign key
+
+3) Confirm frontend payload matches backend expectations
+
+In the Topic Wizard submit function (handleCreateTopic / mutationFn you showed):
+
+log the payload right before the POST
+
+confirm the exact JSON keys being sent (country vs countries)
+
+4) Enforce activation rule in backend too (not just UI)
+
+Even if the UI disables the Activate switch, the backend should enforce:
+
+If sources_count === 0, force is_active=false (or reject is_active=true with 400 + message)
+
+This prevents “activated but empty” topics via API calls.
+
+Publishing targets (the 400 fix)
+
+The “default workspace fallback” is fine, but you should also do one of these:
+
+Preferred: Frontend always includes workspaceId from the session/current workspace state.
+
+Fallback: Backend derives workspaceId from authenticated user (e.g., “default workspace for user”) consistently in all publishing endpoints, not just GET.
+
+Also: 400 is the wrong status for “missing workspaceId” in many setups. If the server can derive it, don’t 400. If it truly can’t, return a 400 with a clear message and errorCode: "WORKSPACE_REQUIRED".
+
+A clean “definition of done” checklist (end-to-end)
+
+✅ Topic Wizard:
+
+Create topic with no sources → success (200/201), topic saved, inactive, Activate disabled
+
+Create topic with sources → success, can activate
+
+Activate topic without sources via API → backend blocks or forces inactive
+
+✅ Publishing Targets:
+
+GET /api/publishing-targets returns 200 (empty array ok)
+
+Create/update/delete targets works without manual workspace hacks
+
+No 400s in console during normal navigation

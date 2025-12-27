@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
+import crypto from "crypto";
 import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated, authStorage } from "./replit_integrations/auth";
 import { processWorkflowWithAI } from "./ai-workflow";
@@ -739,12 +740,20 @@ export async function registerRoutes(
 
   app.post("/api/publishing-targets", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const data = insertPublishingTargetSchema.parse(req.body);
+      const bodyWithWorkspace = {
+        ...req.body,
+        workspaceId: req.body.workspaceId || "demo-workspace",
+      };
+      const data = insertPublishingTargetSchema.parse(bodyWithWorkspace);
       const target = await storage.createPublishingTarget(data);
       res.status(201).json(target);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid data", details: error.errors });
+        return res.status(400).json({ 
+          error: "Invalid data", 
+          errorCode: "VALIDATION_FAILED",
+          details: error.errors 
+        });
       }
       res.status(500).json({ error: "Failed to create publishing target" });
     }
@@ -1494,15 +1503,44 @@ export async function registerRoutes(
   });
 
   app.post("/api/topics", isAuthenticated, async (req: Request, res: Response) => {
+    const requestId = crypto.randomUUID();
     try {
+      console.log(`[topics:create] requestId=${requestId} payloadKeys=${Object.keys(req.body).join(",")} workspaceId=${req.body.workspaceId}`);
+      
       const validation = insertTopicSchema.safeParse(req.body);
       if (!validation.success) {
-        return res.status(400).json({ error: fromZodError(validation.error).message });
+        const zodError = fromZodError(validation.error);
+        console.log(`[topics:create] requestId=${requestId} validationFailed: ${zodError.message}`);
+        return res.status(400).json({ 
+          error: zodError.message,
+          errorCode: "VALIDATION_FAILED",
+          errorDetails: validation.error.errors
+        });
       }
-      const topic = await storage.createTopic(validation.data);
+      
+      // Always create topics as inactive - they must have enabled sources to activate
+      const insertData = {
+        ...validation.data,
+        isLive: "false" as const, // Force inactive on create
+      };
+      
+      console.log(`[topics:create] requestId=${requestId} inserting: name=${insertData.name} region=${insertData.region} countries=${JSON.stringify(insertData.countries)}`);
+      
+      const topic = await storage.createTopic(insertData);
+      console.log(`[topics:create] requestId=${requestId} success: id=${topic.id}`);
       res.status(201).json(topic);
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to create topic" });
+      const errorCode = error.code || "DB_INSERT_FAILED";
+      const errorColumn = error.column;
+      const errorConstraint = error.constraint;
+      console.error(`[topics:create] requestId=${requestId} failed: code=${errorCode} column=${errorColumn} constraint=${errorConstraint} message=${error.message}`);
+      res.status(500).json({ 
+        error: error.message || "Failed to create topic",
+        errorCode,
+        errorDetail: error.detail,
+        errorColumn,
+        errorConstraint
+      });
     }
   });
 
