@@ -730,7 +730,13 @@ export async function registerRoutes(
   // Publishing Targets
   app.get("/api/publishing-targets", async (req: Request, res: Response) => {
     try {
-      const workspaceId = (req.query.workspaceId as string) || "demo-workspace";
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        return res.status(400).json({ 
+          error: "workspaceId query parameter is required",
+          errorCode: "WORKSPACE_REQUIRED"
+        });
+      }
       const targets = await storage.getPublishingTargets(workspaceId);
       res.json(targets);
     } catch (error) {
@@ -740,11 +746,13 @@ export async function registerRoutes(
 
   app.post("/api/publishing-targets", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const bodyWithWorkspace = {
-        ...req.body,
-        workspaceId: req.body.workspaceId || "demo-workspace",
-      };
-      const data = insertPublishingTargetSchema.parse(bodyWithWorkspace);
+      if (!req.body.workspaceId) {
+        return res.status(400).json({ 
+          error: "workspaceId is required",
+          errorCode: "WORKSPACE_REQUIRED"
+        });
+      }
+      const data = insertPublishingTargetSchema.parse(req.body);
       const target = await storage.createPublishingTarget(data);
       res.status(201).json(target);
     } catch (error) {
@@ -1504,10 +1512,20 @@ export async function registerRoutes(
 
   app.post("/api/topics", isAuthenticated, async (req: Request, res: Response) => {
     const requestId = crypto.randomUUID();
+    // Server-enforced workspaceId - derive from authenticated user's default workspace
+    const serverWorkspaceId = "demo-workspace"; // TODO: derive from user context when multi-tenant
+    
     try {
-      console.log(`[topics:create] requestId=${requestId} payloadKeys=${Object.keys(req.body).join(",")} workspaceId=${req.body.workspaceId}`);
+      console.log(`[topics:create] requestId=${requestId} payloadKeys=${Object.keys(req.body).join(",")}`);
       
-      const validation = insertTopicSchema.safeParse(req.body);
+      // Override any client-provided workspaceId with server-derived value
+      const bodyWithServerWorkspace = {
+        ...req.body,
+        workspaceId: serverWorkspaceId,
+        isLive: "false" as const, // Always create inactive - must have sources to activate
+      };
+      
+      const validation = insertTopicSchema.safeParse(bodyWithServerWorkspace);
       if (!validation.success) {
         const zodError = fromZodError(validation.error);
         console.log(`[topics:create] requestId=${requestId} validationFailed: ${zodError.message}`);
@@ -1518,28 +1536,19 @@ export async function registerRoutes(
         });
       }
       
-      // Always create topics as inactive - they must have enabled sources to activate
-      const insertData = {
-        ...validation.data,
-        isLive: "false" as const, // Force inactive on create
-      };
+      console.log(`[topics:create] requestId=${requestId} inserting: name=${validation.data.name} region=${validation.data.region} countries=${JSON.stringify(validation.data.countries)}`);
       
-      console.log(`[topics:create] requestId=${requestId} inserting: name=${insertData.name} region=${insertData.region} countries=${JSON.stringify(insertData.countries)}`);
-      
-      const topic = await storage.createTopic(insertData);
+      const topic = await storage.createTopic(validation.data);
       console.log(`[topics:create] requestId=${requestId} success: id=${topic.id}`);
       res.status(201).json(topic);
     } catch (error: any) {
       const errorCode = error.code || "DB_INSERT_FAILED";
-      const errorColumn = error.column;
-      const errorConstraint = error.constraint;
-      console.error(`[topics:create] requestId=${requestId} failed: code=${errorCode} column=${errorColumn} constraint=${errorConstraint} message=${error.message}`);
+      console.error(`[topics:create] requestId=${requestId} failed: code=${errorCode} constraint=${error.constraint} message=${error.message}`);
+      // Sanitized error response - don't leak internal details
       res.status(500).json({ 
-        error: error.message || "Failed to create topic",
+        error: "Failed to create topic",
         errorCode,
-        errorDetail: error.detail,
-        errorColumn,
-        errorConstraint
+        requestId, // Allow correlation with server logs
       });
     }
   });

@@ -76,7 +76,8 @@ export default function AutomationsPage() {
   });
 
   const { data: targets } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets"],
+    queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
+    queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
   });
 
   const { data: runs } = useQuery<AutomationRun[]>({

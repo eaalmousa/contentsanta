@@ -104,7 +104,7 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
       await apiRequest("DELETE", `/api/publishing-targets/${target.id}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
       toast({ title: "Target deleted" });
     },
   });
@@ -510,12 +510,12 @@ function CreateTargetDialog({
       } else {
         await apiRequest("POST", "/api/publishing-targets", {
           ...data,
-          workspaceId: "default",
+          workspaceId: "demo-workspace",
         });
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
       toast({ title: isEditing ? "Target updated" : "Target connected" });
       onOpenChange(false);
       form.reset();
@@ -654,7 +654,8 @@ function PublishDialog({
   const [selectedTarget, setSelectedTarget] = useState<string>("");
 
   const { data: targets } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets"],
+    queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
+    queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
   });
 
   const publishMutation = useMutation({
@@ -805,7 +806,8 @@ export default function Publishing() {
   const [selectedAsset, setSelectedAsset] = useState<AssetWithVersion | null>(null);
 
   const { data: targets, isLoading: targetsLoading } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets"],
+    queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
+    queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
   });
 
   const { data: jobs, isLoading: jobsLoading } = useQuery<(PublishJob & { target?: PublishingTarget })[]>({
