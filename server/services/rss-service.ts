@@ -194,12 +194,12 @@ async function fetchWithRetry(url: string): Promise<FetchResponse> {
   throw lastError || new Error("Unknown fetch error");
 }
 
-function isValidXML(content: string): boolean {
+export function isValidXML(content: string): boolean {
   const trimmed = content.trim();
   return trimmed.includes("<rss") || trimmed.includes("<feed") || trimmed.includes("<RDF");
 }
 
-function normalizeLink(url: string): string {
+export function normalizeLink(url: string): string {
   try {
     const parsed = new URL(url);
     const trackingParams = [
@@ -214,14 +214,14 @@ function normalizeLink(url: string): string {
   }
 }
 
-function generateContentHash(url: string, title: string, guid?: string): string {
+export function generateContentHash(url: string, title: string, guid?: string): string {
   const content = guid
     ? `guid:${guid}`
     : `${normalizeLink(url)}|${title}`.toLowerCase().trim();
   return crypto.createHash("sha256").update(content).digest("hex").substring(0, 32);
 }
 
-function generateGuidNormalized(guid: string | undefined, link: string, title: string, pubDate?: string): string {
+export function generateGuidNormalized(guid: string | undefined, link: string, title: string, pubDate?: string): string {
   if (guid) {
     return crypto.createHash("sha256").update(`guid:${guid}`).digest("hex").substring(0, 32);
   }
@@ -229,7 +229,7 @@ function generateGuidNormalized(guid: string | undefined, link: string, title: s
   return crypto.createHash("sha256").update(fallback).digest("hex").substring(0, 32);
 }
 
-function parsePublishedAt(dateStr: string | undefined): Date | null {
+export function parsePublishedAt(dateStr: string | undefined): Date | null {
   if (!dateStr) return null;
   try {
     const date = new Date(dateStr);

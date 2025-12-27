@@ -1,51 +1,11 @@
 import assert from "assert";
-import crypto from "crypto";
-
-function normalizeLink(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const trackingParams = [
-      "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
-      "at_medium", "at_campaign", "at_custom1", "at_custom2", "at_custom3", "at_custom4",
-      "ns_mchannel", "ns_source", "ns_campaign", "ns_linkname", "ns_fee",
-    ];
-    trackingParams.forEach((param) => parsed.searchParams.delete(param));
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}
-
-function generateContentHash(url: string, title: string, guid?: string): string {
-  const content = guid
-    ? `guid:${guid}`
-    : `${url}|${title}`.toLowerCase().trim();
-  return crypto.createHash("sha256").update(content).digest("hex").substring(0, 32);
-}
-
-function generateGuidNormalized(guid: string | undefined, link: string, title: string, pubDate?: string): string {
-  if (guid) {
-    return crypto.createHash("sha256").update(`guid:${guid}`).digest("hex").substring(0, 32);
-  }
-  const fallback = `${link}|${title}|${pubDate || ""}`.toLowerCase().trim();
-  return crypto.createHash("sha256").update(fallback).digest("hex").substring(0, 32);
-}
-
-function isValidXML(content: string): boolean {
-  const trimmed = content.trim();
-  return trimmed.includes("<rss") || trimmed.includes("<feed") || trimmed.includes("<RDF");
-}
-
-function parsePublishedAt(dateStr: string | undefined): Date | null {
-  if (!dateStr) return null;
-  try {
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return null;
-    return date;
-  } catch {
-    return null;
-  }
-}
+import {
+  normalizeLink,
+  generateContentHash,
+  generateGuidNormalized,
+  isValidXML,
+  parsePublishedAt,
+} from "../rss-service";
 
 let passed = 0;
 let failed = 0;
@@ -62,7 +22,7 @@ function test(name: string, fn: () => void) {
   }
 }
 
-console.log("\nTesting normalizeLink:");
+console.log("\nTesting normalizeLink (imported from rss-service.ts):");
 test("removes UTM parameters", () => {
   const url = "https://example.com/article?utm_source=twitter&utm_medium=social&id=123";
   assert.strictEqual(normalizeLink(url), "https://example.com/article?id=123");
@@ -88,7 +48,7 @@ test("handles invalid URLs gracefully", () => {
   assert.strictEqual(normalizeLink(url), "not-a-valid-url");
 });
 
-console.log("\nTesting generateContentHash:");
+console.log("\nTesting generateContentHash (imported from rss-service.ts):");
 test("uses guid when available", () => {
   const hash1 = generateContentHash("https://example.com/a", "Title A", "unique-guid-123");
   const hash2 = generateContentHash("https://example.com/b", "Title B", "unique-guid-123");
@@ -112,7 +72,13 @@ test("hash is 32 characters", () => {
   assert.strictEqual(hash.length, 32);
 });
 
-console.log("\nTesting generateGuidNormalized:");
+test("hash with tracking params stripped produces same result", () => {
+  const hash1 = generateContentHash("https://example.com/article?utm_source=twitter", "Title");
+  const hash2 = generateContentHash("https://example.com/article", "Title");
+  assert.strictEqual(hash1, hash2);
+});
+
+console.log("\nTesting generateGuidNormalized (imported from rss-service.ts):");
 test("uses guid when present", () => {
   const hash = generateGuidNormalized("my-guid", "https://example.com", "Title", "2024-01-01");
   assert.strictEqual(hash.length, 32);
@@ -135,7 +101,13 @@ test("handles empty pubDate", () => {
   assert.strictEqual(hash.length, 32);
 });
 
-console.log("\nTesting isValidXML:");
+test("same guid produces same hash regardless of other fields", () => {
+  const hash1 = generateGuidNormalized("article-123", "https://site.com/old", "Old Title", "2024-01-01");
+  const hash2 = generateGuidNormalized("article-123", "https://site.com/new", "New Title", "2024-01-02");
+  assert.strictEqual(hash1, hash2);
+});
+
+console.log("\nTesting isValidXML (imported from rss-service.ts):");
 test("accepts RSS 2.0 feed", () => {
   const xml = `<?xml version="1.0"?><rss version="2.0"><channel><title>Test</title></channel></rss>`;
   assert.strictEqual(isValidXML(xml), true);
@@ -173,7 +145,17 @@ test("handles whitespace before XML declaration", () => {
   assert.strictEqual(isValidXML(xml), true);
 });
 
-console.log("\nTesting parsePublishedAt:");
+test("rejects 404 HTML page", () => {
+  const html = `<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>Page Not Found</h1></body></html>`;
+  assert.strictEqual(isValidXML(html), false);
+});
+
+test("rejects redirect HTML", () => {
+  const html = `<html><head><meta http-equiv="refresh" content="0;url=https://example.com/login"></head></html>`;
+  assert.strictEqual(isValidXML(html), false);
+});
+
+console.log("\nTesting parsePublishedAt (imported from rss-service.ts):");
 test("parses ISO 8601 date", () => {
   const date = parsePublishedAt("2024-12-27T10:30:00Z");
   assert.ok(date instanceof Date);
@@ -185,7 +167,7 @@ test("parses RFC 2822 date (common in RSS)", () => {
   assert.ok(date instanceof Date);
 });
 
-test("handles timezone offsets", () => {
+test("handles timezone offsets - converts to UTC", () => {
   const date = parsePublishedAt("2024-12-27T10:30:00+05:00");
   assert.ok(date instanceof Date);
   assert.strictEqual(date?.toISOString(), "2024-12-27T05:30:00.000Z");
@@ -199,19 +181,23 @@ test("returns null for invalid date", () => {
   assert.strictEqual(parsePublishedAt("not-a-date"), null);
 });
 
-console.log("\nTesting Deduplication:");
-test("same guid produces same hash regardless of other fields", () => {
-  const hash1 = generateGuidNormalized("article-123", "https://site.com/old", "Old Title", "2024-01-01");
-  const hash2 = generateGuidNormalized("article-123", "https://site.com/new", "New Title", "2024-01-02");
-  assert.strictEqual(hash1, hash2);
+test("returns null for empty string", () => {
+  assert.strictEqual(parsePublishedAt(""), null);
 });
 
+console.log("\nTesting Deduplication Logic:");
 test("missing guid falls back to composite key", () => {
   const hash1 = generateGuidNormalized(undefined, "https://example.com/a", "Title", "2024-01-01");
   const hash2 = generateGuidNormalized(undefined, "https://example.com/a", "Title", "2024-01-01");
   const hash3 = generateGuidNormalized(undefined, "https://example.com/different", "Title", "2024-01-01");
   assert.strictEqual(hash1, hash2);
   assert.notStrictEqual(hash1, hash3);
+});
+
+test("URL normalization affects contentHash", () => {
+  const hash1 = generateContentHash("https://example.com/article?utm_source=fb", "Title");
+  const hash2 = generateContentHash("https://example.com/article?utm_source=twitter", "Title");
+  assert.strictEqual(hash1, hash2, "Same article with different tracking params should have same hash");
 });
 
 console.log("\nTesting Sample XML Feeds:");
@@ -243,11 +229,6 @@ test("validates sample RSS feed", () => {
 
 test("validates sample Atom feed", () => {
   assert.strictEqual(isValidXML(sampleAtom), true);
-});
-
-test("rejects 404 HTML page", () => {
-  const html = `<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>Page Not Found</h1></body></html>`;
-  assert.strictEqual(isValidXML(html), false);
 });
 
 console.log(`\n========== Results: ${passed} passed, ${failed} failed ==========`);
