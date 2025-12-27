@@ -606,10 +606,10 @@ export class DatabaseStorage implements IStorage {
     if (status) conditions.push(eq(sourceItems.status, status));
     if (sourceId) conditions.push(eq(sourceItems.sourceId, sourceId));
     
-    // Sort by publishedAt (newest first), fallback to createdAt for items without publish date
+    // Sort by publishedAt (newest first) with NULLS LAST, fallback to createdAt for items without publish date
     return await db.select().from(sourceItems)
       .where(and(...conditions))
-      .orderBy(desc(sourceItems.publishedAt), desc(sourceItems.createdAt));
+      .orderBy(sql`${sourceItems.publishedAt} DESC NULLS LAST`, desc(sourceItems.createdAt));
   }
 
   async getSourceItem(id: string): Promise<SourceItem | undefined> {
@@ -639,7 +639,7 @@ export class DatabaseStorage implements IStorage {
     
     return await db.select().from(sourceItems)
       .where(and(...conditions))
-      .orderBy(desc(sourceItems.publishedAt));
+      .orderBy(sql`${sourceItems.publishedAt} DESC NULLS LAST`, desc(sourceItems.createdAt));
   }
 
   async sourceItemExists(workspaceId: string, contentHash: string): Promise<boolean> {

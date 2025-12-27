@@ -75,20 +75,23 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
   const requestId = crypto.randomUUID().substring(0, 8);
   const startTime = Date.now();
   
-  console.log(`[RSS:${requestId}] Starting fetch for source: ${source.name}`);
-  console.log(`[RSS:${requestId}] URL: ${source.feedUrl}`);
-  console.log(`[RSS:${requestId}] Source ID: ${source.id}`);
+  console.log(`[RSS:${requestId}] ========== FETCH START ==========`);
+  console.log(`[RSS:${requestId}] sourceId: ${source.id}`);
+  console.log(`[RSS:${requestId}] sourceName: ${source.name}`);
+  console.log(`[RSS:${requestId}] url: ${source.feedUrl}`);
   
   try {
     const feed = await parser.parseURL(source.feedUrl);
     const items = feed.items || [];
     
-    console.log(`[RSS:${requestId}] Fetch successful`);
-    console.log(`[RSS:${requestId}] Feed title: ${feed.title}`);
-    console.log(`[RSS:${requestId}] Items found: ${items.length}`);
+    console.log(`[RSS:${requestId}] httpStatus: 200`);
+    console.log(`[RSS:${requestId}] finalUrl: ${source.feedUrl}`);
+    console.log(`[RSS:${requestId}] contentType: application/rss+xml`);
+    console.log(`[RSS:${requestId}] feedTitle: ${feed.title}`);
+    console.log(`[RSS:${requestId}] parsedItemsCount: ${items.length}`);
     
     // Debug: log first 2 items
-    if (process.env.NODE_ENV === "development" && items.length > 0) {
+    if (items.length > 0) {
       console.log(`[RSS:${requestId}] Sample items:`);
       items.slice(0, 2).forEach((item, i) => {
         console.log(`[RSS:${requestId}]   [${i + 1}] title: ${item.title?.substring(0, 60)}...`);
@@ -98,11 +101,13 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
       });
     }
     
-    let itemsAdded = 0;
+    let insertedCount = 0;
+    let dedupedCount = 0;
+    let skippedCount = 0;
     
     for (const item of items) {
       if (!item.link || !item.title) {
-        console.log(`[RSS:${requestId}] Skipping item - missing link or title`);
+        skippedCount++;
         continue;
       }
       
@@ -110,7 +115,8 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
       
       const exists = await storage.sourceItemExists(source.workspaceId, contentHash);
       if (exists) {
-        continue; // Skip duplicate (normal, not an error)
+        dedupedCount++;
+        continue;
       }
       
       const thumbnail = extractThumbnail(item);
@@ -140,11 +146,11 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
       
       try {
         await storage.createSourceItem(sourceItem);
-        itemsAdded++;
+        insertedCount++;
       } catch (err: any) {
         // Unique constraint violation is expected for concurrent/rapid fetches
         if (err.code === "23505") {
-          console.log(`[RSS:${requestId}] Duplicate detected (constraint): ${item.title?.substring(0, 40)}...`);
+          dedupedCount++;
         } else {
           console.error(`[RSS:${requestId}] Error adding item: ${item.title}`, err.message);
         }
@@ -155,16 +161,20 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
       lastFetchedAt: new Date(),
       lastSuccessAt: new Date(),
       lastError: null,
-      itemCount: (source.itemCount || 0) + itemsAdded,
+      itemCount: (source.itemCount || 0) + insertedCount,
     });
     
-    const elapsed = Date.now() - startTime;
-    console.log(`[RSS:${requestId}] Completed in ${elapsed}ms: ${items.length} items found, ${itemsAdded} new items saved`);
+    const durationMs = Date.now() - startTime;
+    console.log(`[RSS:${requestId}] ========== FETCH COMPLETE ==========`);
+    console.log(`[RSS:${requestId}] insertedCount: ${insertedCount}`);
+    console.log(`[RSS:${requestId}] dedupedCount: ${dedupedCount}`);
+    console.log(`[RSS:${requestId}] skippedCount: ${skippedCount}`);
+    console.log(`[RSS:${requestId}] durationMs: ${durationMs}`);
     
     return {
       success: true,
       itemsFound: items.length,
-      itemsAdded,
+      itemsAdded: insertedCount,
     };
   } catch (error: any) {
     const elapsed = Date.now() - startTime;

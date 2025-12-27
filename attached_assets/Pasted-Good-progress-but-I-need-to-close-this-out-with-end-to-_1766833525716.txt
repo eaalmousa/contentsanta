@@ -1,0 +1,50 @@
+Good progress — but I need to close this out with end-to-end proof inside the actual app (not just a local parser test).
+
+Do this now, in this order, and report results with screenshots + logs:
+
+1) Publish + verify deployment
+- Click Publish.
+- After deploy, hard refresh (Ctrl+F5) and confirm the build is the latest.
+
+2) Create the BBC source through the UI
+- Go to Sources → Add Source
+- URL: https://feeds.bbci.co.uk/news/technology/rss.xml
+- Save.
+Expected: source created successfully (no validation error).
+
+3) Trigger a fetch and confirm DB writes
+- Click “Fetch / Refresh” for that source (or whatever the UI action is).
+- In server logs, capture ONE run showing:
+  requestId, sourceId, url, finalUrl, httpStatus, contentType, bytesRead,
+  parsedItemsCount, insertedCount, dedupedCount, durationMs
+Expected:
+  parsedItemsCount > 0
+  insertedCount > 0 on first run
+  insertedCount = 0 and dedupedCount > 0 on immediate second run (dedupe proof)
+
+4) Confirm Inbox shows structured items (not blobs)
+- Go to Inbox.
+- Confirm:
+  - items appear
+  - newest first using publishedAt (not createdAt)
+  - title is visible
+  - external link is clickable and opens the BBC article in a new tab
+  - published date renders correctly
+Provide a screenshot of Inbox showing at least 5 BBC items.
+
+5) Confirm API sorting is correct
+- Ensure the source_items list endpoint sorts by publishedAt DESC with a stable fallback:
+  ORDER BY publishedAt DESC NULLS LAST, createdAt DESC
+(So feeds missing pubDate still behave correctly.)
+
+6) Authentication requirement
+- If validation/fetch endpoints require auth (expected), ensure the UI is calling them with the user’s session and the UX error is clear when unauthenticated.
+No “silent fail”.
+
+7) Final deliverable
+When done, output:
+- What changed (files + short bullet per file)
+- Evidence (log snippet + screenshots)
+- Any remaining known issues (only if reproducible)
+
+Do NOT ask the user to try it as the next step — complete steps 1–7 and provide proof.
