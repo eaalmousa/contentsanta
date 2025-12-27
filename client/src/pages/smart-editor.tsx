@@ -347,7 +347,7 @@ function StoryDetailsDialog({
             </div>
           </div>
           
-          {story.featuredImage && (
+          {story.featuredImage?.originalUrl && (
             <div>
               <h4 className="text-sm font-medium mb-2">Featured Image</h4>
               <div className="rounded-md overflow-hidden bg-muted">

@@ -101,48 +101,137 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
     },
   });
 
+  const testConnectionMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", `/api/publishing-targets/${target.id}/test`);
+    },
+    onSuccess: (data: any) => {
+      if (data.success) {
+        toast({ 
+          title: "Connection successful", 
+          description: `Connected to ${data.siteName || target.name}` 
+        });
+      } else {
+        toast({ 
+          title: "Connection failed", 
+          description: data.error || "Could not connect to the target",
+          variant: "destructive" 
+        });
+      }
+    },
+    onError: () => {
+      toast({ 
+        title: "Connection test failed", 
+        variant: "destructive" 
+      });
+    },
+  });
+
+  const testDraftMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", `/api/publishing-targets/${target.id}/test-post`);
+    },
+    onSuccess: (data: any) => {
+      if (data.success) {
+        toast({ 
+          title: "Test draft created", 
+          description: "A test draft has been created in your WordPress"
+        });
+      } else {
+        toast({ 
+          title: "Failed to create test draft", 
+          description: data.error || "Could not create test post",
+          variant: "destructive" 
+        });
+      }
+    },
+    onError: () => {
+      toast({ 
+        title: "Test draft failed", 
+        variant: "destructive" 
+      });
+    },
+  });
+
   const platformInfo = platformOptions.find((p) => p.value === target.type);
+  const isWordPress = target.type === "wordpress";
+  const isTesting = testConnectionMutation.isPending || testDraftMutation.isPending;
 
   return (
     <Card data-testid={`card-target-${target.id}`}>
       <CardContent className="p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
-              <PlatformIcon type={target.type} className="h-6 w-6" />
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
+                <PlatformIcon type={target.type} className="h-6 w-6" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <h3 className="font-medium" data-testid={`text-target-name-${target.id}`}>
+                  {target.name}
+                </h3>
+                <span className="text-sm text-muted-foreground">
+                  {platformInfo?.label || target.type}
+                </span>
+              </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <h3 className="font-medium" data-testid={`text-target-name-${target.id}`}>
-                {target.name}
-              </h3>
-              <span className="text-sm text-muted-foreground">
-                {platformInfo?.label || target.type}
-              </span>
+            <div className="flex items-center gap-2">
+              <Badge variant="default">Active</Badge>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" data-testid={`button-target-menu-${target.id}`}>
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={onEdit}>
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    className="text-destructive"
+                    onClick={() => deleteMutation.mutate()}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="default">Active</Badge>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" data-testid={`button-target-menu-${target.id}`}>
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={onEdit}>
-                  <Edit className="mr-2 h-4 w-4" />
-                  Edit
-                </DropdownMenuItem>
-                <DropdownMenuItem 
-                  className="text-destructive"
-                  onClick={() => deleteMutation.mutate()}
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          
+          {isWordPress && (
+            <div className="flex items-center gap-2 pt-2 border-t">
+              <Button 
+                size="sm" 
+                variant="outline"
+                onClick={() => testConnectionMutation.mutate()}
+                disabled={isTesting}
+                data-testid={`button-test-connection-${target.id}`}
+              >
+                {testConnectionMutation.isPending ? (
+                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                ) : (
+                  <CheckCircle className="mr-2 h-3 w-3" />
+                )}
+                Test Connection
+              </Button>
+              <Button 
+                size="sm" 
+                variant="outline"
+                onClick={() => testDraftMutation.mutate()}
+                disabled={isTesting}
+                data-testid={`button-test-draft-${target.id}`}
+              >
+                {testDraftMutation.isPending ? (
+                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                ) : (
+                  <Send className="mr-2 h-3 w-3" />
+                )}
+                Create Test Draft
+              </Button>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

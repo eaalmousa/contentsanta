@@ -28,7 +28,7 @@ import { runAutomation } from "./services/automation-service";
 import { testWordPressConnection, publishToWordPress } from "./services/wordpress-service";
 import { startScheduler } from "./services/scheduler";
 import { runDiscoveryJob, convertDiscoveredSourceToSource } from "./services/discovery-service";
-import { insertContentGoalSchema, insertTopicSchema, insertDraftSchema } from "@shared/schema";
+import { insertContentGoalSchema, insertTopicSchema, insertDraftSchema, insertImageAssetSchema } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
 
 // Legacy simulated AI workflow processing (fallback)
@@ -1572,6 +1572,7 @@ export async function registerRoutes(
         ...story, 
         sources: validSources,
         images,
+        featuredImage: images[0] || null,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to fetch story" });
@@ -1627,7 +1628,11 @@ export async function registerRoutes(
 
   app.post("/api/image-assets", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const asset = await storage.createImageAsset(req.body);
+      const parsed = insertImageAssetSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid image asset data", details: parsed.error.flatten() });
+      }
+      const asset = await storage.createImageAsset(parsed.data);
       res.status(201).json(asset);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to create image asset" });
@@ -1664,12 +1669,12 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Publishing target not found" });
       }
       
-      if (target.targetType !== "wordpress") {
+      if (target.type !== "wordpress") {
         return res.status(400).json({ error: "Only WordPress connections can be tested" });
       }
       
       const result = await testWordPressConnection(
-        target.config as any
+        target.configJson as any
       );
       
       res.json(result);
@@ -1685,11 +1690,11 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Publishing target not found" });
       }
       
-      if (target.targetType !== "wordpress") {
+      if (target.type !== "wordpress") {
         return res.status(400).json({ error: "Only WordPress connections can be tested" });
       }
       
-      const config = target.config as any;
+      const config = target.configJson as any;
       const testPost = {
         title: `ContentSanta Test Post - ${new Date().toISOString()}`,
         content: "<p>This is a test post created by ContentSanta to verify your WordPress connection.</p><p>You can safely delete this post.</p>",
