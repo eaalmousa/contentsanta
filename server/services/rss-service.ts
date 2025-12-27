@@ -1,7 +1,7 @@
 import Parser from "rss-parser";
 import crypto from "crypto";
 import { storage } from "../storage";
-import type { Source, InsertSourceItem } from "@shared/schema";
+import type { Source, InsertSourceItem, InsertFetchRun } from "@shared/schema";
 import zlib from "zlib";
 import https from "https";
 import http from "http";
@@ -11,7 +11,6 @@ const gunzip = promisify(zlib.gunzip);
 const inflate = promisify(zlib.inflate);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
-// Create parser for XML parsing only (we handle fetching separately)
 const parser = new Parser({
   customFields: {
     item: [
@@ -23,13 +22,39 @@ const parser = new Parser({
 });
 
 const MAX_REDIRECTS = 5;
+const MAX_RETRIES = 3;
+const TIMEOUT_RETRIES = 2;
+const INITIAL_BACKOFF_MS = 1000;
 
-// Custom HTTP fetch with proper decompression
-async function fetchWithDecompression(url: string, redirectCount: number = 0): Promise<{ xml: string; status: number; contentType: string; bytesRead: number; finalUrl: string }> {
+interface FetchResponse {
+  xml: string;
+  status: number;
+  contentType: string;
+  contentEncoding: string | null;
+  contentLength: number | null;
+  bytesCompressed: number;
+  bytesDecompressed: number;
+  finalUrl: string;
+}
+
+interface RetryableError extends Error {
+  statusCode?: number;
+  isTimeout?: boolean;
+  isRetryable?: boolean;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithDecompression(
+  url: string,
+  redirectCount: number = 0
+): Promise<FetchResponse> {
   if (redirectCount > MAX_REDIRECTS) {
-    throw new Error(`Too many redirects (max ${MAX_REDIRECTS})`);
+    throw Object.assign(new Error(`Too many redirects (max ${MAX_REDIRECTS})`), { isRetryable: false });
   }
-  
+
   return new Promise((resolve, reject) => {
     const client = url.startsWith("https") ? https : http;
     const options = {
@@ -42,14 +67,14 @@ async function fetchWithDecompression(url: string, redirectCount: number = 0): P
       },
       timeout: 30000,
     };
-    
-    client.get(url, options, async (response) => {
+
+    const req = client.get(url, options, async (response) => {
       const chunks: Buffer[] = [];
       const status = response.statusCode || 0;
       const contentType = response.headers["content-type"] || "unknown";
-      const contentEncoding = response.headers["content-encoding"];
-      
-      // Handle redirects (resolve relative URLs against original)
+      const contentEncoding = response.headers["content-encoding"] || null;
+      const contentLength = response.headers["content-length"] ? parseInt(response.headers["content-length"], 10) : null;
+
       if (status >= 300 && status < 400 && response.headers.location) {
         try {
           const redirectUrl = new URL(response.headers.location, url).toString();
@@ -60,55 +85,129 @@ async function fetchWithDecompression(url: string, redirectCount: number = 0): P
         }
         return;
       }
-      
+
+      if (status === 429 || status >= 500) {
+        const error = new Error(`HTTP ${status}`) as RetryableError;
+        error.statusCode = status;
+        error.isRetryable = true;
+        reject(error);
+        return;
+      }
+
+      if (status >= 400) {
+        const error = new Error(`HTTP ${status}`) as RetryableError;
+        error.statusCode = status;
+        error.isRetryable = false;
+        reject(error);
+        return;
+      }
+
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("error", reject);
       response.on("end", async () => {
         try {
           const buffer = Buffer.concat(chunks);
-          const bytesRead = buffer.length;
+          const bytesCompressed = buffer.length;
           let xml: string;
-          
+          let bytesDecompressed: number;
+
           if (contentEncoding === "gzip") {
             const decompressed = await gunzip(buffer);
             xml = decompressed.toString("utf-8");
+            bytesDecompressed = decompressed.length;
           } else if (contentEncoding === "deflate") {
             const decompressed = await inflate(buffer);
             xml = decompressed.toString("utf-8");
+            bytesDecompressed = decompressed.length;
           } else if (contentEncoding === "br") {
             const decompressed = await brotliDecompress(buffer);
             xml = decompressed.toString("utf-8");
+            bytesDecompressed = decompressed.length;
           } else {
             xml = buffer.toString("utf-8");
+            bytesDecompressed = bytesCompressed;
           }
-          
-          resolve({ xml, status, contentType, bytesRead, finalUrl });
+
+          resolve({
+            xml,
+            status,
+            contentType,
+            contentEncoding,
+            contentLength,
+            bytesCompressed,
+            bytesDecompressed,
+            finalUrl: url,
+          });
         } catch (err) {
           reject(err);
         }
       });
-    }).on("error", reject).on("timeout", () => reject(new Error("Request timeout")));
+    });
+
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      const error = new Error("Request timeout") as RetryableError;
+      error.isTimeout = true;
+      error.isRetryable = true;
+      reject(error);
+    });
   });
 }
 
-export interface FetchResult {
-  success: boolean;
-  itemsFound: number;
-  itemsAdded: number;
-  error?: string;
+async function fetchWithRetry(url: string): Promise<FetchResponse> {
+  let lastError: Error | null = null;
+  let attempt = 0;
+  let timeoutAttempts = 0;
+
+  while (attempt < MAX_RETRIES) {
+    try {
+      return await fetchWithDecompression(url);
+    } catch (err: any) {
+      lastError = err;
+      
+      if (err.isTimeout) {
+        timeoutAttempts++;
+        if (timeoutAttempts >= TIMEOUT_RETRIES) {
+          throw err;
+        }
+        console.log(`[RSS] Timeout, retry ${timeoutAttempts}/${TIMEOUT_RETRIES}...`);
+        await sleep(INITIAL_BACKOFF_MS);
+        continue;
+      }
+
+      if (!err.isRetryable) {
+        throw err;
+      }
+
+      attempt++;
+      if (attempt >= MAX_RETRIES) {
+        throw err;
+      }
+
+      const backoffMs = INITIAL_BACKOFF_MS * Math.pow(2, attempt - 1);
+      console.log(`[RSS] Retryable error (${err.statusCode || err.message}), retry ${attempt}/${MAX_RETRIES} after ${backoffMs}ms...`);
+      await sleep(backoffMs);
+    }
+  }
+
+  throw lastError || new Error("Unknown fetch error");
 }
 
-// Normalize link by stripping common tracking parameters
+function isValidXML(content: string): boolean {
+  const trimmed = content.trim();
+  return trimmed.includes("<rss") || trimmed.includes("<feed") || trimmed.includes("<RDF");
+}
+
 function normalizeLink(url: string): string {
   try {
     const parsed = new URL(url);
-    // Remove common tracking params
     const trackingParams = [
       "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
       "at_medium", "at_campaign", "at_custom1", "at_custom2", "at_custom3", "at_custom4",
       "ns_mchannel", "ns_source", "ns_campaign", "ns_linkname", "ns_fee",
     ];
-    trackingParams.forEach(param => parsed.searchParams.delete(param));
+    trackingParams.forEach((param) => parsed.searchParams.delete(param));
     return parsed.toString();
   } catch {
     return url;
@@ -116,91 +215,129 @@ function normalizeLink(url: string): string {
 }
 
 function generateContentHash(url: string, title: string, guid?: string): string {
-  // Use guid if available (most reliable), else normalized URL + title
-  const content = guid 
-    ? `guid:${guid}` 
+  const content = guid
+    ? `guid:${guid}`
     : `${normalizeLink(url)}|${title}`.toLowerCase().trim();
   return crypto.createHash("sha256").update(content).digest("hex").substring(0, 32);
 }
 
-// Extract thumbnail from various RSS formats
+function generateGuidNormalized(guid: string | undefined, link: string, title: string, pubDate?: string): string {
+  if (guid) {
+    return crypto.createHash("sha256").update(`guid:${guid}`).digest("hex").substring(0, 32);
+  }
+  const fallback = `${normalizeLink(link)}|${title}|${pubDate || ""}`.toLowerCase().trim();
+  return crypto.createHash("sha256").update(fallback).digest("hex").substring(0, 32);
+}
+
+function parsePublishedAt(dateStr: string | undefined): Date | null {
+  if (!dateStr) return null;
+  try {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return null;
+    return date;
+  } catch {
+    return null;
+  }
+}
+
 function extractThumbnail(item: any): string | null {
-  // BBC format: media:thumbnail
   if (item.mediaThumbnail?.$.url) {
     return item.mediaThumbnail.$.url;
   }
-  // Media content
   if (item.mediaContent?.$.url) {
     return item.mediaContent.$.url;
   }
-  // Enclosure (common for podcasts/media)
   if (item.enclosure?.url && item.enclosure.type?.startsWith("image")) {
     return item.enclosure.url;
   }
   return null;
 }
 
+export interface FetchResult {
+  success: boolean;
+  itemsFound: number;
+  itemsAdded: number;
+  error?: string;
+  errorName?: string;
+}
+
 export async function fetchRSSSource(source: Source): Promise<FetchResult> {
   const requestId = crypto.randomUUID().substring(0, 8);
   const startTime = Date.now();
-  
+
   console.log(`[RSS:${requestId}] ========== FETCH START ==========`);
   console.log(`[RSS:${requestId}] sourceId: ${source.id}`);
   console.log(`[RSS:${requestId}] sourceName: ${source.name}`);
   console.log(`[RSS:${requestId}] url: ${source.feedUrl}`);
-  
+
+  let fetchRunData: InsertFetchRun = {
+    sourceId: source.id,
+    status: "failed",
+  };
+
   try {
-    // Fetch with proper decompression
-    const { xml, status, contentType, bytesRead, finalUrl } = await fetchWithDecompression(source.feedUrl);
-    
-    console.log(`[RSS:${requestId}] httpStatus: ${status}`);
-    console.log(`[RSS:${requestId}] finalUrl: ${finalUrl}`);
-    console.log(`[RSS:${requestId}] contentType: ${contentType}`);
-    console.log(`[RSS:${requestId}] bytesRead: ${bytesRead}`);
-    
-    // Parse the XML
-    const feed = await parser.parseString(xml);
+    const response = await fetchWithRetry(source.feedUrl);
+
+    console.log(`[RSS:${requestId}] ========== RESPONSE HEADERS ==========`);
+    console.log(`[RSS:${requestId}] httpStatus: ${response.status}`);
+    console.log(`[RSS:${requestId}] contentType: ${response.contentType}`);
+    console.log(`[RSS:${requestId}] contentEncoding: ${response.contentEncoding || "none"}`);
+    console.log(`[RSS:${requestId}] contentLength: ${response.contentLength ?? "not set"}`);
+    console.log(`[RSS:${requestId}] bytesCompressed: ${response.bytesCompressed}`);
+    console.log(`[RSS:${requestId}] bytesDecompressed: ${response.bytesDecompressed}`);
+    console.log(`[RSS:${requestId}] finalUrl: ${response.finalUrl}`);
+
+    fetchRunData.httpStatus = response.status;
+    fetchRunData.contentType = response.contentType;
+    fetchRunData.contentEncoding = response.contentEncoding;
+    fetchRunData.bytesCompressed = response.bytesCompressed;
+    fetchRunData.bytesDecompressed = response.bytesDecompressed;
+
+    if (!isValidXML(response.xml)) {
+      const errorMsg = "Response is not valid RSS/Atom XML (missing <rss>, <feed>, or <RDF> tag)";
+      console.error(`[RSS:${requestId}] ${errorMsg}`);
+      fetchRunData.errorName = "INVALID_XML";
+      fetchRunData.errorDetail = errorMsg;
+      fetchRunData.durationMs = Date.now() - startTime;
+      await storage.createFetchRun(fetchRunData);
+      await storage.updateSource(source.id, { lastFetchedAt: new Date(), lastError: errorMsg });
+      return { success: false, itemsFound: 0, itemsAdded: 0, error: errorMsg, errorName: "INVALID_XML" };
+    }
+
+    const feed = await parser.parseString(response.xml);
     const items = feed.items || [];
-    
+
     console.log(`[RSS:${requestId}] feedTitle: ${feed.title}`);
     console.log(`[RSS:${requestId}] parsedItemsCount: ${items.length}`);
-    
-    // Debug: log first 2 items
-    if (items.length > 0) {
-      console.log(`[RSS:${requestId}] Sample items:`);
-      items.slice(0, 2).forEach((item, i) => {
-        console.log(`[RSS:${requestId}]   [${i + 1}] title: ${item.title?.substring(0, 60)}...`);
-        console.log(`[RSS:${requestId}]       link: ${item.link}`);
-        console.log(`[RSS:${requestId}]       pubDate: ${item.pubDate || item.isoDate}`);
-        console.log(`[RSS:${requestId}]       guid: ${item.guid}`);
-      });
-    }
-    
+
     let insertedCount = 0;
     let dedupedCount = 0;
     let skippedCount = 0;
-    
+    let missingGuidCount = 0;
+    let missingLinkCount = 0;
+
     for (const item of items) {
+      if (!item.guid) missingGuidCount++;
+      if (!item.link) missingLinkCount++;
+
       if (!item.link || !item.title) {
         skippedCount++;
         continue;
       }
-      
+
       const contentHash = generateContentHash(item.link, item.title, item.guid);
-      
+      const guidNormalized = generateGuidNormalized(item.guid, item.link, item.title, item.pubDate || item.isoDate);
+
       const exists = await storage.sourceItemExists(source.workspaceId, contentHash);
       if (exists) {
         dedupedCount++;
         continue;
       }
-      
+
       const thumbnail = extractThumbnail(item);
-      const dateStr = item.pubDate || item.isoDate;
-      const publishedAt = dateStr ? new Date(dateStr) : null;
-      
-      // Access item properties with type assertion for extended fields
+      const publishedAt = parsePublishedAt(item.pubDate || item.isoDate);
+
       const itemAny = item as any;
-      
       const sourceItem: InsertSourceItem = {
         workspaceId: source.workspaceId,
         sourceId: source.id,
@@ -211,6 +348,7 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
         excerpt: item.contentSnippet || item.content?.substring(0, 500) || item.summary || null,
         rawContent: item.content || itemAny["content:encoded"] || null,
         contentHash,
+        guidNormalized,
         status: "new",
         metadataJson: {
           categories: item.categories || [],
@@ -218,12 +356,11 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
           thumbnail,
         },
       };
-      
+
       try {
         await storage.createSourceItem(sourceItem);
         insertedCount++;
       } catch (err: any) {
-        // Unique constraint violation is expected for concurrent/rapid fetches
         if (err.code === "23505") {
           dedupedCount++;
         } else {
@@ -231,57 +368,72 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
         }
       }
     }
-    
+
     await storage.updateSource(source.id, {
       lastFetchedAt: new Date(),
       lastSuccessAt: new Date(),
       lastError: null,
       itemCount: (source.itemCount || 0) + insertedCount,
     });
-    
+
     const durationMs = Date.now() - startTime;
     console.log(`[RSS:${requestId}] ========== FETCH COMPLETE ==========`);
     console.log(`[RSS:${requestId}] insertedCount: ${insertedCount}`);
     console.log(`[RSS:${requestId}] dedupedCount: ${dedupedCount}`);
     console.log(`[RSS:${requestId}] skippedCount: ${skippedCount}`);
+    console.log(`[RSS:${requestId}] missingGuidCount: ${missingGuidCount}`);
+    console.log(`[RSS:${requestId}] missingLinkCount: ${missingLinkCount}`);
     console.log(`[RSS:${requestId}] durationMs: ${durationMs}`);
-    
-    return {
-      success: true,
-      itemsFound: items.length,
-      itemsAdded: insertedCount,
+
+    fetchRunData = {
+      ...fetchRunData,
+      status: "success",
+      durationMs,
+      parsedItemsCount: items.length,
+      insertedCount,
+      dedupedCount,
+      missingGuidCount,
+      missingLinkCount,
     };
+    await storage.createFetchRun(fetchRunData);
+
+    return { success: true, itemsFound: items.length, itemsAdded: insertedCount };
   } catch (error: any) {
-    const elapsed = Date.now() - startTime;
-    console.error(`[RSS:${requestId}] Fetch failed after ${elapsed}ms:`, error.message);
-    
+    const durationMs = Date.now() - startTime;
+    const errorName = error.statusCode ? `HTTP_${error.statusCode}` : error.isTimeout ? "TIMEOUT" : "FETCH_ERROR";
+    console.error(`[RSS:${requestId}] Fetch failed after ${durationMs}ms:`, error.message);
+
+    fetchRunData = {
+      ...fetchRunData,
+      status: "failed",
+      errorName,
+      errorDetail: error.message,
+      httpStatus: error.statusCode,
+      durationMs,
+    };
+    await storage.createFetchRun(fetchRunData);
+
     await storage.updateSource(source.id, {
       lastFetchedAt: new Date(),
       lastError: error.message,
     });
-    
-    return {
-      success: false,
-      itemsFound: 0,
-      itemsAdded: 0,
-      error: error.message,
-    };
+
+    return { success: false, itemsFound: 0, itemsAdded: 0, error: error.message, errorName };
   }
 }
 
 export async function fetchAllActiveSources(): Promise<Map<string, FetchResult>> {
   const sources = await storage.getActiveSources();
   const results = new Map<string, FetchResult>();
-  
+
   console.log(`[RSS] Fetching ${sources.length} active sources`);
-  
+
   for (const source of sources) {
     if (source.type !== "rss") continue;
-    
     const result = await fetchRSSSource(source);
     results.set(source.id, result);
   }
-  
+
   return results;
 }
 
@@ -291,19 +443,29 @@ export async function testRSSFeed(url: string): Promise<{
   itemCount?: number;
   sampleItems?: Array<{ title: string; link: string; pubDate?: string }>;
   error?: string;
+  errorDetail?: string;
 }> {
   const requestId = crypto.randomUUID().substring(0, 8);
   console.log(`[RSS:${requestId}] Testing feed: ${url}`);
-  
+
   try {
-    // Fetch with proper decompression
-    const { xml, status, contentType, bytesRead } = await fetchWithDecompression(url);
-    console.log(`[RSS:${requestId}] Test fetch: status=${status}, contentType=${contentType}, bytes=${bytesRead}`);
-    
-    const feed = await parser.parseString(xml);
-    
+    const response = await fetchWithRetry(url);
+    console.log(`[RSS:${requestId}] Test fetch: status=${response.status}, contentType=${response.contentType}, bytesCompressed=${response.bytesCompressed}, bytesDecompressed=${response.bytesDecompressed}`);
+
+    if (!isValidXML(response.xml)) {
+      const htmlMatch = response.xml.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const pageTitle = htmlMatch ? htmlMatch[1] : "Unknown page";
+      return {
+        success: false,
+        error: "Not a valid RSS/Atom feed",
+        errorDetail: `Server returned HTML page instead of feed XML. Page title: "${pageTitle}"`,
+      };
+    }
+
+    const feed = await parser.parseString(response.xml);
+
     console.log(`[RSS:${requestId}] Test successful - title: ${feed.title}, items: ${feed.items?.length || 0}`);
-    
+
     return {
       success: true,
       title: feed.title,
@@ -316,9 +478,22 @@ export async function testRSSFeed(url: string): Promise<{
     };
   } catch (error: any) {
     console.error(`[RSS:${requestId}] Test failed:`, error.message);
+    
+    let errorDetail = error.message;
+    if (error.statusCode === 403) {
+      errorDetail = "Access denied (403 Forbidden). The server is blocking requests.";
+    } else if (error.statusCode === 404) {
+      errorDetail = "Feed not found (404). Check the URL is correct.";
+    } else if (error.isTimeout) {
+      errorDetail = "Request timed out. The server may be slow or unreachable.";
+    } else if (error.code === "ENOTFOUND") {
+      errorDetail = "DNS lookup failed. Check the domain name is correct.";
+    }
+
     return {
       success: false,
-      error: error.message,
+      error: error.statusCode ? `HTTP ${error.statusCode}` : error.message,
+      errorDetail,
     };
   }
 }

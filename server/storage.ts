@@ -15,6 +15,7 @@ import {
   usageLedger, type UsageLedger, type InsertUsageLedger,
   sources, type Source, type InsertSource,
   sourceItems, type SourceItem, type InsertSourceItem,
+  fetchRuns, type FetchRun, type InsertFetchRun,
   automations, type Automation, type InsertAutomation,
   automationRuns, type AutomationRun, type InsertAutomationRun,
   automationRunItems, type AutomationRunItem, type InsertAutomationRunItem,
@@ -143,6 +144,10 @@ export interface IStorage {
   updateSourceItem(id: string, data: Partial<SourceItem>): Promise<SourceItem | undefined>;
   getNewSourceItems(workspaceId: string, sourceIds?: string[]): Promise<SourceItem[]>;
   sourceItemExists(workspaceId: string, contentHash: string): Promise<boolean>;
+  
+  // Fetch Runs
+  createFetchRun(data: InsertFetchRun): Promise<FetchRun>;
+  getFetchRuns(sourceId: string, limit?: number): Promise<FetchRun[]>;
   
   // Automations
   getAutomations(workspaceId: string): Promise<Automation[]>;
@@ -606,10 +611,10 @@ export class DatabaseStorage implements IStorage {
     if (status) conditions.push(eq(sourceItems.status, status));
     if (sourceId) conditions.push(eq(sourceItems.sourceId, sourceId));
     
-    // Sort by publishedAt (newest first) with NULLS LAST, fallback to createdAt for items without publish date
+    // Stable sort: publishedAt DESC NULLS LAST, createdAt DESC, id DESC
     return await db.select().from(sourceItems)
       .where(and(...conditions))
-      .orderBy(sql`${sourceItems.publishedAt} DESC NULLS LAST`, desc(sourceItems.createdAt));
+      .orderBy(sql`${sourceItems.publishedAt} DESC NULLS LAST`, desc(sourceItems.createdAt), desc(sourceItems.id));
   }
 
   async getSourceItem(id: string): Promise<SourceItem | undefined> {
@@ -639,13 +644,26 @@ export class DatabaseStorage implements IStorage {
     
     return await db.select().from(sourceItems)
       .where(and(...conditions))
-      .orderBy(sql`${sourceItems.publishedAt} DESC NULLS LAST`, desc(sourceItems.createdAt));
+      .orderBy(sql`${sourceItems.publishedAt} DESC NULLS LAST`, desc(sourceItems.createdAt), desc(sourceItems.id));
   }
 
   async sourceItemExists(workspaceId: string, contentHash: string): Promise<boolean> {
     const [item] = await db.select({ id: sourceItems.id }).from(sourceItems)
       .where(and(eq(sourceItems.workspaceId, workspaceId), eq(sourceItems.contentHash, contentHash)));
     return !!item;
+  }
+
+  // Fetch Runs
+  async createFetchRun(data: InsertFetchRun): Promise<FetchRun> {
+    const [run] = await db.insert(fetchRuns).values(data).returning();
+    return run;
+  }
+
+  async getFetchRuns(sourceId: string, limit: number = 20): Promise<FetchRun[]> {
+    return await db.select().from(fetchRuns)
+      .where(eq(fetchRuns.sourceId, sourceId))
+      .orderBy(desc(fetchRuns.createdAt))
+      .limit(limit);
   }
 
   // Automations

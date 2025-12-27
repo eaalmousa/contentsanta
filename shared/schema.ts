@@ -398,6 +398,37 @@ export const insertSourceSchema = createInsertSchema(sources).omit({ id: true, c
 export type InsertSource = z.infer<typeof insertSourceSchema>;
 export type Source = typeof sources.$inferSelect;
 
+// Source Fetch Runs (track every fetch operation)
+export const fetchRunStatuses = ["success", "failed"] as const;
+export type FetchRunStatus = typeof fetchRunStatuses[number];
+
+export const fetchRuns = pgTable("fetch_runs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  sourceId: varchar("source_id", { length: 36 }).notNull(),
+  status: text("status").notNull().$type<FetchRunStatus>(),
+  errorName: text("error_name"),
+  errorDetail: text("error_detail"),
+  httpStatus: integer("http_status"),
+  durationMs: integer("duration_ms"),
+  bytesCompressed: integer("bytes_compressed"),
+  bytesDecompressed: integer("bytes_decompressed"),
+  contentEncoding: text("content_encoding"),
+  contentType: text("content_type"),
+  parsedItemsCount: integer("parsed_items_count"),
+  insertedCount: integer("inserted_count"),
+  dedupedCount: integer("deduped_count"),
+  missingGuidCount: integer("missing_guid_count"),
+  missingLinkCount: integer("missing_link_count"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_fetch_runs_source").on(table.sourceId),
+  index("idx_fetch_runs_created").on(table.createdAt),
+]);
+
+export const insertFetchRunSchema = createInsertSchema(fetchRuns).omit({ id: true, createdAt: true });
+export type InsertFetchRun = z.infer<typeof insertFetchRunSchema>;
+export type FetchRun = typeof fetchRuns.$inferSelect;
+
 // Source Items (ingested news/content from sources)
 export const sourceItems = pgTable("source_items", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
@@ -410,6 +441,7 @@ export const sourceItems = pgTable("source_items", {
   excerpt: text("excerpt"),
   rawContent: text("raw_content"),
   contentHash: text("content_hash").notNull(),
+  guidNormalized: text("guid_normalized"),
   status: text("status").notNull().$type<SourceItemStatus>().default("new"),
   metadataJson: jsonb("metadata_json").default({}),
   createdAt: timestamp("created_at").defaultNow(),
@@ -418,6 +450,7 @@ export const sourceItems = pgTable("source_items", {
   index("idx_source_items_source").on(table.sourceId),
   index("idx_source_items_status").on(table.status),
   unique("source_item_hash_unique").on(table.workspaceId, table.contentHash),
+  index("idx_source_items_guid").on(table.sourceId, table.guidNormalized),
 ]);
 
 export const insertSourceItemSchema = createInsertSchema(sourceItems).omit({ id: true, createdAt: true });
