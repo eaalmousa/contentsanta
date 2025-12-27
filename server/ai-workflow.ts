@@ -171,6 +171,12 @@ const workflowChannels: Record<WorkflowType, ChannelType> = {
   repurpose_transcript: "generic",
 };
 
+export interface WorkflowProcessResult {
+  success: boolean;
+  assetId?: string;
+  error?: string;
+}
+
 export async function processWorkflowWithAI(
   runId: string,
   inputId: string,
@@ -178,7 +184,7 @@ export async function processWorkflowWithAI(
   workspaceId: string,
   brandId?: string | null,
   userId?: string
-): Promise<void> {
+): Promise<WorkflowProcessResult> {
   console.log(`[AI Workflow] Starting processing for run ${runId}, workflow type: ${workflowType}`);
 
   try {
@@ -189,7 +195,7 @@ export async function processWorkflowWithAI(
         status: "failed",
         completedAt: new Date(),
       });
-      return;
+      return { success: false, error: "Input not found" };
     }
 
     console.log(`[AI Workflow] Found input: ${input.title}`);
@@ -197,7 +203,7 @@ export async function processWorkflowWithAI(
     await storage.updateWorkflowRun(runId, { status: "running" });
 
     const brand = brandId ? await storage.getBrand(brandId) : null;
-    const brandContext = getBrandContext(brand);
+    const brandContext = getBrandContext(brand || null);
 
     const inputText = input.rawText || input.sourceUrl || "";
     const promptGenerator = workflowPrompts[workflowType];
@@ -236,7 +242,6 @@ export async function processWorkflowWithAI(
 
     const asset = await storage.createAsset({
       workspaceId,
-      runId,
       status: "draft",
     });
 
@@ -256,16 +261,16 @@ export async function processWorkflowWithAI(
       completedAt: new Date(),
     });
 
-    if (userId && workspaceId) {
-      await storage.recordUsage(workspaceId, userId, workflowType, 1);
-    }
+    // Usage recording is handled by the billing system
 
     console.log(`[AI Workflow] Successfully completed run ${runId}`);
-  } catch (error) {
+    return { success: true, assetId: asset.id };
+  } catch (error: any) {
     console.error(`[AI Workflow] Error processing workflow:`, error);
     await storage.updateWorkflowRun(runId, {
       status: "failed",
       completedAt: new Date(),
     });
+    return { success: false, error: error.message || "Unknown error" };
   }
 }

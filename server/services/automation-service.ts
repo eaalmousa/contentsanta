@@ -111,8 +111,8 @@ export async function runAutomation(automation: Automation): Promise<AutomationR
           workflowRun.id,
           input.id,
           automation.workflowType as WorkflowType,
-          undefined,
-          asset.id
+          automation.workspaceId,
+          undefined
         );
         
         if (result.success) {
@@ -127,6 +127,8 @@ export async function runAutomation(automation: Automation): Promise<AutomationR
             const latestVersion = await storage.getLatestAssetVersion(asset.id);
             
             if (target && latestVersion && target.type === "wordpress") {
+              // Category mapping is stored in automation.categoryMapping
+              // For topic-based taxonomy rules, callers should integrate via prepareTaxonomyForPublishing
               const publishResult = await publishToWordPress(target, latestVersion, {
                 status: "publish",
               });

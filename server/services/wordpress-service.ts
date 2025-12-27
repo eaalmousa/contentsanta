@@ -1,4 +1,4 @@
-import type { PublishingTarget, AssetVersion, ImageAsset, InsertImageUsage } from "@shared/schema";
+import type { PublishingTarget, AssetVersion, ImageAsset, InsertImageUsage, TargetTaxonomyRule } from "@shared/schema";
 import { storage } from "../storage";
 import https from "https";
 import { URL } from "url";
@@ -353,15 +353,17 @@ function markdownToHtml(markdown: string): string {
   return html;
 }
 
+export interface WordPressTaxonomyOptions {
+  categories?: number[];
+  tags?: number[];
+  status?: "publish" | "draft" | "pending";
+  featuredImage?: ImageAsset;
+}
+
 export async function publishToWordPress(
   target: PublishingTarget,
   version: AssetVersion,
-  options?: {
-    categories?: number[];
-    tags?: string[];
-    status?: "publish" | "draft" | "pending";
-    featuredImage?: ImageAsset;
-  }
+  options?: WordPressTaxonomyOptions
 ): Promise<WordPressPublishResult> {
   const credentials = parseCredentials(target);
   
@@ -513,4 +515,325 @@ export async function testWordPressConnection(
       error: error.message,
     };
   }
+}
+
+// ============ TAXONOMY SYNC ============
+
+export interface WpCategory {
+  id: number;
+  name: string;
+  slug: string;
+  parent: number;
+  count: number;
+}
+
+export interface WpTag {
+  id: number;
+  name: string;
+  slug: string;
+  count: number;
+}
+
+export interface TaxonomySyncResult {
+  success: boolean;
+  count?: number;
+  error?: string;
+}
+
+export async function fetchWordPressCategories(
+  target: PublishingTarget
+): Promise<{ success: boolean; categories?: WpCategory[]; error?: string }> {
+  const credentials = parseCredentials(target);
+  
+  if (!credentials) {
+    return { success: false, error: "Invalid credentials" };
+  }
+  
+  try {
+    const auth = Buffer.from(
+      `${credentials.username}:${credentials.applicationPassword}`
+    ).toString("base64");
+    
+    const categories: WpCategory[] = [];
+    let page = 1;
+    const perPage = 100;
+    
+    while (true) {
+      const response = await fetch(
+        `${credentials.siteUrl}/wp-json/wp/v2/categories?per_page=${perPage}&page=${page}`,
+        {
+          headers: { Authorization: `Basic ${auth}` },
+        }
+      );
+      
+      if (!response.ok) {
+        if (response.status === 400) break; // No more pages
+        return { success: false, error: `API error: ${response.status}` };
+      }
+      
+      const data = await response.json();
+      if (!Array.isArray(data) || data.length === 0) break;
+      
+      for (const cat of data) {
+        categories.push({
+          id: cat.id,
+          name: cat.name,
+          slug: cat.slug,
+          parent: cat.parent || 0,
+          count: cat.count || 0,
+        });
+      }
+      
+      if (data.length < perPage) break;
+      page++;
+    }
+    
+    console.log(`[WordPress] Fetched ${categories.length} categories`);
+    return { success: true, categories };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function fetchWordPressTags(
+  target: PublishingTarget
+): Promise<{ success: boolean; tags?: WpTag[]; error?: string }> {
+  const credentials = parseCredentials(target);
+  
+  if (!credentials) {
+    return { success: false, error: "Invalid credentials" };
+  }
+  
+  try {
+    const auth = Buffer.from(
+      `${credentials.username}:${credentials.applicationPassword}`
+    ).toString("base64");
+    
+    const tags: WpTag[] = [];
+    let page = 1;
+    const perPage = 100;
+    
+    while (true) {
+      const response = await fetch(
+        `${credentials.siteUrl}/wp-json/wp/v2/tags?per_page=${perPage}&page=${page}`,
+        {
+          headers: { Authorization: `Basic ${auth}` },
+        }
+      );
+      
+      if (!response.ok) {
+        if (response.status === 400) break;
+        return { success: false, error: `API error: ${response.status}` };
+      }
+      
+      const data = await response.json();
+      if (!Array.isArray(data) || data.length === 0) break;
+      
+      for (const tag of data) {
+        tags.push({
+          id: tag.id,
+          name: tag.name,
+          slug: tag.slug,
+          count: tag.count || 0,
+        });
+      }
+      
+      if (data.length < perPage) break;
+      page++;
+    }
+    
+    console.log(`[WordPress] Fetched ${tags.length} tags`);
+    return { success: true, tags };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function createWordPressTag(
+  target: PublishingTarget,
+  name: string
+): Promise<{ success: boolean; tag?: WpTag; error?: string }> {
+  const credentials = parseCredentials(target);
+  
+  if (!credentials) {
+    return { success: false, error: "Invalid credentials" };
+  }
+  
+  try {
+    const auth = Buffer.from(
+      `${credentials.username}:${credentials.applicationPassword}`
+    ).toString("base64");
+    
+    const response = await fetch(`${credentials.siteUrl}/wp-json/wp/v2/tags`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name }),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      // Tag already exists
+      if (errorData.code === "term_exists" && errorData.data?.term_id) {
+        return {
+          success: true,
+          tag: {
+            id: errorData.data.term_id,
+            name,
+            slug: name.toLowerCase().replace(/\s+/g, "-"),
+            count: 0,
+          },
+        };
+      }
+      return { success: false, error: `Failed to create tag: ${response.status}` };
+    }
+    
+    const tag = await response.json();
+    console.log(`[WordPress] Created tag: ${name} (ID: ${tag.id})`);
+    
+    return {
+      success: true,
+      tag: {
+        id: tag.id,
+        name: tag.name,
+        slug: tag.slug,
+        count: tag.count || 0,
+      },
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function createWordPressCategory(
+  target: PublishingTarget,
+  name: string,
+  parentId?: number
+): Promise<{ success: boolean; category?: WpCategory; error?: string }> {
+  const credentials = parseCredentials(target);
+  
+  if (!credentials) {
+    return { success: false, error: "Invalid credentials" };
+  }
+  
+  try {
+    const auth = Buffer.from(
+      `${credentials.username}:${credentials.applicationPassword}`
+    ).toString("base64");
+    
+    const body: any = { name };
+    if (parentId) body.parent = parentId;
+    
+    const response = await fetch(`${credentials.siteUrl}/wp-json/wp/v2/categories`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      if (errorData.code === "term_exists" && errorData.data?.term_id) {
+        return {
+          success: true,
+          category: {
+            id: errorData.data.term_id,
+            name,
+            slug: name.toLowerCase().replace(/\s+/g, "-"),
+            parent: parentId || 0,
+            count: 0,
+          },
+        };
+      }
+      return { success: false, error: `Failed to create category: ${response.status}` };
+    }
+    
+    const cat = await response.json();
+    console.log(`[WordPress] Created category: ${name} (ID: ${cat.id})`);
+    
+    return {
+      success: true,
+      category: {
+        id: cat.id,
+        name: cat.name,
+        slug: cat.slug,
+        parent: cat.parent || 0,
+        count: cat.count || 0,
+      },
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+// ============ TAXONOMY PREPARATION FOR PUBLISHING ============
+
+export interface PreparedTaxonomy {
+  categoryIds: number[];
+  tagIds: number[];
+}
+
+export async function prepareTaxonomyForPublishing(
+  target: PublishingTarget,
+  topicRules?: TargetTaxonomyRule,
+  additionalTagNames?: string[]
+): Promise<PreparedTaxonomy> {
+  const categoryIds: number[] = [];
+  const tagIds: number[] = [];
+  
+  if (topicRules) {
+    // Add default categories from topic rules
+    if (topicRules.defaultCategoryIds?.length) {
+      categoryIds.push(...topicRules.defaultCategoryIds);
+    }
+    
+    // Add default tags from topic rules
+    if (topicRules.defaultTagIds?.length) {
+      tagIds.push(...topicRules.defaultTagIds);
+    }
+  }
+  
+  // Handle additional tags that may need to be created
+  if (additionalTagNames?.length && topicRules?.allowCreateTags) {
+    const cachedTags = await storage.getWpTaxonomyCache(target.id, "tag");
+    const tagNameToId = new Map(cachedTags.map(t => [t.name.toLowerCase(), t.wpId]));
+    
+    for (const tagName of additionalTagNames) {
+      const normalizedName = tagName.toLowerCase().trim();
+      if (!normalizedName) continue;
+      
+      // Check if tag exists in cache
+      const existingId = tagNameToId.get(normalizedName);
+      if (existingId) {
+        if (!tagIds.includes(existingId)) {
+          tagIds.push(existingId);
+        }
+        continue;
+      }
+      
+      // Create new tag in WordPress
+      const createResult = await createWordPressTag(target, tagName.trim());
+      if (createResult.success && createResult.tag) {
+        tagIds.push(createResult.tag.id);
+        
+        // Update cache with new tag
+        await storage.upsertWpTaxonomyCache({
+          publishingTargetId: target.id,
+          taxonomyType: "tag",
+          wpId: createResult.tag.id,
+          name: createResult.tag.name,
+          slug: createResult.tag.slug,
+          count: 0,
+        });
+        
+        console.log(`[WordPress] Created and cached new tag: ${tagName}`);
+      }
+    }
+  }
+  
+  return { categoryIds, tagIds };
 }

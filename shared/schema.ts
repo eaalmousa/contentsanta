@@ -893,6 +893,7 @@ export const topics = pgTable("topics", {
   autoPublish: text("auto_publish").default("false"),
   autoGenerateVisuals: text("auto_generate_visuals").default("false"),
   publishingTargetId: varchar("publishing_target_id", { length: 36 }),
+  taxonomyRules: jsonb("taxonomy_rules").default({}),
   isLive: text("is_live").default("false"),
   lastRunAt: timestamp("last_run_at"),
   nextRunAt: timestamp("next_run_at"),
@@ -987,4 +988,53 @@ export const imageAssetsRelations = relations(imageAssets, ({ one, many }) => ({
 
 export const imageUsagesRelations = relations(imageUsages, ({ one }) => ({
   imageAsset: one(imageAssets, { fields: [imageUsages.imageAssetId], references: [imageAssets.id] }),
+}));
+
+// ============ WORDPRESS TAXONOMY ============
+
+// Taxonomy types
+export const wpTaxonomyTypes = ["category", "tag"] as const;
+export type WpTaxonomyType = typeof wpTaxonomyTypes[number];
+
+// WordPress Taxonomy Cache (synced from WP per publishing target)
+export const wpTaxonomyCache = pgTable("wp_taxonomy_cache", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  publishingTargetId: varchar("publishing_target_id", { length: 36 }).notNull(),
+  taxonomyType: text("taxonomy_type").notNull().$type<WpTaxonomyType>(),
+  wpId: integer("wp_id").notNull(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull(),
+  parentWpId: integer("parent_wp_id"),
+  count: integer("count").default(0),
+  syncedAt: timestamp("synced_at").defaultNow(),
+}, (table) => [
+  index("idx_wp_taxonomy_workspace").on(table.workspaceId),
+  index("idx_wp_taxonomy_target").on(table.publishingTargetId),
+  index("idx_wp_taxonomy_type").on(table.taxonomyType),
+  unique("wp_taxonomy_unique").on(table.publishingTargetId, table.taxonomyType, table.wpId),
+]);
+
+export const insertWpTaxonomyCacheSchema = createInsertSchema(wpTaxonomyCache).omit({ id: true });
+export type InsertWpTaxonomyCache = z.infer<typeof insertWpTaxonomyCacheSchema>;
+export type WpTaxonomyCache = typeof wpTaxonomyCache.$inferSelect;
+
+// Single target taxonomy rules
+export interface TargetTaxonomyRule {
+  defaultCategoryIds?: number[];  // WP category IDs
+  defaultTagIds?: number[];       // WP tag IDs
+  locationMode?: "none" | "country_to_category" | "country_to_tag";
+  allowCreateTags?: boolean;      // Create missing tags on publish
+  allowCreateCategories?: boolean; // Create missing categories (default false for safety)
+}
+
+// Topic taxonomy rules interface - map of publishing target ID to rules
+export interface TopicTaxonomyRules {
+  [targetId: string]: TargetTaxonomyRule;
+}
+
+// WP Taxonomy relations
+export const wpTaxonomyCacheRelations = relations(wpTaxonomyCache, ({ one }) => ({
+  workspace: one(workspaces, { fields: [wpTaxonomyCache.workspaceId], references: [workspaces.id] }),
+  publishingTarget: one(publishingTargets, { fields: [wpTaxonomyCache.publishingTargetId], references: [publishingTargets.id] }),
 }));

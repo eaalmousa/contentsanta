@@ -13,6 +13,12 @@ import {
   Loader2,
   Send,
   ExternalLink,
+  RefreshCw,
+  Tag,
+  FolderTree,
+  ChevronRight,
+  ChevronDown,
+  Search,
 } from "lucide-react";
 import { SiWordpress, SiMedium, SiLinkedin, SiFacebook } from "react-icons/si";
 import { Card, CardContent } from "@/components/ui/card";
@@ -53,7 +59,9 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { PublishingTarget, PublishJob, Asset, AssetVersion, TargetType } from "@shared/schema";
+import type { PublishingTarget, PublishJob, Asset, AssetVersion, TargetType, WpTaxonomyCache } from "@shared/schema";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { formatDistanceToNow } from "date-fns";
 
 const platformOptions: { value: TargetType; label: string; icon: React.ElementType; color: string }[] = [
   { value: "wordpress", label: "WordPress", icon: SiWordpress, color: "text-blue-600" },
@@ -201,36 +209,39 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
           </div>
           
           {isWordPress && (
-            <div className="flex items-center gap-2 pt-2 border-t">
-              <Button 
-                size="sm" 
-                variant="outline"
-                onClick={() => testConnectionMutation.mutate()}
-                disabled={isTesting}
-                data-testid={`button-test-connection-${target.id}`}
-              >
-                {testConnectionMutation.isPending ? (
-                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                ) : (
-                  <CheckCircle className="mr-2 h-3 w-3" />
-                )}
-                Test Connection
-              </Button>
-              <Button 
-                size="sm" 
-                variant="outline"
-                onClick={() => testDraftMutation.mutate()}
-                disabled={isTesting}
-                data-testid={`button-test-draft-${target.id}`}
-              >
-                {testDraftMutation.isPending ? (
-                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                ) : (
-                  <Send className="mr-2 h-3 w-3" />
-                )}
-                Create Test Draft
-              </Button>
-            </div>
+            <>
+              <div className="flex items-center gap-2 pt-2 border-t">
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => testConnectionMutation.mutate()}
+                  disabled={isTesting}
+                  data-testid={`button-test-connection-${target.id}`}
+                >
+                  {testConnectionMutation.isPending ? (
+                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                  ) : (
+                    <CheckCircle className="mr-2 h-3 w-3" />
+                  )}
+                  Test Connection
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => testDraftMutation.mutate()}
+                  disabled={isTesting}
+                  data-testid={`button-test-draft-${target.id}`}
+                >
+                  {testDraftMutation.isPending ? (
+                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                  ) : (
+                    <Send className="mr-2 h-3 w-3" />
+                  )}
+                  Create Test Draft
+                </Button>
+              </div>
+              <TaxonomySyncSection targetId={target.id} />
+            </>
           )}
         </div>
       </CardContent>
@@ -251,6 +262,217 @@ function TargetCardSkeleton() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+interface TaxonomyItem extends WpTaxonomyCache {
+  children?: TaxonomyItem[];
+}
+
+function buildCategoryTree(categories: WpTaxonomyCache[]): TaxonomyItem[] {
+  const map = new Map<number, TaxonomyItem>();
+  const roots: TaxonomyItem[] = [];
+  
+  categories.forEach(cat => {
+    map.set(cat.wpId, { ...cat, children: [] });
+  });
+  
+  categories.forEach(cat => {
+    const node = map.get(cat.wpId)!;
+    if (cat.parentWpId && map.has(cat.parentWpId)) {
+      map.get(cat.parentWpId)!.children!.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+  
+  return roots;
+}
+
+function CategoryTreeItem({ item, level = 0 }: { item: TaxonomyItem; level?: number }) {
+  const [expanded, setExpanded] = useState(level === 0);
+  const hasChildren = item.children && item.children.length > 0;
+  
+  return (
+    <div>
+      <div 
+        className="flex items-center gap-1 py-1 hover-elevate rounded cursor-pointer"
+        style={{ paddingLeft: `${level * 16 + 4}px` }}
+        onClick={() => hasChildren && setExpanded(!expanded)}
+      >
+        {hasChildren ? (
+          expanded ? (
+            <ChevronDown className="h-3 w-3 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-3 w-3 text-muted-foreground" />
+          )
+        ) : (
+          <span className="w-3" />
+        )}
+        <span className="text-sm">{item.name}</span>
+        <Badge variant="outline" className="ml-auto text-xs">
+          {item.count}
+        </Badge>
+      </div>
+      {expanded && hasChildren && (
+        <div>
+          {item.children!.map(child => (
+            <CategoryTreeItem key={child.wpId} item={child} level={level + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaxonomySyncSection({ targetId }: { targetId: string }) {
+  const { toast } = useToast();
+  const [tagSearch, setTagSearch] = useState("");
+  
+  const taxonomyQuery = useQuery<{ 
+    items: WpTaxonomyCache[]; 
+    lastSync: { categories: string | null; tags: string | null } 
+  }>({
+    queryKey: ["/api/publishing-targets", targetId, "taxonomy"],
+  });
+  
+  const syncCategoriesMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", `/api/publishing-targets/${targetId}/sync-categories`);
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", targetId, "taxonomy"] });
+      toast({ title: "Categories synced", description: `${data.count} categories imported` });
+    },
+    onError: () => {
+      toast({ title: "Failed to sync categories", variant: "destructive" });
+    },
+  });
+  
+  const syncTagsMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", `/api/publishing-targets/${targetId}/sync-tags`);
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", targetId, "taxonomy"] });
+      toast({ title: "Tags synced", description: `${data.count} tags imported` });
+    },
+    onError: () => {
+      toast({ title: "Failed to sync tags", variant: "destructive" });
+    },
+  });
+  
+  const categories = taxonomyQuery.data?.items.filter(i => i.taxonomyType === "category") || [];
+  const tags = taxonomyQuery.data?.items.filter(i => i.taxonomyType === "tag") || [];
+  const categoryTree = buildCategoryTree(categories);
+  
+  const filteredTags = tagSearch 
+    ? tags.filter(t => t.name.toLowerCase().includes(tagSearch.toLowerCase()))
+    : tags;
+  
+  const lastCategorySync = taxonomyQuery.data?.lastSync?.categories;
+  const lastTagSync = taxonomyQuery.data?.lastSync?.tags;
+  
+  return (
+    <div className="flex flex-col gap-4 pt-4 border-t">
+      <div className="flex items-center gap-2">
+        <FolderTree className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-medium">WordPress Taxonomy</span>
+      </div>
+      
+      <div className="grid grid-cols-2 gap-4">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-muted-foreground">Categories</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => syncCategoriesMutation.mutate()}
+              disabled={syncCategoriesMutation.isPending}
+              data-testid={`button-sync-categories-${targetId}`}
+            >
+              {syncCategoriesMutation.isPending ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3" />
+              )}
+              <span className="ml-1">Sync</span>
+            </Button>
+          </div>
+          {lastCategorySync && (
+            <span className="text-xs text-muted-foreground">
+              Last synced {formatDistanceToNow(new Date(lastCategorySync), { addSuffix: true })}
+            </span>
+          )}
+          <ScrollArea className="h-32 rounded border p-2">
+            {categories.length === 0 ? (
+              <div className="text-xs text-muted-foreground text-center py-4">
+                No categories synced. Click Sync to fetch.
+              </div>
+            ) : (
+              categoryTree.map(cat => (
+                <CategoryTreeItem key={cat.wpId} item={cat} />
+              ))
+            )}
+          </ScrollArea>
+        </div>
+        
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-muted-foreground">Tags</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => syncTagsMutation.mutate()}
+              disabled={syncTagsMutation.isPending}
+              data-testid={`button-sync-tags-${targetId}`}
+            >
+              {syncTagsMutation.isPending ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3" />
+              )}
+              <span className="ml-1">Sync</span>
+            </Button>
+          </div>
+          {lastTagSync && (
+            <span className="text-xs text-muted-foreground">
+              Last synced {formatDistanceToNow(new Date(lastTagSync), { addSuffix: true })}
+            </span>
+          )}
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+            <Input 
+              placeholder="Search tags..." 
+              className="h-7 pl-7 text-xs"
+              value={tagSearch}
+              onChange={(e) => setTagSearch(e.target.value)}
+              data-testid={`input-search-tags-${targetId}`}
+            />
+          </div>
+          <ScrollArea className="h-24 rounded border p-2">
+            {tags.length === 0 ? (
+              <div className="text-xs text-muted-foreground text-center py-4">
+                No tags synced. Click Sync to fetch.
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {filteredTags.slice(0, 50).map(tag => (
+                  <Badge key={tag.wpId} variant="secondary" className="text-xs">
+                    {tag.name}
+                  </Badge>
+                ))}
+                {filteredTags.length > 50 && (
+                  <span className="text-xs text-muted-foreground">
+                    +{filteredTags.length - 50} more
+                  </span>
+                )}
+              </div>
+            )}
+          </ScrollArea>
+        </div>
+      </div>
+    </div>
   );
 }
 

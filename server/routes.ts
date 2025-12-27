@@ -25,7 +25,7 @@ import {
 import { z } from "zod";
 import { fetchRSSSource, testRSSFeed } from "./services/rss-service";
 import { runAutomation } from "./services/automation-service";
-import { testWordPressConnection, publishToWordPress } from "./services/wordpress-service";
+import { testWordPressConnection, publishToWordPress, fetchWordPressCategories, fetchWordPressTags, createWordPressTag, createWordPressCategory } from "./services/wordpress-service";
 import { startScheduler } from "./services/scheduler";
 import { runDiscoveryJob, convertDiscoveredSourceToSource } from "./services/discovery-service";
 import { insertContentGoalSchema, insertTopicSchema, insertDraftSchema, insertImageAssetSchema } from "@shared/schema";
@@ -1782,6 +1782,147 @@ export async function registerRoutes(
         success: false,
         error: error.message || "Failed to create test post" 
       });
+    }
+  });
+
+  // ==================== WORDPRESS TAXONOMY SYNC ====================
+  
+  // Sync WordPress categories
+  app.post("/api/publishing-targets/:id/sync-categories", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) {
+        return res.status(404).json({ error: "Publishing target not found" });
+      }
+      
+      if (target.type !== "wordpress") {
+        return res.status(400).json({ error: "Only WordPress connections support taxonomy sync" });
+      }
+      
+      const result = await fetchWordPressCategories(target);
+      if (!result.success || !result.categories) {
+        return res.status(400).json({ error: result.error || "Failed to fetch categories" });
+      }
+      
+      // Clear and re-populate cache
+      await storage.clearWpTaxonomyCache(target.id, "category");
+      
+      for (const cat of result.categories) {
+        await storage.upsertWpTaxonomyCache({
+          workspaceId: target.workspaceId,
+          publishingTargetId: target.id,
+          taxonomyType: "category",
+          wpId: cat.id,
+          name: cat.name,
+          slug: cat.slug,
+          parentWpId: cat.parent || null,
+          count: cat.count,
+        });
+      }
+      
+      res.json({ success: true, count: result.categories.length });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to sync categories" });
+    }
+  });
+
+  // Sync WordPress tags
+  app.post("/api/publishing-targets/:id/sync-tags", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) {
+        return res.status(404).json({ error: "Publishing target not found" });
+      }
+      
+      if (target.type !== "wordpress") {
+        return res.status(400).json({ error: "Only WordPress connections support taxonomy sync" });
+      }
+      
+      const result = await fetchWordPressTags(target);
+      if (!result.success || !result.tags) {
+        return res.status(400).json({ error: result.error || "Failed to fetch tags" });
+      }
+      
+      // Clear and re-populate cache
+      await storage.clearWpTaxonomyCache(target.id, "tag");
+      
+      for (const tag of result.tags) {
+        await storage.upsertWpTaxonomyCache({
+          workspaceId: target.workspaceId,
+          publishingTargetId: target.id,
+          taxonomyType: "tag",
+          wpId: tag.id,
+          name: tag.name,
+          slug: tag.slug,
+          parentWpId: null,
+          count: tag.count,
+        });
+      }
+      
+      res.json({ success: true, count: result.tags.length });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to sync tags" });
+    }
+  });
+
+  // Get cached taxonomy for a target
+  app.get("/api/publishing-targets/:id/taxonomy", async (req: Request, res: Response) => {
+    try {
+      const targetId = req.params.id;
+      const taxonomyType = req.query.type as "category" | "tag" | undefined;
+      
+      const cache = await storage.getWpTaxonomyCache(targetId, taxonomyType);
+      const syncStatus = await storage.getWpTaxonomySyncStatus(targetId);
+      
+      res.json({ 
+        items: cache,
+        lastSync: {
+          categories: syncStatus.categories,
+          tags: syncStatus.tags,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get taxonomy" });
+    }
+  });
+
+  // Create a new tag in WordPress
+  app.post("/api/publishing-targets/:id/tags", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) {
+        return res.status(404).json({ error: "Publishing target not found" });
+      }
+      
+      if (target.type !== "wordpress") {
+        return res.status(400).json({ error: "Only WordPress connections support tag creation" });
+      }
+      
+      const { name } = req.body;
+      if (!name || typeof name !== "string") {
+        return res.status(400).json({ error: "Tag name is required" });
+      }
+      
+      const result = await createWordPressTag(target, name);
+      if (!result.success || !result.tag) {
+        return res.status(400).json({ error: result.error || "Failed to create tag" });
+      }
+      
+      // Add to cache
+      await storage.upsertWpTaxonomyCache({
+        workspaceId: target.workspaceId,
+        publishingTargetId: target.id,
+        taxonomyType: "tag",
+        wpId: result.tag.id,
+        name: result.tag.name,
+        slug: result.tag.slug,
+        parentWpId: null,
+        count: result.tag.count,
+      });
+      
+      res.json({ success: true, tag: result.tag });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to create tag" });
     }
   });
 

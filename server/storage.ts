@@ -30,6 +30,7 @@ import {
   topics, type Topic, type InsertTopic,
   imageAssets, type ImageAsset, type InsertImageAsset,
   imageUsages, type ImageUsage, type InsertImageUsage,
+  wpTaxonomyCache, type WpTaxonomyCache, type InsertWpTaxonomyCache, type WpTaxonomyType,
   type RoleType,
   type RunStatus,
   type AssetStatus,
@@ -245,6 +246,13 @@ export interface IStorage {
   getImageUsages(imageAssetId: string): Promise<ImageUsage[]>;
   createImageUsage(data: InsertImageUsage): Promise<ImageUsage>;
   updateImageUsage(id: string, data: Partial<ImageUsage>): Promise<ImageUsage | undefined>;
+  
+  // WP Taxonomy Cache
+  getWpTaxonomyCache(publishingTargetId: string, taxonomyType?: WpTaxonomyType): Promise<WpTaxonomyCache[]>;
+  getWpTaxonomyCacheByIds(publishingTargetId: string, taxonomyType: WpTaxonomyType, wpIds: number[]): Promise<WpTaxonomyCache[]>;
+  upsertWpTaxonomyCache(data: InsertWpTaxonomyCache): Promise<WpTaxonomyCache>;
+  clearWpTaxonomyCache(publishingTargetId: string, taxonomyType?: WpTaxonomyType): Promise<void>;
+  getWpTaxonomySyncStatus(publishingTargetId: string): Promise<{ categories: Date | null; tags: Date | null }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1084,6 +1092,68 @@ export class DatabaseStorage implements IStorage {
   async updateImageUsage(id: string, data: Partial<ImageUsage>): Promise<ImageUsage | undefined> {
     const [usage] = await db.update(imageUsages).set(data).where(eq(imageUsages.id, id)).returning();
     return usage;
+  }
+
+  // WP Taxonomy Cache
+  async getWpTaxonomyCache(publishingTargetId: string, taxonomyType?: WpTaxonomyType): Promise<WpTaxonomyCache[]> {
+    const conditions = [eq(wpTaxonomyCache.publishingTargetId, publishingTargetId)];
+    if (taxonomyType) conditions.push(eq(wpTaxonomyCache.taxonomyType, taxonomyType));
+    
+    return await db.select().from(wpTaxonomyCache)
+      .where(and(...conditions))
+      .orderBy(wpTaxonomyCache.name);
+  }
+
+  async getWpTaxonomyCacheByIds(publishingTargetId: string, taxonomyType: WpTaxonomyType, wpIds: number[]): Promise<WpTaxonomyCache[]> {
+    if (wpIds.length === 0) return [];
+    
+    return await db.select().from(wpTaxonomyCache)
+      .where(and(
+        eq(wpTaxonomyCache.publishingTargetId, publishingTargetId),
+        eq(wpTaxonomyCache.taxonomyType, taxonomyType),
+        sql`${wpTaxonomyCache.wpId} = ANY(${wpIds})`
+      ));
+  }
+
+  async upsertWpTaxonomyCache(data: InsertWpTaxonomyCache): Promise<WpTaxonomyCache> {
+    const [item] = await db.insert(wpTaxonomyCache)
+      .values(data)
+      .onConflictDoUpdate({
+        target: [wpTaxonomyCache.publishingTargetId, wpTaxonomyCache.taxonomyType, wpTaxonomyCache.wpId],
+        set: {
+          name: data.name,
+          slug: data.slug,
+          parentWpId: data.parentWpId,
+          count: data.count,
+          syncedAt: new Date(),
+        },
+      })
+      .returning();
+    return item;
+  }
+
+  async clearWpTaxonomyCache(publishingTargetId: string, taxonomyType?: WpTaxonomyType): Promise<void> {
+    const conditions = [eq(wpTaxonomyCache.publishingTargetId, publishingTargetId)];
+    if (taxonomyType) conditions.push(eq(wpTaxonomyCache.taxonomyType, taxonomyType));
+    
+    await db.delete(wpTaxonomyCache).where(and(...conditions));
+  }
+
+  async getWpTaxonomySyncStatus(publishingTargetId: string): Promise<{ categories: Date | null; tags: Date | null }> {
+    const results = await db.select({
+      taxonomyType: wpTaxonomyCache.taxonomyType,
+      lastSync: sql<Date>`MAX(${wpTaxonomyCache.syncedAt})`,
+    })
+      .from(wpTaxonomyCache)
+      .where(eq(wpTaxonomyCache.publishingTargetId, publishingTargetId))
+      .groupBy(wpTaxonomyCache.taxonomyType);
+    
+    const status: { categories: Date | null; tags: Date | null } = { categories: null, tags: null };
+    for (const r of results) {
+      if (r.taxonomyType === "category") status.categories = r.lastSync;
+      if (r.taxonomyType === "tag") status.tags = r.lastSync;
+    }
+    return status;
   }
 }
 
