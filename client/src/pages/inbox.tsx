@@ -200,7 +200,15 @@ export default function InboxPage() {
               <CardContent className="flex items-start gap-4 p-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start gap-2 mb-1">
-                    <h3 className="font-medium text-sm leading-tight line-clamp-2">{item.title}</h3>
+                    <a 
+                      href={item.url} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="font-medium text-sm leading-tight line-clamp-2 hover:underline"
+                      data-testid={`link-item-${item.id}`}
+                    >
+                      {item.title}
+                    </a>
                     <Badge variant={getStatusColor(item.status)} className="shrink-0 text-xs">
                       {item.status}
                     </Badge>

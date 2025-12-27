@@ -1,0 +1,74 @@
+You are the Replit AI agent working on the “Content Santa” repo.
+
+Objective:
+Make RSS ingestion fully reliable end-to-end (validate -> fetch -> parse -> store -> display) using this real feed:
+https://feeds.bbci.co.uk/news/technology/rss.xml
+
+Important context:
+- Opening the RSS in a browser may show “raw XML” or a flattened wall of text/links. That is normal and NOT an error.
+- The app must fetch and parse feeds SERVER-SIDE (client-side fetch will hit CORS).
+- BBC feeds can require a proper User-Agent and can return gzip/redirects. Handle these cleanly.
+
+Success criteria:
+1) Adding the BBC RSS URL in Sources succeeds.
+2) The system fetches and parses items (count > 0).
+3) Items are stored as structured rows (NOT one giant text blob).
+4) Inbox shows those items (title + link + date at minimum).
+5) Re-fetching does not duplicate items (dedupe works).
+
+Tasks (do NOT skip):
+
+A) Reproduce + observe
+1) Run locally. Add Source with the BBC URL.
+2) Record:
+   - UI response (success/error)
+   - whether Inbox shows items
+   - server logs during validate/fetch/parse/save
+
+B) Make fetch robust (BBC-compatible)
+3) Ensure RSS fetch is done server-side with:
+   - User-Agent: a realistic UA string (e.g., Mozilla/5.0 …)
+   - Accept: application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.7
+   - Follow redirects
+   - Handle gzip/deflate/br where possible
+   - Timeout + clear error messages
+4) Log these fields on every fetch:
+   requestId, sourceId, url, finalUrl(after redirects), httpStatus, contentType, contentLength, bytesRead
+
+C) Parse correctly (no “single blob” storage)
+5) Confirm the parser returns an array of items with fields.
+   - Minimum mapping:
+     title, link, pubDate (or isoDate), description/summary, guid (if present), thumbnail (optional)
+6) Add debug logs (only in dev) for:
+   - parsedItemsCount
+   - first 2 items: title + link + pubDate + guid
+7) If current code is saving raw XML or flattened text into one column, fix it:
+   - Store one DB row per RSS <item>
+   - Store raw XML optionally only as a secondary debug field (not used for Inbox rendering)
+
+D) Dedupe + normalization
+8) Implement dedupe using:
+   - guid if present, else normalized link (strip tracking params like at_medium/at_campaign), plus pubDate
+9) Add/confirm a DB unique constraint that matches the dedupe rule to prevent duplicates at the database level.
+
+E) API + UI correctness
+10) Verify endpoints used by Sources/Inbox:
+   - create source
+   - manual fetch/refresh source
+   - list inbox items (optionally filtered by sourceId)
+11) Fix any React Query invalidation issues so Inbox updates immediately after a fetch.
+12) Ensure Inbox sorts newest first and displays:
+   - title (required)
+   - link (required)
+   - date (required)
+   - source name (recommended)
+   - thumbnail (optional)
+
+F) Final proof
+13) Provide proof in output:
+   - Logs showing fetch ok + parse count > 0 + saved count > 0
+   - Screenshot of Inbox showing BBC items
+   - List of files changed
+14) Republish the app after fixes.
+
+Do not guess. Inspect the existing implementation first, then patch surgically.
