@@ -1208,5 +1208,71 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== TEST MOCK ROUTES ====================
+  // These routes simulate various RSS feed failure modes for testing
+  
+  // Mock 403 Forbidden
+  app.get("/__test/rss/403", (req: Request, res: Response) => {
+    res.status(403).send("Forbidden");
+  });
+
+  // Mock 429 Rate Limited
+  app.get("/__test/rss/429", (req: Request, res: Response) => {
+    res.status(429).set("Retry-After", "60").send("Too Many Requests");
+  });
+
+  // Mock 500 Server Error
+  app.get("/__test/rss/500", (req: Request, res: Response) => {
+    res.status(500).send("Internal Server Error");
+  });
+
+  // Mock Timeout (30 second delay)
+  app.get("/__test/rss/timeout", (req: Request, res: Response) => {
+    // Don't respond - let it timeout
+    setTimeout(() => {
+      res.status(200).send("Too late");
+    }, 120000);
+  });
+
+  // Mock Malformed XML (truncated)
+  app.get("/__test/rss/malformed", (req: Request, res: Response) => {
+    res.status(200)
+      .set("Content-Type", "application/xml")
+      .send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <item>
+      <title>Test Item</title>
+      <link>https://example.com/item1</link>
+      <!-- TRUNCATED - no closing tags -->`);
+  });
+
+  // Mock Valid RSS (for comparison)
+  app.get("/__test/rss/valid", (req: Request, res: Response) => {
+    res.status(200)
+      .set("Content-Type", "application/xml")
+      .send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>https://example.com</link>
+    <description>A test feed</description>
+    <item>
+      <title>Test Item 1</title>
+      <link>https://example.com/item1</link>
+      <guid>test-guid-1</guid>
+      <pubDate>Fri, 27 Dec 2025 10:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Test Item 2</title>
+      <link>https://example.com/item2</link>
+      <guid>test-guid-2</guid>
+      <pubDate>Fri, 27 Dec 2025 09:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>`);
+  });
+
   return httpServer;
 }
