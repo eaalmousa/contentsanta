@@ -19,6 +19,7 @@ import {
   ChevronRight,
   ChevronDown,
   Search,
+  AlertCircle,
 } from "lucide-react";
 import { SiWordpress, SiMedium, SiLinkedin, SiFacebook } from "react-icons/si";
 import { Card, CardContent } from "@/components/ui/card";
@@ -805,18 +806,23 @@ export default function Publishing() {
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<AssetWithVersion | null>(null);
 
-  const { data: targets, isLoading: targetsLoading } = useQuery<PublishingTarget[]>({
+  const { data: targets, isLoading: targetsLoading, isError: targetsError } = useQuery<PublishingTarget[]>({
     queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
     queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
   });
 
-  const { data: jobs, isLoading: jobsLoading } = useQuery<(PublishJob & { target?: PublishingTarget })[]>({
+  const { data: jobs, isLoading: jobsLoading, isError: jobsError } = useQuery<(PublishJob & { target?: PublishingTarget })[]>({
     queryKey: ["/api/publish-jobs"],
   });
 
-  const { data: assets, isLoading: assetsLoading } = useQuery<AssetWithVersion[]>({
+  const { data: assets, isLoading: assetsLoading, isError: assetsError } = useQuery<AssetWithVersion[]>({
     queryKey: ["/api/assets", { status: "approved" }],
   });
+  
+  // Safe arrays to prevent crash on undefined
+  const safeTargets = targets ?? [];
+  const safeJobs = jobs ?? [];
+  const safeAssets = assets ?? [];
 
   const handleEdit = (target: PublishingTarget) => {
     setEditTarget(target);
@@ -833,7 +839,7 @@ export default function Publishing() {
     setPublishDialogOpen(true);
   };
 
-  const approvedAssets = assets?.filter((a) => a.status === "approved") || [];
+  const approvedAssets = safeAssets.filter((a) => a.status === "approved");
 
   return (
     <div className="flex flex-col gap-8 p-8">
@@ -868,9 +874,22 @@ export default function Publishing() {
                   <TargetCardSkeleton key={i} />
                 ))}
               </div>
-            ) : targets && targets.length > 0 ? (
+            ) : targetsError ? (
+              <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
+                <AlertCircle className="h-16 w-16 text-destructive/50" />
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <h3 className="font-serif text-xl font-semibold">Failed to load targets</h3>
+                  <p className="max-w-sm text-muted-foreground">
+                    There was an error loading publishing targets. Please try again.
+                  </p>
+                </div>
+                <Button onClick={() => window.location.reload()} variant="outline">
+                  Refresh Page
+                </Button>
+              </div>
+            ) : safeTargets.length > 0 ? (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {targets.map((target) => (
+                {safeTargets.map((target) => (
                   <TargetCard 
                     key={target.id} 
                     target={target} 

@@ -67,7 +67,7 @@ export default function AutomationsPage() {
   const [excludeInput, setExcludeInput] = useState("");
   const { toast } = useToast();
 
-  const { data: automations, isLoading } = useQuery<Automation[]>({
+  const { data: automations, isLoading, isError } = useQuery<Automation[]>({
     queryKey: ["/api/automations"],
   });
 
@@ -79,6 +79,11 @@ export default function AutomationsPage() {
     queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
     queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
   });
+  
+  // Safe arrays to prevent crash on undefined
+  const safeAutomations = automations ?? [];
+  const safeSources = sources ?? [];
+  const safeTargets = targets ?? [];
 
   const { data: runs } = useQuery<AutomationRun[]>({
     queryKey: [`/api/automations/${selectedAutomation?.id}/runs`],
@@ -175,7 +180,7 @@ export default function AutomationsPage() {
     }
   };
 
-  const wordpressTargets = targets?.filter((t) => t.type === "wordpress") || [];
+  const wordpressTargets = safeTargets.filter((t) => t.type === "wordpress");
 
   if (isLoading) {
     return (

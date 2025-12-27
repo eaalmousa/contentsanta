@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   Circle,
   Star,
+  AlertCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -175,7 +176,7 @@ function TopicSettingsDialog({
   });
   
   const wordPressTargets = useMemo(() => 
-    targets?.filter(t => t.targetType === "wordpress") || [], 
+    (targets ?? []).filter(t => t.type === "wordpress"), 
     [targets]
   );
   
@@ -548,12 +549,15 @@ function SourceSelector({
   onToggleSource: (id: string) => void;
   isLoading: boolean;
 }) {
+  // Ensure sources is always an array to prevent crashes
+  const safeSources = Array.isArray(sources) ? sources : [];
+  
   const groupedByTier = useMemo(() => {
-    const tier1 = sources.filter(s => s.tier === 1);
-    const tier2 = sources.filter(s => s.tier === 2);
-    const tier3 = sources.filter(s => s.tier === 3);
+    const tier1 = safeSources.filter(s => s.tier === 1);
+    const tier2 = safeSources.filter(s => s.tier === 2);
+    const tier3 = safeSources.filter(s => s.tier === 3);
     return { tier1, tier2, tier3 };
-  }, [sources]);
+  }, [safeSources]);
 
   if (isLoading) {
     return (
@@ -564,7 +568,7 @@ function SourceSelector({
     );
   }
 
-  if (sources.length === 0) {
+  if (safeSources.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
         <Newspaper className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -782,9 +786,12 @@ export default function TopicsPage() {
     outputVolumePerDay: 5,
   });
 
-  const { data: topics, isLoading } = useQuery<(Topic & { enabledSourceCount: number })[]>({
+  const { data: topics, isLoading, isError } = useQuery<(Topic & { enabledSourceCount: number })[]>({
     queryKey: ["/api/topics"],
   });
+  
+  // Safe array even on error or undefined
+  const safeTopics = topics ?? [];
 
   const fetchRecommendedSources = async () => {
     setIsLoadingSources(true);
@@ -954,8 +961,8 @@ export default function TopicsPage() {
     createTopicMutation.mutate(newTopic);
   };
 
-  const liveTopics = topics?.filter(t => t.isLive === "true") || [];
-  const pausedTopics = topics?.filter(t => t.isLive !== "true") || [];
+  const liveTopics = safeTopics.filter(t => t.isLive === "true");
+  const pausedTopics = safeTopics.filter(t => t.isLive !== "true");
 
   return (
     <div className="container py-6 space-y-6">
@@ -977,7 +984,24 @@ export default function TopicsPage() {
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
-      ) : !topics || topics.length === 0 ? (
+      ) : isError ? (
+        <Card className="text-center py-12">
+          <CardContent>
+            <div className="flex justify-center mb-4">
+              <div className="p-3 rounded-full bg-destructive/10">
+                <AlertCircle className="w-8 h-8 text-destructive" />
+              </div>
+            </div>
+            <h2 className="text-xl font-semibold mb-2">Failed to Load Topics</h2>
+            <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+              There was an error loading your topics. Please try refreshing the page.
+            </p>
+            <Button onClick={() => window.location.reload()} variant="outline">
+              Refresh Page
+            </Button>
+          </CardContent>
+        </Card>
+      ) : safeTopics.length === 0 ? (
         <Card className="text-center py-12">
           <CardContent>
             <div className="flex justify-center mb-4">
