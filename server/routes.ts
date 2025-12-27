@@ -27,6 +27,8 @@ import { fetchRSSSource, testRSSFeed } from "./services/rss-service";
 import { runAutomation } from "./services/automation-service";
 import { testWordPressConnection, publishToWordPress } from "./services/wordpress-service";
 import { startScheduler } from "./services/scheduler";
+import { runDiscoveryJob, convertDiscoveredSourceToSource } from "./services/discovery-service";
+import { insertContentGoalSchema } from "@shared/schema";
 
 // Legacy simulated AI workflow processing (fallback)
 async function processWorkflowLegacy(
@@ -1205,6 +1207,161 @@ export async function registerRoutes(
       res.send(content);
     } catch (error) {
       res.status(500).json({ error: "Failed to export" });
+    }
+  });
+
+  // ==================== CONTENT GOALS & DISCOVERY ====================
+
+  // Content Goals
+  app.get("/api/content-goals", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const goals = await storage.getContentGoals(workspaceId);
+      res.json(goals);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch content goals" });
+    }
+  });
+
+  app.get("/api/content-goals/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const goal = await storage.getContentGoal(req.params.id);
+      if (!goal) {
+        return res.status(404).json({ error: "Content goal not found" });
+      }
+      res.json(goal);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch content goal" });
+    }
+  });
+
+  app.post("/api/content-goals", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const data = insertContentGoalSchema.parse(req.body);
+      const goal = await storage.createContentGoal(data);
+      res.status(201).json(goal);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid content goal data", details: error.errors });
+      }
+      res.status(500).json({ error: error.message || "Failed to create content goal" });
+    }
+  });
+
+  app.patch("/api/content-goals/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const goal = await storage.updateContentGoal(req.params.id, req.body);
+      if (!goal) {
+        return res.status(404).json({ error: "Content goal not found" });
+      }
+      res.json(goal);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update content goal" });
+    }
+  });
+
+  app.delete("/api/content-goals/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteContentGoal(req.params.id);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to delete content goal" });
+    }
+  });
+
+  // Discovery Jobs
+  app.post("/api/discovery/run", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { contentGoalId, workspaceId = "demo-workspace" } = req.body;
+      
+      if (!contentGoalId) {
+        return res.status(400).json({ error: "contentGoalId is required" });
+      }
+
+      const goal = await storage.getContentGoal(contentGoalId);
+      if (!goal) {
+        return res.status(404).json({ error: "Content goal not found" });
+      }
+
+      const job = await storage.createDiscoveryJob({
+        workspaceId,
+        contentGoalId,
+        status: "pending",
+      });
+
+      runDiscoveryJob(job.id).catch(err => {
+        console.error(`[Discovery] Background job failed: ${err.message}`);
+      });
+
+      res.status(202).json({ 
+        jobId: job.id, 
+        status: job.status,
+        message: "Discovery job started" 
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to start discovery job" });
+    }
+  });
+
+  app.get("/api/discovery/:jobId", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const job = await storage.getDiscoveryJob(req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Discovery job not found" });
+      }
+      res.json(job);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch discovery job" });
+    }
+  });
+
+  app.get("/api/discovery/:jobId/results", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const job = await storage.getDiscoveryJob(req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Discovery job not found" });
+      }
+
+      const sources = await storage.getDiscoveredSources(req.params.jobId);
+      
+      res.json({
+        job,
+        sources,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch discovery results" });
+    }
+  });
+
+  app.get("/api/discovery-jobs", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const contentGoalId = req.query.contentGoalId as string | undefined;
+      const jobs = await storage.getDiscoveryJobs(workspaceId, contentGoalId);
+      res.json(jobs);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch discovery jobs" });
+    }
+  });
+
+  // Discovered Sources
+  app.post("/api/discovered-sources/:id/convert-to-source", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { workspaceId = "demo-workspace" } = req.body;
+      
+      const result = await convertDiscoveredSourceToSource(req.params.id, workspaceId);
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+
+      res.json({ 
+        success: true, 
+        sourceId: result.sourceId,
+        message: "Source created successfully" 
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to convert to source" });
     }
   });
 

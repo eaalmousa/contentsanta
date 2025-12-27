@@ -20,11 +20,17 @@ import {
   automations, type Automation, type InsertAutomation,
   automationRuns, type AutomationRun, type InsertAutomationRun,
   automationRunItems, type AutomationRunItem, type InsertAutomationRunItem,
+  contentGoals, type ContentGoal, type InsertContentGoal,
+  discoveryJobs, type DiscoveryJob, type InsertDiscoveryJob,
+  discoveredSources, type DiscoveredSource, type InsertDiscoveredSource,
+  contentPlans, type ContentPlan, type InsertContentPlan,
   type RoleType,
   type RunStatus,
   type AssetStatus,
   type SourceItemStatus,
   type AutomationRunStatus,
+  type DiscoveryJobStatus,
+  type DiscoveredSourceStatus,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
@@ -169,6 +175,31 @@ export interface IStorage {
   getAutomationRunItems(runId: string): Promise<AutomationRunItem[]>;
   createAutomationRunItem(data: InsertAutomationRunItem): Promise<AutomationRunItem>;
   updateAutomationRunItem(id: string, data: Partial<AutomationRunItem>): Promise<AutomationRunItem | undefined>;
+  
+  // Content Goals
+  getContentGoals(workspaceId: string): Promise<ContentGoal[]>;
+  getContentGoal(id: string): Promise<ContentGoal | undefined>;
+  createContentGoal(data: InsertContentGoal): Promise<ContentGoal>;
+  updateContentGoal(id: string, data: Partial<ContentGoal>): Promise<ContentGoal | undefined>;
+  deleteContentGoal(id: string): Promise<void>;
+  
+  // Discovery Jobs
+  getDiscoveryJobs(workspaceId: string, contentGoalId?: string): Promise<DiscoveryJob[]>;
+  getDiscoveryJob(id: string): Promise<DiscoveryJob | undefined>;
+  createDiscoveryJob(data: InsertDiscoveryJob): Promise<DiscoveryJob>;
+  updateDiscoveryJob(id: string, data: Partial<DiscoveryJob>): Promise<DiscoveryJob | undefined>;
+  
+  // Discovered Sources
+  getDiscoveredSources(discoveryJobId: string): Promise<DiscoveredSource[]>;
+  getDiscoveredSource(id: string): Promise<DiscoveredSource | undefined>;
+  createDiscoveredSource(data: InsertDiscoveredSource): Promise<DiscoveredSource>;
+  updateDiscoveredSource(id: string, data: Partial<DiscoveredSource>): Promise<DiscoveredSource | undefined>;
+  
+  // Content Plans
+  getContentPlans(workspaceId: string, contentGoalId?: string): Promise<ContentPlan[]>;
+  getContentPlan(id: string): Promise<ContentPlan | undefined>;
+  createContentPlan(data: InsertContentPlan): Promise<ContentPlan>;
+  updateContentPlan(id: string, data: Partial<ContentPlan>): Promise<ContentPlan | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -749,6 +780,108 @@ export class DatabaseStorage implements IStorage {
   async updateAutomationRunItem(id: string, data: Partial<AutomationRunItem>): Promise<AutomationRunItem | undefined> {
     const [item] = await db.update(automationRunItems).set(data).where(eq(automationRunItems.id, id)).returning();
     return item;
+  }
+
+  // Content Goals
+  async getContentGoals(workspaceId: string): Promise<ContentGoal[]> {
+    return await db.select().from(contentGoals)
+      .where(eq(contentGoals.workspaceId, workspaceId))
+      .orderBy(desc(contentGoals.createdAt));
+  }
+
+  async getContentGoal(id: string): Promise<ContentGoal | undefined> {
+    const [goal] = await db.select().from(contentGoals).where(eq(contentGoals.id, id));
+    return goal;
+  }
+
+  async createContentGoal(data: InsertContentGoal): Promise<ContentGoal> {
+    const [goal] = await db.insert(contentGoals).values(data).returning();
+    return goal;
+  }
+
+  async updateContentGoal(id: string, data: Partial<ContentGoal>): Promise<ContentGoal | undefined> {
+    const [goal] = await db.update(contentGoals).set(data).where(eq(contentGoals.id, id)).returning();
+    return goal;
+  }
+
+  async deleteContentGoal(id: string): Promise<void> {
+    await db.delete(contentGoals).where(eq(contentGoals.id, id));
+  }
+
+  // Discovery Jobs
+  async getDiscoveryJobs(workspaceId: string, contentGoalId?: string): Promise<DiscoveryJob[]> {
+    if (contentGoalId) {
+      return await db.select().from(discoveryJobs)
+        .where(and(eq(discoveryJobs.workspaceId, workspaceId), eq(discoveryJobs.contentGoalId, contentGoalId)))
+        .orderBy(desc(discoveryJobs.createdAt));
+    }
+    return await db.select().from(discoveryJobs)
+      .where(eq(discoveryJobs.workspaceId, workspaceId))
+      .orderBy(desc(discoveryJobs.createdAt));
+  }
+
+  async getDiscoveryJob(id: string): Promise<DiscoveryJob | undefined> {
+    const [job] = await db.select().from(discoveryJobs).where(eq(discoveryJobs.id, id));
+    return job;
+  }
+
+  async createDiscoveryJob(data: InsertDiscoveryJob): Promise<DiscoveryJob> {
+    const [job] = await db.insert(discoveryJobs).values(data).returning();
+    return job;
+  }
+
+  async updateDiscoveryJob(id: string, data: Partial<DiscoveryJob>): Promise<DiscoveryJob | undefined> {
+    const [job] = await db.update(discoveryJobs).set(data).where(eq(discoveryJobs.id, id)).returning();
+    return job;
+  }
+
+  // Discovered Sources
+  async getDiscoveredSources(discoveryJobId: string): Promise<DiscoveredSource[]> {
+    return await db.select().from(discoveredSources)
+      .where(eq(discoveredSources.discoveryJobId, discoveryJobId))
+      .orderBy(desc(discoveredSources.score));
+  }
+
+  async getDiscoveredSource(id: string): Promise<DiscoveredSource | undefined> {
+    const [source] = await db.select().from(discoveredSources).where(eq(discoveredSources.id, id));
+    return source;
+  }
+
+  async createDiscoveredSource(data: InsertDiscoveredSource): Promise<DiscoveredSource> {
+    const [source] = await db.insert(discoveredSources).values(data).returning();
+    return source;
+  }
+
+  async updateDiscoveredSource(id: string, data: Partial<DiscoveredSource>): Promise<DiscoveredSource | undefined> {
+    const [source] = await db.update(discoveredSources).set(data).where(eq(discoveredSources.id, id)).returning();
+    return source;
+  }
+
+  // Content Plans
+  async getContentPlans(workspaceId: string, contentGoalId?: string): Promise<ContentPlan[]> {
+    if (contentGoalId) {
+      return await db.select().from(contentPlans)
+        .where(and(eq(contentPlans.workspaceId, workspaceId), eq(contentPlans.contentGoalId, contentGoalId)))
+        .orderBy(desc(contentPlans.createdAt));
+    }
+    return await db.select().from(contentPlans)
+      .where(eq(contentPlans.workspaceId, workspaceId))
+      .orderBy(desc(contentPlans.createdAt));
+  }
+
+  async getContentPlan(id: string): Promise<ContentPlan | undefined> {
+    const [plan] = await db.select().from(contentPlans).where(eq(contentPlans.id, id));
+    return plan;
+  }
+
+  async createContentPlan(data: InsertContentPlan): Promise<ContentPlan> {
+    const [plan] = await db.insert(contentPlans).values(data).returning();
+    return plan;
+  }
+
+  async updateContentPlan(id: string, data: Partial<ContentPlan>): Promise<ContentPlan | undefined> {
+    const [plan] = await db.update(contentPlans).set(data).where(eq(contentPlans.id, id)).returning();
+    return plan;
   }
 }
 
