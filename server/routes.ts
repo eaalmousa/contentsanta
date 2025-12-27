@@ -1667,6 +1667,40 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/topics/:topicId/discovery-status", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      
+      if (!await validateTopicAccess(topicId, res)) return;
+      
+      const { getTopicDiscoveryStatus } = await import("./services/topic-run-service");
+      const status = await getTopicDiscoveryStatus(topicId);
+      res.json(status);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get discovery status" });
+    }
+  });
+
+  app.post("/api/topics/:topicId/run-discovery", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      
+      if (!await validateTopicAccess(topicId, res)) return;
+      
+      const topic = await storage.getTopic(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+      
+      const { runTopicDiscovery } = await import("./services/topic-run-service");
+      const log = await runTopicDiscovery(topic);
+      
+      res.json(log);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to run discovery" });
+    }
+  });
+
   // ==================== DRAFTS ====================
   
   app.get("/api/drafts", isAuthenticated, async (req: Request, res: Response) => {

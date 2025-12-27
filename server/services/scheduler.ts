@@ -1,9 +1,12 @@
 import cron from "node-cron";
+import type { ScheduledTask } from "node-cron";
 import { fetchAllActiveSources } from "./rss-service";
 import { runAllActiveAutomations } from "./automation-service";
+import { runAllLiveTopics, type TopicRunLog } from "./topic-run-service";
 
-let rssFetchJob: cron.ScheduledTask | null = null;
-let automationJob: cron.ScheduledTask | null = null;
+let rssFetchJob: ScheduledTask | null = null;
+let automationJob: ScheduledTask | null = null;
+let topicDiscoveryJob: ScheduledTask | null = null;
 
 export function startScheduler() {
   console.log("[Scheduler] Starting background jobs...");
@@ -28,9 +31,22 @@ export function startScheduler() {
     }
   });
   
+  topicDiscoveryJob = cron.schedule("*/20 * * * *", async () => {
+    console.log("[Scheduler] Running topic discovery job...");
+    try {
+      const logs = await runAllLiveTopics();
+      const completed = logs.filter(l => l.status === "completed").length;
+      const skipped = logs.filter(l => l.status === "skipped").length;
+      console.log(`[Scheduler] Topic discovery: ${completed} completed, ${skipped} skipped (no sources)`);
+    } catch (error: any) {
+      console.error("[Scheduler] Topic discovery error:", error.message);
+    }
+  });
+  
   console.log("[Scheduler] Background jobs started:");
   console.log("  - RSS Fetch: every 30 minutes");
   console.log("  - Automations: every 15 minutes");
+  console.log("  - Topic Discovery: every 20 minutes");
 }
 
 export function stopScheduler() {
@@ -41,6 +57,10 @@ export function stopScheduler() {
   if (automationJob) {
     automationJob.stop();
     automationJob = null;
+  }
+  if (topicDiscoveryJob) {
+    topicDiscoveryJob.stop();
+    topicDiscoveryJob = null;
   }
   console.log("[Scheduler] Background jobs stopped");
 }
@@ -53,4 +73,9 @@ export async function triggerRSSFetch() {
 export async function triggerAutomations() {
   console.log("[Scheduler] Manual automation run triggered");
   return await runAllActiveAutomations();
+}
+
+export async function triggerTopicDiscovery(): Promise<TopicRunLog[]> {
+  console.log("[Scheduler] Manual topic discovery triggered");
+  return await runAllLiveTopics();
 }

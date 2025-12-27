@@ -43,7 +43,7 @@ import {
   type DraftStatus,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
+import { eq, and, desc, sql, ilike, or, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // Workspaces
@@ -160,6 +160,7 @@ export interface IStorage {
   createSourceItem(data: InsertSourceItem): Promise<SourceItem>;
   updateSourceItem(id: string, data: Partial<SourceItem>): Promise<SourceItem | undefined>;
   getNewSourceItems(workspaceId: string, sourceIds?: string[]): Promise<SourceItem[]>;
+  getRecentSourceItemsBySourceIds(sourceIds: string[], hoursBack?: number, limit?: number): Promise<SourceItem[]>;
   sourceItemExists(workspaceId: string, contentHash: string): Promise<boolean>;
   getSourceItemCount(workspaceId: string): Promise<number>;
   
@@ -764,6 +765,20 @@ export class DatabaseStorage implements IStorage {
     const [result] = await db.select({ count: sql<number>`count(*)::int` }).from(sourceItems)
       .where(eq(sourceItems.workspaceId, workspaceId));
     return result?.count ?? 0;
+  }
+
+  async getRecentSourceItemsBySourceIds(sourceIds: string[], hoursBack: number = 24, limit: number = 100): Promise<SourceItem[]> {
+    if (sourceIds.length === 0) return [];
+    
+    const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+    
+    return await db.select().from(sourceItems)
+      .where(and(
+        inArray(sourceItems.sourceId, sourceIds),
+        sql`${sourceItems.createdAt} >= ${cutoff}`
+      ))
+      .orderBy(desc(sourceItems.createdAt))
+      .limit(limit);
   }
 
   // Fetch Runs
