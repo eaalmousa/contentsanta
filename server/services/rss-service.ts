@@ -171,7 +171,7 @@ async function fetchWithRetry(url: string): Promise<FetchResponse> {
         if (timeoutAttempts >= TIMEOUT_RETRIES) {
           throw err;
         }
-        console.log(`[RSS] Timeout, retry ${timeoutAttempts}/${TIMEOUT_RETRIES}...`);
+        console.log(`[RSS] Timeout, attempt ${timeoutAttempts + 1}/${TIMEOUT_RETRIES}...`);
         await sleep(INITIAL_BACKOFF_MS);
         continue;
       }
@@ -186,7 +186,7 @@ async function fetchWithRetry(url: string): Promise<FetchResponse> {
       }
 
       const backoffMs = INITIAL_BACKOFF_MS * Math.pow(2, attempt - 1);
-      console.log(`[RSS] Retryable error (${err.statusCode || err.message}), retry ${attempt}/${MAX_RETRIES} after ${backoffMs}ms...`);
+      console.log(`[RSS] Retryable error (${err.statusCode || err.message}), attempt ${attempt + 1}/${MAX_RETRIES} after ${backoffMs}ms...`);
       await sleep(backoffMs);
     }
   }
@@ -310,6 +310,9 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
     console.log(`[RSS:${requestId}] feedTitle: ${feed.title}`);
     console.log(`[RSS:${requestId}] parsedItemsCount: ${items.length}`);
 
+    const existingCountBefore = await storage.getSourceItemCount(source.workspaceId);
+    console.log(`[RSS:${requestId}] existingCountBefore: ${existingCountBefore}`);
+
     let insertedCount = 0;
     let dedupedCount = 0;
     let skippedCount = 0;
@@ -377,9 +380,13 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
     });
 
     const durationMs = Date.now() - startTime;
+    const totalCountAfter = existingCountBefore + insertedCount;
+    
     console.log(`[RSS:${requestId}] ========== FETCH COMPLETE ==========`);
+    console.log(`[RSS:${requestId}] existingCountBefore: ${existingCountBefore}`);
     console.log(`[RSS:${requestId}] insertedCount: ${insertedCount}`);
-    console.log(`[RSS:${requestId}] dedupedCount: ${dedupedCount}`);
+    console.log(`[RSS:${requestId}] totalCountAfter: ${totalCountAfter}`);
+    console.log(`[RSS:${requestId}] dedupedCount: ${dedupedCount} (already known)`);
     console.log(`[RSS:${requestId}] skippedCount: ${skippedCount}`);
     console.log(`[RSS:${requestId}] missingGuidCount: ${missingGuidCount}`);
     console.log(`[RSS:${requestId}] missingLinkCount: ${missingLinkCount}`);
@@ -394,6 +401,8 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
       dedupedCount,
       missingGuidCount,
       missingLinkCount,
+      existingCountBefore,
+      totalCountAfter,
     };
     await storage.createFetchRun(fetchRunData);
 

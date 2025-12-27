@@ -15,6 +15,7 @@ import {
   usageLedger, type UsageLedger, type InsertUsageLedger,
   sources, type Source, type InsertSource,
   sourceItems, type SourceItem, type InsertSourceItem,
+  sourceItemMentions, type SourceItemMention, type InsertSourceItemMention,
   fetchRuns, type FetchRun, type InsertFetchRun,
   automations, type Automation, type InsertAutomation,
   automationRuns, type AutomationRun, type InsertAutomationRun,
@@ -144,6 +145,7 @@ export interface IStorage {
   updateSourceItem(id: string, data: Partial<SourceItem>): Promise<SourceItem | undefined>;
   getNewSourceItems(workspaceId: string, sourceIds?: string[]): Promise<SourceItem[]>;
   sourceItemExists(workspaceId: string, contentHash: string): Promise<boolean>;
+  getSourceItemCount(workspaceId: string): Promise<number>;
   
   // Fetch Runs
   createFetchRun(data: InsertFetchRun): Promise<FetchRun>;
@@ -651,6 +653,12 @@ export class DatabaseStorage implements IStorage {
     const [item] = await db.select({ id: sourceItems.id }).from(sourceItems)
       .where(and(eq(sourceItems.workspaceId, workspaceId), eq(sourceItems.contentHash, contentHash)));
     return !!item;
+  }
+
+  async getSourceItemCount(workspaceId: string): Promise<number> {
+    const [result] = await db.select({ count: sql<number>`count(*)::int` }).from(sourceItems)
+      .where(eq(sourceItems.workspaceId, workspaceId));
+    return result?.count ?? 0;
   }
 
   // Fetch Runs

@@ -419,6 +419,8 @@ export const fetchRuns = pgTable("fetch_runs", {
   dedupedCount: integer("deduped_count"),
   missingGuidCount: integer("missing_guid_count"),
   missingLinkCount: integer("missing_link_count"),
+  existingCountBefore: integer("existing_count_before"),
+  totalCountAfter: integer("total_count_after"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_fetch_runs_source").on(table.sourceId),
@@ -456,6 +458,25 @@ export const sourceItems = pgTable("source_items", {
 export const insertSourceItemSchema = createInsertSchema(sourceItems).omit({ id: true, createdAt: true });
 export type InsertSourceItem = z.infer<typeof insertSourceItemSchema>;
 export type SourceItem = typeof sourceItems.$inferSelect;
+
+// Source Item Mentions (cross-source provenance tracking)
+// When multiple sources carry the same story, this table tracks which sources mentioned it
+export const sourceItemMentions = pgTable("source_item_mentions", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  sourceItemId: varchar("source_item_id", { length: 36 }).notNull(),
+  sourceId: varchar("source_id", { length: 36 }).notNull(),
+  originalUrl: text("original_url").notNull(),
+  guid: text("guid"),
+  firstSeenAt: timestamp("first_seen_at").defaultNow(),
+}, (table) => [
+  index("idx_mentions_source_item").on(table.sourceItemId),
+  index("idx_mentions_source").on(table.sourceId),
+  unique("mention_unique").on(table.sourceItemId, table.sourceId),
+]);
+
+export const insertSourceItemMentionSchema = createInsertSchema(sourceItemMentions).omit({ id: true, firstSeenAt: true });
+export type InsertSourceItemMention = z.infer<typeof insertSourceItemMentionSchema>;
+export type SourceItemMention = typeof sourceItemMentions.$inferSelect;
 
 // Automations (scheduled pipelines)
 export const automations = pgTable("automations", {
