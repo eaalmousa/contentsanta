@@ -1,0 +1,79 @@
+You are the Replit AI agent working on ContentSanta.
+
+Context: The Smart Editor home, Topics with content intent, and story-level clustering are implemented. Keep all existing functionality. This next step must focus on (1) provenance/UX polish and (2) Visual Intelligence for publishing.
+
+DO NOT add new major dashboards or expose backend tooling (sources/inbox/runs/logs) to normal users.
+
+TASK A — Provenance + Duplicate UX Fixes (must)
+1) Eliminate “Unknown Source” in the UI completely.
+   - Always resolve source display name from sources.name.
+   - If missing, derive from the story/source_item URL domain and display that.
+2) In Smart Editor and Topics views, show stories (clusters), not raw items.
+   - Each story card must display:
+     - one primary headline (best candidate)
+     - “Reported by” chips listing all sources attached to the story
+     - default ordering: Tier 1 first, then Tier 2, then Tier 3
+3) Ensure duplicates are collapsed at the story level:
+   - no multiple rows for the same story.
+   - selecting a story shows all variants as provenance only.
+
+TASK B — Visual Intelligence Phase 1 (Core feature)
+Goal: capture source images + captions + credits and re-upload to WordPress on publish.
+
+1) Database:
+   - Create image_assets table:
+     - id (uuid), workspace_id, story_id (nullable), source_item_id (nullable)
+     - origin_type ('source' | 'generated')
+     - original_url (nullable)
+     - stored_url (nullable)  // if downloaded locally or stored in object storage later
+     - caption (text nullable)
+     - credit (text nullable)
+     - license_type (text nullable)
+     - metadata_json (jsonb)
+     - created_at
+   - Create image_usages table:
+     - id, image_asset_id, target ('wordpress'), target_post_id, uploaded_url, uploaded_at, metadata_json
+   Keep schema workspace-scoped and consistent with existing patterns.
+
+2) Extraction:
+   - When ingesting or generating drafts for a story, collect image candidates:
+     - Prefer: RSS media:thumbnail/media:content when present
+     - Also support: OpenGraph image (og:image) by fetching the article page ONLY when allowed and lightweight
+   - Store extracted images as image_assets with caption/credit when available.
+
+3) Smart Editor UX:
+   - On each story/draft card:
+     - show a featured image preview if available
+     - allow selecting from available images (simple picker)
+     - allow editing caption/credit (optional)
+   - Never expose raw image URLs; treat it as “Visuals”.
+
+4) WordPress Publishing:
+   - When publishing a draft/story:
+     - If a featured image is selected, upload it to WP Media (REST API)
+     - Set as featured_media on the post
+     - Store image_usages linking to target post
+     - Apply caption/credit handling (configurable: caption in media + credit in post content or excerpt)
+
+TASK C — Visual Intelligence Phase 2 (Premium, gated)
+1) Add workspace entitlement flag (or plan field) e.g. features.generate_images = true.
+2) If enabled and no images exist for a story:
+   - generate an illustrative image placeholder entry in image_assets with origin_type='generated'
+   - store generated_prompt and metadata (do not hardcode an external provider if not configured yet)
+3) Add per-topic toggle: “Auto-generate visuals when missing (Premium)”.
+
+TASK D — Publishing Confidence (Small but critical)
+1) On Publishing connection page:
+   - Add “Test Connection” and “Create Test Draft” actions.
+   - Show success/failure with clear error messages.
+
+Deliverables:
+- UI shows no “Unknown Source”
+- Story cards are deduped and show multi-source provenance
+- Images are captured (when available), selectable, and uploaded to WordPress on publish
+- Premium image generation path is present as gated scaffolding
+- No regressions to ingestion, clustering, or publishing
+
+After implementing:
+- Provide a short summary + how to test end-to-end (Smart Editor → select story → choose image → publish → confirm featured image in WP)
+- Do not ask what to do next

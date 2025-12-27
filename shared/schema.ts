@@ -16,6 +16,7 @@ export const workspaces = pgTable("workspaces", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   planId: text("plan_id"),
+  features: jsonb("features").default({}),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -846,6 +847,7 @@ export const drafts = pgTable("drafts", {
   status: text("status").notNull().$type<DraftStatus>().default("pending"),
   reviewNotes: text("review_notes"),
   assetId: varchar("asset_id", { length: 36 }),
+  featuredImageId: varchar("featured_image_id", { length: 36 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -876,6 +878,7 @@ export const topics = pgTable("topics", {
   outputVolumePerDay: integer("output_volume_per_day").default(5),
   reviewMode: text("review_mode").default("manual"),
   autoPublish: text("auto_publish").default("false"),
+  autoGenerateVisuals: text("auto_generate_visuals").default("false"),
   publishingTargetId: varchar("publishing_target_id", { length: 36 }),
   isLive: text("is_live").default("false"),
   lastRunAt: timestamp("last_run_at"),
@@ -911,4 +914,64 @@ export const draftsRelations = relations(drafts, ({ one }) => ({
 export const topicsRelations = relations(topics, ({ one, many }) => ({
   workspace: one(workspaces, { fields: [topics.workspaceId], references: [workspaces.id] }),
   drafts: many(drafts),
+}));
+
+// ============ VISUAL INTELLIGENCE ============
+
+// Image origin types
+export const imageOriginTypes = ["source", "generated"] as const;
+export type ImageOriginType = typeof imageOriginTypes[number];
+
+// Image Assets (captured from sources or AI-generated)
+export const imageAssets = pgTable("image_assets", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  storyId: varchar("story_id", { length: 36 }),
+  sourceItemId: varchar("source_item_id", { length: 36 }),
+  originType: text("origin_type").notNull().$type<ImageOriginType>().default("source"),
+  originalUrl: text("original_url"),
+  storedUrl: text("stored_url"),
+  caption: text("caption"),
+  credit: text("credit"),
+  licenseType: text("license_type"),
+  generatedPrompt: text("generated_prompt"),
+  metadataJson: jsonb("metadata_json").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_image_assets_workspace").on(table.workspaceId),
+  index("idx_image_assets_story").on(table.storyId),
+  index("idx_image_assets_source_item").on(table.sourceItemId),
+]);
+
+export const insertImageAssetSchema = createInsertSchema(imageAssets).omit({ id: true, createdAt: true });
+export type InsertImageAsset = z.infer<typeof insertImageAssetSchema>;
+export type ImageAsset = typeof imageAssets.$inferSelect;
+
+// Image Usages (tracks where images have been published)
+export const imageUsages = pgTable("image_usages", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  imageAssetId: varchar("image_asset_id", { length: 36 }).notNull(),
+  target: text("target").notNull().default("wordpress"),
+  targetPostId: text("target_post_id"),
+  uploadedUrl: text("uploaded_url"),
+  uploadedAt: timestamp("uploaded_at"),
+  metadataJson: jsonb("metadata_json").default({}),
+}, (table) => [
+  index("idx_image_usages_asset").on(table.imageAssetId),
+]);
+
+export const insertImageUsageSchema = createInsertSchema(imageUsages).omit({ id: true });
+export type InsertImageUsage = z.infer<typeof insertImageUsageSchema>;
+export type ImageUsage = typeof imageUsages.$inferSelect;
+
+// Image relations
+export const imageAssetsRelations = relations(imageAssets, ({ one, many }) => ({
+  workspace: one(workspaces, { fields: [imageAssets.workspaceId], references: [workspaces.id] }),
+  story: one(stories, { fields: [imageAssets.storyId], references: [stories.id] }),
+  sourceItem: one(sourceItems, { fields: [imageAssets.sourceItemId], references: [sourceItems.id] }),
+  usages: many(imageUsages),
+}));
+
+export const imageUsagesRelations = relations(imageUsages, ({ one }) => ({
+  imageAsset: one(imageAssets, { fields: [imageUsages.imageAssetId], references: [imageAssets.id] }),
 }));
