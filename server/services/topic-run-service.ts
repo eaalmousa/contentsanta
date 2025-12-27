@@ -48,13 +48,8 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
     return log;
   }
   
-  const enabledSources: Source[] = [];
-  for (const sourceId of enabledSourceIds) {
-    const source = await storage.getSource(sourceId);
-    if (source && source.isActive === "true") {
-      enabledSources.push(source);
-    }
-  }
+  const allEnabledSources = await storage.getSourcesByIds(enabledSourceIds);
+  const enabledSources = allEnabledSources.filter(s => s.isActive === "true");
   
   const domains = enabledSources.slice(0, 5).map(s => extractDomain(s.feedUrl));
   
@@ -143,13 +138,8 @@ export async function getTopicDiscoveryStatus(topicId: string): Promise<{
     };
   }
   
-  const enabledSources: Source[] = [];
-  for (const sourceId of enabledSourceIds) {
-    const source = await storage.getSource(sourceId);
-    if (source && source.isActive === "true") {
-      enabledSources.push(source);
-    }
-  }
+  const allEnabledSources = await storage.getSourcesByIds(enabledSourceIds);
+  const enabledSources = allEnabledSources.filter(s => s.isActive === "true");
   
   const domains = enabledSources.slice(0, 5).map(s => extractDomain(s.feedUrl));
   

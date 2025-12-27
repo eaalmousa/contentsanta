@@ -1467,7 +1467,18 @@ export async function registerRoutes(
     try {
       const workspaceId = req.query.workspaceId as string || "demo-workspace";
       const topics = await storage.getTopics(workspaceId);
-      res.json(topics);
+      
+      const topicsWithSources = await Promise.all(
+        topics.map(async (topic) => {
+          const enabledSourceIds = await storage.getEnabledSourceIdsForTopic(topic.id);
+          return {
+            ...topic,
+            enabledSourceCount: enabledSourceIds.length,
+          };
+        })
+      );
+      
+      res.json(topicsWithSources);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to fetch topics" });
     }
@@ -1544,13 +1555,17 @@ export async function registerRoutes(
     try {
       const { topicQuery, contentType, region, countries, language, workspaceId = "demo-workspace" } = req.body;
       
+      if (!region) {
+        return res.status(400).json({ error: "region is required" });
+      }
+      
       const { getSourceRecommendations, getDefaultEnabledSources } = await import("./services/source-recommendation-service");
       
       const result = await getSourceRecommendations({
         topicQuery: topicQuery || "",
         contentType: contentType || "news_monitoring",
         region,
-        countries,
+        countries: countries || [],
         language,
         workspaceId,
       });

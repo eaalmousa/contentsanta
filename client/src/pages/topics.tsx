@@ -662,18 +662,21 @@ function TopicCard({
   onToggleLive,
   onDelete,
   onOpenSettings,
-  isPending
+  isPending,
+  enabledSourceCount
 }: { 
   topic: Topic;
   onToggleLive: () => void;
   onDelete: () => void;
   onOpenSettings: () => void;
   isPending: boolean;
+  enabledSourceCount: number;
 }) {
   const intent = contentIntentConfig[topic.contentIntent as ContentIntent] || contentIntentConfig.mixed;
   const IntentIcon = intent.icon;
   const isLive = topic.isLive === "true";
   const hasRules = topic.taxonomyRules && Object.keys(topic.taxonomyRules).length > 0;
+  const canActivate = enabledSourceCount > 0 || isLive;
 
   return (
     <Card className="hover-elevate" data-testid={`topic-card-${topic.id}`}>
@@ -744,12 +747,12 @@ function TopicCard({
           
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
-              {isLive ? "Live" : "Paused"}
+              {isLive ? "Live" : enabledSourceCount === 0 ? "No Sources" : "Paused"}
             </span>
             <Switch
               checked={isLive}
               onCheckedChange={onToggleLive}
-              disabled={isPending}
+              disabled={isPending || !canActivate}
               data-testid={`switch-live-${topic.id}`}
             />
           </div>
@@ -772,11 +775,13 @@ export default function TopicsPage() {
     description: "",
     query: "",
     language: "en",
+    region: "global",
+    countries: [] as string[],
     contentIntent: "news_monitoring" as ContentIntent,
     outputVolumePerDay: 5,
   });
 
-  const { data: topics, isLoading } = useQuery<Topic[]>({
+  const { data: topics, isLoading } = useQuery<(Topic & { enabledSourceCount: number })[]>({
     queryKey: ["/api/topics"],
   });
 
@@ -786,6 +791,8 @@ export default function TopicsPage() {
       const response = await apiRequest("POST", "/api/topics/recommend-sources", {
         topicQuery: newTopic.query,
         contentType: newTopic.contentIntent,
+        region: newTopic.region,
+        countries: newTopic.countries,
         language: newTopic.language,
         workspaceId: "demo-workspace",
       });
@@ -845,6 +852,8 @@ export default function TopicsPage() {
       description: "",
       query: "",
       language: "en",
+      region: "global",
+      countries: [],
       contentIntent: "news_monitoring",
       outputVolumePerDay: 5,
     });
@@ -1003,6 +1012,7 @@ export default function TopicsPage() {
                     onDelete={() => handleDelete(topic.id)}
                     onOpenSettings={() => setSettingsTopic(topic)}
                     isPending={updateTopicMutation.isPending}
+                    enabledSourceCount={topic.enabledSourceCount}
                   />
                 ))}
               </div>
@@ -1025,6 +1035,7 @@ export default function TopicsPage() {
                     onDelete={() => handleDelete(topic.id)}
                     onOpenSettings={() => setSettingsTopic(topic)}
                     isPending={updateTopicMutation.isPending}
+                    enabledSourceCount={topic.enabledSourceCount}
                   />
                 ))}
               </div>
@@ -1105,6 +1116,52 @@ export default function TopicsPage() {
                   rows={2}
                   data-testid="input-create-topic-query"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="region">Region</Label>
+                  <Select 
+                    value={newTopic.region} 
+                    onValueChange={(v) => setNewTopic({ ...newTopic, region: v })}
+                  >
+                    <SelectTrigger data-testid="select-create-topic-region">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="global">Global</SelectItem>
+                      <SelectItem value="mena">MENA</SelectItem>
+                      <SelectItem value="gcc">GCC</SelectItem>
+                      <SelectItem value="europe">Europe</SelectItem>
+                      <SelectItem value="north_america">North America</SelectItem>
+                      <SelectItem value="asia_pacific">Asia Pacific</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="country">Country</Label>
+                  <Select 
+                    value={newTopic.countries[0] || ""} 
+                    onValueChange={(v) => setNewTopic({ ...newTopic, countries: v ? [v] : [] })}
+                  >
+                    <SelectTrigger data-testid="select-create-topic-country">
+                      <SelectValue placeholder="Select country" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ae">UAE</SelectItem>
+                      <SelectItem value="sa">Saudi Arabia</SelectItem>
+                      <SelectItem value="qa">Qatar</SelectItem>
+                      <SelectItem value="kw">Kuwait</SelectItem>
+                      <SelectItem value="bh">Bahrain</SelectItem>
+                      <SelectItem value="om">Oman</SelectItem>
+                      <SelectItem value="eg">Egypt</SelectItem>
+                      <SelectItem value="jo">Jordan</SelectItem>
+                      <SelectItem value="us">United States</SelectItem>
+                      <SelectItem value="gb">United Kingdom</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

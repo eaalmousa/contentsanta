@@ -153,6 +153,7 @@ export interface IStorage {
   updateSource(id: string, data: Partial<Source>): Promise<Source | undefined>;
   deleteSource(id: string): Promise<void>;
   getActiveSources(): Promise<Source[]>;
+  getSourcesByIds(ids: string[]): Promise<Source[]>;
   
   // Source Items
   getSourceItems(workspaceId: string, status?: SourceItemStatus, sourceId?: string): Promise<SourceItem[]>;
@@ -702,6 +703,11 @@ export class DatabaseStorage implements IStorage {
 
   async getActiveSources(): Promise<Source[]> {
     return await db.select().from(sources).where(eq(sources.isActive, "true"));
+  }
+
+  async getSourcesByIds(ids: string[]): Promise<Source[]> {
+    if (ids.length === 0) return [];
+    return await db.select().from(sources).where(inArray(sources.id, ids));
   }
 
   // Source Items

@@ -1,0 +1,52 @@
+You are the Replit AI agent working on the ContentSanta repo.
+
+We are close, but the implementation is NOT fully aligned with the agreed product spec.
+
+CRITICAL FIXES REQUIRED (no discussion, implement now):
+
+1) ADD GEO SCOPE TO TOPIC WIZARD (Step 1)
+- Add required fields: region + country (country can be single-select for now; design types to support multi-select later)
+- UI: in Topic Details step, add “Region” dropdown and “Country” dropdown (or multi-select if already available)
+- Persist these fields on the Topic record (DB + schema + types):
+  topics.region (string/enum) NOT NULL
+  topics.country (string) NOT NULL  (or countries text[] if multi-select is easy)
+- Ensure the recommend-sources request uses these exact values (no hidden defaults).
+- Update the “recommend sources” endpoint to validate region/country are provided.
+
+2) ENFORCE SOURCE TOGGLE FLOW
+- Topic must remain NOT LIVE (draft/inactive) after creation until sources are saved.
+- If user tries to activate without sources: keep current 400 guard.
+- Additionally, disable “Activate” UI unless enabled_source_count > 0.
+
+3) FIX TOPIC RUN SERVICE LOGGING / VARIABLES
+- In server/services/topic-run-service.ts ensure there is no undefined variable:
+  - enabledSourceIds is used consistently
+- To log domains, fetch enabled source rows:
+  const enabledSources = await storage.getSourcesByIds(enabledSourceIds);
+  const domains = enabledSources.map(s => s.domain).slice(0,5);
+- Log:
+  topic_id
+  enabled_source_count
+  enabled_source_domains (first 5)
+  requestId
+
+4) VERIFY PIPELINE ENFORCEMENT END-TO-END
+- Find ALL places where discovery/ingestion selects sources (e.g. fetchAllActiveSources()).
+- Replace them with per-topic enabled sources logic.
+- If any legacy path still uses global sources, remove/route it through the per-topic service.
+
+DELIVERABLES (MUST PROVIDE)
+A) Exact file paths + code excerpts for:
+- Topic wizard step 1 geo UI
+- DB migration for topics.region/topics.country (and any backfill default)
+- Updated recommend-sources endpoint validation
+- Storage methods: getEnabledSourceIdsForTopic + getSourcesByIds
+- Updated topic-run-service.ts with correct variables and domain logging
+B) Manual test steps:
+- Create topic -> must require region+country
+- Recommend sources -> list changes when country changes
+- Save toggles -> DB shows topic_sources rows
+- Activate -> blocked if no enabled sources, enabled if >0
+- Run discovery -> logs show only enabled domains
+
+Implement targeted changes only; do not refactor unrelated code.
