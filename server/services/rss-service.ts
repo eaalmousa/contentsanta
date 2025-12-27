@@ -2,17 +2,17 @@ import Parser from "rss-parser";
 import crypto from "crypto";
 import { storage } from "../storage";
 import type { Source, InsertSourceItem } from "@shared/schema";
+import zlib from "zlib";
+import https from "https";
+import http from "http";
+import { promisify } from "util";
 
-// Create parser with BBC-compatible settings
+const gunzip = promisify(zlib.gunzip);
+const inflate = promisify(zlib.inflate);
+const brotliDecompress = promisify(zlib.brotliDecompress);
+
+// Create parser for XML parsing only (we handle fetching separately)
 const parser = new Parser({
-  timeout: 30000,
-  headers: {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.7",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Cache-Control": "no-cache",
-  },
   customFields: {
     item: [
       ["media:thumbnail", "mediaThumbnail"],
@@ -21,6 +21,69 @@ const parser = new Parser({
     ],
   },
 });
+
+// Custom HTTP fetch with proper decompression
+async function fetchWithDecompression(url: string): Promise<{ xml: string; status: number; contentType: string; bytesRead: number; finalUrl: string }> {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith("https") ? https : http;
+    const options = {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+      },
+      timeout: 30000,
+    };
+    
+    client.get(url, options, async (response) => {
+      const chunks: Buffer[] = [];
+      const status = response.statusCode || 0;
+      const contentType = response.headers["content-type"] || "unknown";
+      const contentEncoding = response.headers["content-encoding"];
+      const finalUrl = response.headers.location || url;
+      
+      // Handle redirects
+      if (status >= 300 && status < 400 && response.headers.location) {
+        try {
+          const result = await fetchWithDecompression(response.headers.location);
+          resolve(result);
+        } catch (err) {
+          reject(err);
+        }
+        return;
+      }
+      
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("error", reject);
+      response.on("end", async () => {
+        try {
+          const buffer = Buffer.concat(chunks);
+          const bytesRead = buffer.length;
+          let xml: string;
+          
+          if (contentEncoding === "gzip") {
+            const decompressed = await gunzip(buffer);
+            xml = decompressed.toString("utf-8");
+          } else if (contentEncoding === "deflate") {
+            const decompressed = await inflate(buffer);
+            xml = decompressed.toString("utf-8");
+          } else if (contentEncoding === "br") {
+            const decompressed = await brotliDecompress(buffer);
+            xml = decompressed.toString("utf-8");
+          } else {
+            xml = buffer.toString("utf-8");
+          }
+          
+          resolve({ xml, status, contentType, bytesRead, finalUrl });
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }).on("error", reject).on("timeout", () => reject(new Error("Request timeout")));
+  });
+}
 
 export interface FetchResult {
   success: boolean;
@@ -81,12 +144,18 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
   console.log(`[RSS:${requestId}] url: ${source.feedUrl}`);
   
   try {
-    const feed = await parser.parseURL(source.feedUrl);
+    // Fetch with proper decompression
+    const { xml, status, contentType, bytesRead, finalUrl } = await fetchWithDecompression(source.feedUrl);
+    
+    console.log(`[RSS:${requestId}] httpStatus: ${status}`);
+    console.log(`[RSS:${requestId}] finalUrl: ${finalUrl}`);
+    console.log(`[RSS:${requestId}] contentType: ${contentType}`);
+    console.log(`[RSS:${requestId}] bytesRead: ${bytesRead}`);
+    
+    // Parse the XML
+    const feed = await parser.parseString(xml);
     const items = feed.items || [];
     
-    console.log(`[RSS:${requestId}] httpStatus: 200`);
-    console.log(`[RSS:${requestId}] finalUrl: ${source.feedUrl}`);
-    console.log(`[RSS:${requestId}] contentType: application/rss+xml`);
     console.log(`[RSS:${requestId}] feedTitle: ${feed.title}`);
     console.log(`[RSS:${requestId}] parsedItemsCount: ${items.length}`);
     
@@ -221,7 +290,11 @@ export async function testRSSFeed(url: string): Promise<{
   console.log(`[RSS:${requestId}] Testing feed: ${url}`);
   
   try {
-    const feed = await parser.parseURL(url);
+    // Fetch with proper decompression
+    const { xml, status, contentType, bytesRead } = await fetchWithDecompression(url);
+    console.log(`[RSS:${requestId}] Test fetch: status=${status}, contentType=${contentType}, bytes=${bytesRead}`);
+    
+    const feed = await parser.parseString(xml);
     
     console.log(`[RSS:${requestId}] Test successful - title: ${feed.title}, items: ${feed.items?.length || 0}`);
     
