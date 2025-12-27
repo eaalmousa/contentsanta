@@ -22,8 +22,14 @@ const parser = new Parser({
   },
 });
 
+const MAX_REDIRECTS = 5;
+
 // Custom HTTP fetch with proper decompression
-async function fetchWithDecompression(url: string): Promise<{ xml: string; status: number; contentType: string; bytesRead: number; finalUrl: string }> {
+async function fetchWithDecompression(url: string, redirectCount: number = 0): Promise<{ xml: string; status: number; contentType: string; bytesRead: number; finalUrl: string }> {
+  if (redirectCount > MAX_REDIRECTS) {
+    throw new Error(`Too many redirects (max ${MAX_REDIRECTS})`);
+  }
+  
   return new Promise((resolve, reject) => {
     const client = url.startsWith("https") ? https : http;
     const options = {
@@ -42,12 +48,12 @@ async function fetchWithDecompression(url: string): Promise<{ xml: string; statu
       const status = response.statusCode || 0;
       const contentType = response.headers["content-type"] || "unknown";
       const contentEncoding = response.headers["content-encoding"];
-      const finalUrl = response.headers.location || url;
       
-      // Handle redirects
+      // Handle redirects (resolve relative URLs against original)
       if (status >= 300 && status < 400 && response.headers.location) {
         try {
-          const result = await fetchWithDecompression(response.headers.location);
+          const redirectUrl = new URL(response.headers.location, url).toString();
+          const result = await fetchWithDecompression(redirectUrl, redirectCount + 1);
           resolve(result);
         } catch (err) {
           reject(err);
