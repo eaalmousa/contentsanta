@@ -393,11 +393,15 @@ export const sources = pgTable("sources", {
   name: text("name").notNull(),
   type: text("type").notNull().$type<SourceType>().default("rss"),
   feedUrl: text("feed_url").notNull(),
+  domain: text("domain"), // Publisher domain (e.g., "albayan.ae")
   description: text("description"),
   language: text("language").default("en"),
-  region: text("region"),
+  region: text("region"), // e.g., "gcc", "mena", "europe", "global"
+  country: text("country"), // ISO code e.g., "AE", "SA", nullable for regional/global
   tags: text("tags").array(),
-  mediaTier: text("media_tier").default("tier_3"),
+  mediaTier: text("media_tier").default("tier_3"), // Legacy field
+  tier: integer("tier"), // 1, 2, or 3 (null = compute dynamically)
+  isOfficial: text("is_official").default("false"), // "true" for official national/regional media
   isActive: text("is_active").default("true"),
   fetchIntervalMinutes: integer("fetch_interval_minutes").default(60),
   lastFetchedAt: timestamp("last_fetched_at"),
@@ -405,11 +409,14 @@ export const sources = pgTable("sources", {
   lastError: text("last_error"),
   itemCount: integer("item_count").default(0),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   index("idx_sources_workspace").on(table.workspaceId),
+  index("idx_sources_region").on(table.region),
+  index("idx_sources_country").on(table.country),
 ]);
 
-export const insertSourceSchema = createInsertSchema(sources).omit({ id: true, createdAt: true, lastFetchedAt: true, lastSuccessAt: true, lastError: true, itemCount: true });
+export const insertSourceSchema = createInsertSchema(sources).omit({ id: true, createdAt: true, updatedAt: true, lastFetchedAt: true, lastSuccessAt: true, lastError: true, itemCount: true });
 export type InsertSource = z.infer<typeof insertSourceSchema>;
 export type Source = typeof sources.$inferSelect;
 

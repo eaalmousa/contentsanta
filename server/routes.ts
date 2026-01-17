@@ -1618,6 +1618,19 @@ export async function registerRoutes(
     }
   });
 
+  // Seed official GCC sources
+  app.post("/api/sources/seed-official", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { workspaceId = "demo-workspace" } = req.body;
+      const { seedOfficialSources } = await import("./seeds/official-sources");
+      const result = await seedOfficialSources(workspaceId);
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error("[API] seed-official error:", error);
+      res.status(500).json({ error: error.message || "Failed to seed official sources" });
+    }
+  });
+
   // Topic Source Recommendations
   app.post("/api/topics/recommend-sources", isAuthenticated, async (req: Request, res: Response) => {
     try {
@@ -1627,7 +1640,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "region is required" });
       }
       
-      const { getSourceRecommendations, getDefaultEnabledSources } = await import("./services/source-recommendation-service");
+      const { getSourceRecommendations } = await import("./services/source-recommendation-service");
       
       const result = await getSourceRecommendations({
         topicQuery: topicQuery || "",
@@ -1638,7 +1651,7 @@ export async function registerRoutes(
         workspaceId,
       });
       
-      const defaultEnabled = getDefaultEnabledSources(result.candidates);
+      const { defaultEnabled } = result;
       
       res.json({
         ...result,

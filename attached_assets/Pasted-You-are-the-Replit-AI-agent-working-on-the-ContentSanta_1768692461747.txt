@@ -1,0 +1,108 @@
+You are the Replit AI agent working on the ContentSanta repo.
+
+GOAL
+Fix and upgrade the source recommendation system so that:
+
+1) It recommends sources at the **publisher level** (one entry per outlet, not per RSS feed).
+2) It treats **official national/regional media as Tier 1 ALWAYS**, based on region/country + language.
+3) It recommends sources in this order: **Tier 1 (Official) → Tier 2 (Regional credible business) → Tier 3 (Other)**.
+4) It no longer returns a list of BBC feeds (BBC 2 / BBC Tech / BBCI / BBC General) as separate sources for a GCC real-estate topic.
+
+The main user case to satisfy is:
+> “Real Estate & Property news in GCC, using official GCC/UAE outlets first, then regional business media, then global context.”
+
+Do NOT change the Topic wizard UI components — fix the backend discovery + tiering + seeding so the existing UI shows the correct things.
+
+--------------------------------------------------
+PART 1 — DATA MODEL (PUBLISHER-LEVEL SOURCES)
+--------------------------------------------------
+
+Ensure there is a canonical `sources` table (create or extend if needed) with at least:
+
+- id (string/uuid)
+- name             // e.g., "Al Bayan", "The National", "Zawya", "BBC News"
+- domain           // e.g., "albayan.ae", "thenationalnews.com"
+- country          // ISO code, e.g. "AE", "SA", nullable for region/global
+- region           // e.g., "gcc", "mena", "europe", "global"
+- primaryLanguage  // e.g., "ar", "en"
+- isOfficial       // boolean, default false
+- tier             // integer 1/2/3 (can be null if computed dynamically)
+- isActive         // boolean
+- createdAt, updatedAt
+
+If you have a separate `feeds` table, associate feeds with publishers:
+
+- feeds: id, sourceId (FK to sources), url, language, isActive, etc.
+
+IMPORTANT: The Topic wizard should work with **sources (publishers)** only, not individual feeds.
+
+--------------------------------------------------
+PART 2 — OFFICIAL SOURCES REGISTRY (GCC + UAE)
+--------------------------------------------------
+
+Implement an **Official Sources Registry** by seeding rows in `sources` with `isOfficial = true`, `tier = 1`, `region` and `country` populated.
+
+For UAE specifically, you MUST seed at least the following as Tier 1 official media:
+
+Arabic (primaryLanguage = "ar", isOfficial = true, tier = 1, region = "gcc", country = "AE"):
+- "البيان" / "Al Bayan"              domain: "albayan.ae"
+- "الاتحاد" / "Al Ittihad"          domain: "alittihad.ae"
+- "الإمارات اليوم" / "Emarat Al Youm"   domain: "emaratalyoum.com"
+- "وكالة أنباء الإمارات" / "WAM"    domain: "wam.ae"
+
+English (primaryLanguage = "en", isOfficial = true, tier = 1, region = "gcc", country = "AE"):
+- "The National"                    domain: "thenationalnews.com"
+- "WAM (English)"                  domain: "wam.ae"
+
+Also seed at least a few **non-UAE official GCC outlets** (KSA, Qatar, etc.) if possible, with isOfficial=true and tier=1.
+
+These are NOT discovered automatically — they must be inserted via migration/seed script.
+
+--------------------------------------------------
+PART 3 — TIERING RULES (LOCKED)
+--------------------------------------------------
+
+Implement tiering rules in the recommendation logic:
+
+Tier 1 – Official:
+- All sources where `isOfficial = true`
+- AND (`country` is in the Topic’s `countries[]` OR `region` matches the Topic region)
+- AND language-compatible:
+  - primaryLanguage equals Topic language
+  - OR there exists a feed in Topic language (if you track per-feed language)
+- These are ALWAYS Tier 1 for that geo (you can still sort within Tier 1 by relevanceScore).
+
+Tier 2 – Regional Credible Business Media:
+- Non-official sources that:
+  - have `region` == Topic region OR `country` in Topic `countries[]` (or region if countries[] empty);
+  - and are considered “business / economy / markets / real-estate” outlets.
+- For v1, you can implement this via **seeded Tier 2 sources** (e.g., Zawya, MEED, Arabian Business, Gulf Business, The National if you want it Tier 2 outside UAE context, etc.).
+- These are Tier 2 and sorted by relevanceScore.
+
+Tier 3 – Other:
+- General global media (BBC, CNN, etc.) not marked `isOfficial` for that geo.
+- Niche blogs, aggregators, long-tail sites that pass basic trust rules.
+- These are Tier 3.
+
+Important constraints:
+- Official national/regional sources (isOfficial=true) are Tier 1 ALWAYS for that geo.
+- International media (BBC, Reuters, Bloomberg, etc.) are **not Tier 1 by default**.
+- Region must influence scoring, not be a hard “discard” filter for non-officials.
+
+--------------------------------------------------
+PART 4 — RECOMMENDATION ENDPOINT BEHAVIOR
+--------------------------------------------------
+
+Endpoint (already present): `POST /api/topics/recommend-sources`
+
+Typical request payload (keep shape, maybe extend with flags):
+
+```json
+{
+  "topicQuery": "real estate market, property development, housing prices, commercial real estate, construction projects",
+  "contentType": "news",
+  "region": "gcc",
+  "countries": [],
+  "language": "en",
+  "workspaceId": 1
+}

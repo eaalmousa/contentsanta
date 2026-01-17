@@ -1,5 +1,5 @@
 import { storage } from "../storage";
-import type { Source, DiscoveredSource, ContentIntent } from "@shared/schema";
+import type { Source, ContentIntent } from "@shared/schema";
 
 export interface SourceRecommendationRequest {
   topicQuery: string;
@@ -11,37 +11,35 @@ export interface SourceRecommendationRequest {
 }
 
 export interface RecommendedSource {
-  sourceId?: string;
+  sourceId: string;
   candidateId?: string;
   name: string;
   domain: string;
   country?: string;
+  region?: string;
   language?: string;
   tier: 1 | 2 | 3;
   score: number;
   reasons: string[];
   isVerified: boolean;
   isExisting: boolean;
+  isOfficial: boolean;
 }
 
 export interface SourceRecommendationResult {
   candidates: RecommendedSource[];
   totalCount: number;
+  defaultEnabled: string[];
 }
 
-const TIER_1_DOMAINS = [
-  "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "theguardian.com",
-  "nytimes.com", "washingtonpost.com", "wsj.com", "ft.com", "bloomberg.com",
-  "cnn.com", "aljazeera.com", "dw.com", "france24.com", "economist.com",
-  "npr.org", "politico.com", "theatlantic.com", "newyorker.com", "time.com",
-];
+const GCC_COUNTRIES = ["AE", "SA", "QA", "KW", "BH", "OM"];
+const MENA_REGIONS = ["gcc", "mena", "levant", "north_africa"];
 
-const TIER_2_DOMAINS = [
-  "techcrunch.com", "wired.com", "arstechnica.com", "theverge.com", "engadget.com",
-  "forbes.com", "businessinsider.com", "cnbc.com", "marketwatch.com",
-  "axios.com", "vox.com", "buzzfeednews.com", "vice.com", "huffpost.com",
-  "usatoday.com", "latimes.com", "chicagotribune.com", "bostonglobe.com",
-];
+const GLOBAL_NEWS_DOMAINS = new Set([
+  "bbc.com", "bbc.co.uk", "reuters.com", "apnews.com", "cnn.com",
+  "bloomberg.com", "ft.com", "wsj.com", "nytimes.com", "washingtonpost.com",
+  "theguardian.com", "aljazeera.com", "france24.com", "dw.com", "economist.com",
+]);
 
 function extractDomain(url: string): string {
   try {
@@ -52,136 +50,188 @@ function extractDomain(url: string): string {
   }
 }
 
-function getTierFromDomain(domain: string): 1 | 2 | 3 {
-  const lowerDomain = domain.toLowerCase();
-  if (TIER_1_DOMAINS.some(d => lowerDomain.includes(d))) return 1;
-  if (TIER_2_DOMAINS.some(d => lowerDomain.includes(d))) return 2;
-  return 3;
+function isCountryInGeo(
+  sourceCountry: string | null | undefined,
+  sourceRegion: string | null | undefined,
+  topicRegion: string | undefined,
+  topicCountries: string[] | undefined
+): boolean {
+  if (topicCountries && topicCountries.length > 0) {
+    if (sourceCountry && topicCountries.includes(sourceCountry)) {
+      return true;
+    }
+  }
+  
+  if (topicRegion) {
+    if (sourceRegion === topicRegion) return true;
+    if (topicRegion === "gcc" && sourceRegion === "mena") return true;
+    if (topicRegion === "mena" && sourceRegion === "gcc") return true;
+    if (topicRegion === "gcc" && sourceCountry && GCC_COUNTRIES.includes(sourceCountry)) return true;
+  }
+  
+  return false;
 }
 
-function getTierFromMediaTier(mediaTier?: string): 1 | 2 | 3 {
-  if (mediaTier === "tier_1") return 1;
-  if (mediaTier === "tier_2") return 2;
-  return 3;
+function isLanguageCompatible(
+  sourceLanguage: string | null | undefined,
+  topicLanguage: string | undefined
+): boolean {
+  if (!topicLanguage) return true;
+  if (!sourceLanguage) return topicLanguage === "en";
+  return sourceLanguage === topicLanguage;
+}
+
+function computeTier(
+  source: Source,
+  request: SourceRecommendationRequest
+): { tier: 1 | 2 | 3; reasons: string[] } {
+  const reasons: string[] = [];
+  const domain = source.domain || extractDomain(source.feedUrl);
+  const isOfficial = source.isOfficial === "true";
+  const storedTier = source.tier;
+  const inGeo = isCountryInGeo(source.country, source.region, request.region, request.countries);
+  const langMatch = isLanguageCompatible(source.language, request.language);
+  
+  if (isOfficial && inGeo && langMatch) {
+    reasons.push("Official national/regional media");
+    if (source.country) reasons.push(`${source.country} outlet`);
+    return { tier: 1, reasons };
+  }
+  
+  if (isOfficial && langMatch) {
+    reasons.push("Official media (different region)");
+    return { tier: storedTier === 1 ? 2 : (storedTier as 1 | 2 | 3) || 2, reasons };
+  }
+  
+  if (storedTier === 2 || (storedTier === 1 && !isOfficial)) {
+    if (inGeo && langMatch) {
+      reasons.push("Regional business/industry media");
+      return { tier: 2, reasons };
+    }
+    reasons.push("Recognized source (different region)");
+    return { tier: 3, reasons };
+  }
+  
+  if (GLOBAL_NEWS_DOMAINS.has(domain)) {
+    reasons.push("Global news outlet");
+    return { tier: 3, reasons };
+  }
+  
+  if (storedTier) {
+    return { tier: storedTier as 1 | 2 | 3, reasons: ["Source tier from database"] };
+  }
+  
+  const mediaTier = source.mediaTier;
+  if (mediaTier === "tier_1") {
+    reasons.push("Legacy tier 1 source");
+    return { tier: inGeo ? 2 : 3, reasons };
+  }
+  if (mediaTier === "tier_2") {
+    reasons.push("Legacy tier 2 source");
+    return { tier: inGeo ? 2 : 3, reasons };
+  }
+  
+  reasons.push("Other source");
+  return { tier: 3, reasons };
 }
 
 function calculateScore(
-  source: { tier: 1 | 2 | 3; language?: string; region?: string },
+  source: Source,
+  tier: 1 | 2 | 3,
   request: SourceRecommendationRequest
-): { score: number; reasons: string[] } {
+): number {
   let score = 50;
-  const reasons: string[] = [];
-
-  if (source.tier === 1) {
-    score += 30;
-    reasons.push("Tier 1 trusted outlet");
-  } else if (source.tier === 2) {
+  
+  if (tier === 1) score += 40;
+  else if (tier === 2) score += 20;
+  
+  if (source.isOfficial === "true") score += 10;
+  
+  if (request.language && source.language === request.language) score += 10;
+  
+  if (isCountryInGeo(source.country, source.region, request.region, request.countries)) {
     score += 15;
-    reasons.push("Tier 2 recognized source");
+    if (request.countries?.includes(source.country || "")) score += 5;
   }
+  
+  score = Math.max(0, Math.min(100, score));
+  return score;
+}
 
-  if (request.language && source.language === request.language) {
-    score += 10;
-    reasons.push("Language match");
+function deduplicateByDomain(sources: RecommendedSource[]): RecommendedSource[] {
+  const seen = new Map<string, RecommendedSource>();
+  
+  for (const source of sources) {
+    const key = `${source.domain}:${source.language || "en"}`;
+    const existing = seen.get(key);
+    
+    if (!existing || source.tier < existing.tier || 
+        (source.tier === existing.tier && source.score > existing.score)) {
+      seen.set(key, source);
+    }
   }
-
-  if (request.region && source.region === request.region) {
-    score += 10;
-    reasons.push("Region match");
-  }
-
-  score = Math.max(0, Math.min(100, score + Math.floor(Math.random() * 10)));
-
-  if (reasons.length === 0) {
-    reasons.push("Available source");
-  }
-
-  return { score, reasons };
+  
+  return Array.from(seen.values());
 }
 
 export async function getSourceRecommendations(
   request: SourceRecommendationRequest
 ): Promise<SourceRecommendationResult> {
-  const candidates: RecommendedSource[] = [];
-
-  const existingSources = await storage.getSources(request.workspaceId);
+  const allSources = await storage.getSources(request.workspaceId);
   
-  for (const source of existingSources) {
-    if (source.isActive !== "true") continue;
+  const activeSources = allSources.filter(s => s.isActive === "true");
+  
+  const candidates: RecommendedSource[] = activeSources.map(source => {
+    const domain = source.domain || extractDomain(source.feedUrl);
+    const { tier, reasons } = computeTier(source, request);
+    const score = calculateScore(source, tier, request);
     
-    const domain = extractDomain(source.feedUrl);
-    const tier = getTierFromMediaTier(source.mediaTier ?? undefined);
-    const { score, reasons } = calculateScore(
-      { tier, language: source.language ?? undefined, region: source.region ?? undefined },
-      request
-    );
-
-    candidates.push({
+    return {
       sourceId: source.id,
       name: source.name,
       domain,
-      country: source.region ?? undefined,
+      country: source.country || undefined,
+      region: source.region || undefined,
       language: source.language || "en",
       tier,
       score,
       reasons,
       isVerified: true,
       isExisting: true,
-    });
-  }
+      isOfficial: source.isOfficial === "true",
+    };
+  });
 
-  const discoveredSources = await storage.getDiscoveredSources(request.workspaceId);
+  const deduplicated = deduplicateByDomain(candidates);
   
-  for (const ds of discoveredSources) {
-    if (ds.status === "invalid") continue;
-    
-    const domain = ds.domain || extractDomain(ds.feedUrl);
-    const tier = getTierFromDomain(domain);
-    const { score, reasons } = calculateScore(
-      { tier, language: ds.language ?? undefined, region: undefined },
-      request
-    );
-
-    const alreadyExists = candidates.some(c => c.domain === domain);
-    if (!alreadyExists) {
-      candidates.push({
-        candidateId: ds.id,
-        name: ds.feedTitle || domain,
-        domain,
-        country: undefined,
-        language: ds.language || "en",
-        tier,
-        score: Math.max(0, score - 10),
-        reasons: [...reasons, ds.status === "valid" ? "RSS verified" : "Pending verification"],
-        isVerified: ds.status === "valid",
-        isExisting: false,
-      });
-    }
-  }
-
-  candidates.sort((a, b) => {
+  deduplicated.sort((a, b) => {
     if (a.tier !== b.tier) return a.tier - b.tier;
     return b.score - a.score;
   });
 
+  const defaultEnabled = getDefaultEnabledSources(deduplicated);
+
   return {
-    candidates,
-    totalCount: candidates.length,
+    candidates: deduplicated,
+    totalCount: deduplicated.length,
+    defaultEnabled,
   };
 }
 
 export function getDefaultEnabledSources(candidates: RecommendedSource[]): string[] {
-  const tier1Sources = candidates.filter(c => c.tier === 1 && c.isExisting && c.sourceId);
+  const tier1Sources = candidates
+    .filter(c => c.tier === 1 && c.sourceId)
+    .slice(0, 5)
+    .map(c => c.sourceId);
   
-  if (tier1Sources.length > 0) {
-    return tier1Sources.map(c => c.sourceId!);
+  if (tier1Sources.length >= 3) {
+    return tier1Sources;
   }
 
-  const tier2Sources = candidates.filter(c => c.tier === 2 && c.isExisting && c.sourceId);
-  if (tier2Sources.length > 0) {
-    return tier2Sources.slice(0, 5).map(c => c.sourceId!);
-  }
+  const tier2Sources = candidates
+    .filter(c => c.tier === 2 && c.sourceId)
+    .slice(0, 5 - tier1Sources.length)
+    .map(c => c.sourceId);
 
-  const anyExisting = candidates.filter(c => c.isExisting && c.sourceId);
-  return anyExisting.slice(0, 3).map(c => c.sourceId!);
+  return [...tier1Sources, ...tier2Sources];
 }
