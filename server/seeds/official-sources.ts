@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { sources } from "@shared/schema";
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 
 interface OfficialSource {
   name: string;
@@ -83,6 +83,10 @@ const OFFICIAL_UAE_SOURCES: OfficialSource[] = [
     isOfficial: true,
     description: "WAM - Emirates News Agency (English)",
   },
+];
+
+// UAE Mainstream English Media (Tier 2 - NOT official government outlets)
+const MAINSTREAM_UAE_SOURCES: OfficialSource[] = [
   {
     name: "Khaleej Times",
     domain: "khaleejtimes.com",
@@ -90,9 +94,9 @@ const OFFICIAL_UAE_SOURCES: OfficialSource[] = [
     language: "en",
     region: "gcc",
     country: "AE",
-    tier: 1,
-    isOfficial: true,
-    description: "Khaleej Times - UAE English newspaper",
+    tier: 2,
+    isOfficial: false,
+    description: "Khaleej Times - UAE mainstream English newspaper",
   },
   {
     name: "Gulf News",
@@ -101,9 +105,9 @@ const OFFICIAL_UAE_SOURCES: OfficialSource[] = [
     language: "en",
     region: "gcc",
     country: "AE",
-    tier: 1,
-    isOfficial: true,
-    description: "Gulf News - UAE English newspaper",
+    tier: 2,
+    isOfficial: false,
+    description: "Gulf News - UAE mainstream English newspaper",
   },
 ];
 
@@ -117,8 +121,12 @@ const OFFICIAL_KSA_SOURCES: OfficialSource[] = [
     country: "SA",
     tier: 1,
     isOfficial: true,
-    description: "Saudi Press Agency (Arabic)",
+    description: "Saudi Press Agency (Arabic) - Official government news agency",
   },
+];
+
+// KSA Mainstream Media (Tier 2 - NOT official government outlets)
+const MAINSTREAM_KSA_SOURCES: OfficialSource[] = [
   {
     name: "Arab News",
     domain: "arabnews.com",
@@ -126,9 +134,9 @@ const OFFICIAL_KSA_SOURCES: OfficialSource[] = [
     language: "en",
     region: "gcc",
     country: "SA",
-    tier: 1,
-    isOfficial: true,
-    description: "Arab News - Saudi Arabia English newspaper",
+    tier: 2,
+    isOfficial: false,
+    description: "Arab News - Saudi Arabia mainstream English newspaper",
   },
   {
     name: "الرياض",
@@ -137,9 +145,9 @@ const OFFICIAL_KSA_SOURCES: OfficialSource[] = [
     language: "ar",
     region: "gcc",
     country: "SA",
-    tier: 1,
-    isOfficial: true,
-    description: "Al Riyadh - Saudi Arabia official newspaper",
+    tier: 2,
+    isOfficial: false,
+    description: "Al Riyadh - Saudi Arabia mainstream Arabic newspaper",
   },
 ];
 
@@ -153,8 +161,12 @@ const OFFICIAL_QATAR_SOURCES: OfficialSource[] = [
     country: "QA",
     tier: 1,
     isOfficial: true,
-    description: "Qatar News Agency (English)",
+    description: "Qatar News Agency (English) - Official government news agency",
   },
+];
+
+// Qatar Mainstream Media (Tier 2)
+const MAINSTREAM_QATAR_SOURCES: OfficialSource[] = [
   {
     name: "The Peninsula",
     domain: "thepeninsulaqatar.com",
@@ -162,9 +174,9 @@ const OFFICIAL_QATAR_SOURCES: OfficialSource[] = [
     language: "en",
     region: "gcc",
     country: "QA",
-    tier: 1,
-    isOfficial: true,
-    description: "The Peninsula - Qatar English newspaper",
+    tier: 2,
+    isOfficial: false,
+    description: "The Peninsula - Qatar mainstream English newspaper",
   },
 ];
 
@@ -178,8 +190,12 @@ const OFFICIAL_KUWAIT_SOURCES: OfficialSource[] = [
     country: "KW",
     tier: 1,
     isOfficial: true,
-    description: "Kuwait News Agency (English)",
+    description: "Kuwait News Agency (English) - Official government news agency",
   },
+];
+
+// Kuwait Mainstream Media (Tier 2)
+const MAINSTREAM_KUWAIT_SOURCES: OfficialSource[] = [
   {
     name: "Kuwait Times",
     domain: "kuwaittimes.com",
@@ -187,9 +203,9 @@ const OFFICIAL_KUWAIT_SOURCES: OfficialSource[] = [
     language: "en",
     region: "gcc",
     country: "KW",
-    tier: 1,
-    isOfficial: true,
-    description: "Kuwait Times - English newspaper",
+    tier: 2,
+    isOfficial: false,
+    description: "Kuwait Times - Kuwait mainstream English newspaper",
   },
 ];
 
@@ -203,8 +219,12 @@ const OFFICIAL_BAHRAIN_SOURCES: OfficialSource[] = [
     country: "BH",
     tier: 1,
     isOfficial: true,
-    description: "Bahrain News Agency (English)",
+    description: "Bahrain News Agency (English) - Official government news agency",
   },
+];
+
+// Bahrain Mainstream Media (Tier 2)
+const MAINSTREAM_BAHRAIN_SOURCES: OfficialSource[] = [
   {
     name: "Gulf Daily News",
     domain: "gdnonline.com",
@@ -212,9 +232,9 @@ const OFFICIAL_BAHRAIN_SOURCES: OfficialSource[] = [
     language: "en",
     region: "gcc",
     country: "BH",
-    tier: 1,
-    isOfficial: true,
-    description: "Gulf Daily News - Bahrain newspaper",
+    tier: 2,
+    isOfficial: false,
+    description: "Gulf Daily News - Bahrain mainstream newspaper",
   },
 ];
 
@@ -228,8 +248,12 @@ const OFFICIAL_OMAN_SOURCES: OfficialSource[] = [
     country: "OM",
     tier: 1,
     isOfficial: true,
-    description: "Oman News Agency (English)",
+    description: "Oman News Agency (English) - Official government news agency",
   },
+];
+
+// Oman Mainstream Media (Tier 2)
+const MAINSTREAM_OMAN_SOURCES: OfficialSource[] = [
   {
     name: "Times of Oman",
     domain: "timesofoman.com",
@@ -237,9 +261,9 @@ const OFFICIAL_OMAN_SOURCES: OfficialSource[] = [
     language: "en",
     region: "gcc",
     country: "OM",
-    tier: 1,
-    isOfficial: true,
-    description: "Times of Oman - English newspaper",
+    tier: 2,
+    isOfficial: false,
+    description: "Times of Oman - Oman mainstream English newspaper",
   },
 ];
 
@@ -312,21 +336,31 @@ const TIER_2_REGIONAL_BUSINESS: OfficialSource[] = [
   },
 ];
 
-const ALL_OFFICIAL_SOURCES = [
+const ALL_SOURCES = [
+  // Official government sources (Tier 1)
   ...OFFICIAL_UAE_SOURCES,
   ...OFFICIAL_KSA_SOURCES,
   ...OFFICIAL_QATAR_SOURCES,
   ...OFFICIAL_KUWAIT_SOURCES,
   ...OFFICIAL_BAHRAIN_SOURCES,
   ...OFFICIAL_OMAN_SOURCES,
+  // Mainstream media (Tier 2)
+  ...MAINSTREAM_UAE_SOURCES,
+  ...MAINSTREAM_KSA_SOURCES,
+  ...MAINSTREAM_QATAR_SOURCES,
+  ...MAINSTREAM_KUWAIT_SOURCES,
+  ...MAINSTREAM_BAHRAIN_SOURCES,
+  ...MAINSTREAM_OMAN_SOURCES,
+  // Regional business media (Tier 2)
   ...TIER_2_REGIONAL_BUSINESS,
 ];
 
-export async function seedOfficialSources(workspaceId: string): Promise<{ inserted: number; skipped: number }> {
+export async function seedOfficialSources(workspaceId: string): Promise<{ inserted: number; updated: number; skipped: number }> {
   let inserted = 0;
+  let updated = 0;
   let skipped = 0;
 
-  for (const source of ALL_OFFICIAL_SOURCES) {
+  for (const source of ALL_SOURCES) {
     try {
       const existing = await db.query.sources.findFirst({
         where: (s, { eq, and }) => and(
@@ -337,7 +371,25 @@ export async function seedOfficialSources(workspaceId: string): Promise<{ insert
       });
 
       if (existing) {
-        skipped++;
+        // Update existing source with correct tier and isOfficial values
+        const needsUpdate = 
+          existing.tier !== source.tier || 
+          existing.isOfficial !== (source.isOfficial ? "true" : "false");
+        
+        if (needsUpdate) {
+          await db.update(sources)
+            .set({
+              tier: source.tier,
+              isOfficial: source.isOfficial ? "true" : "false",
+              mediaTier: source.tier === 1 ? "tier_1" : source.tier === 2 ? "tier_2" : "tier_3",
+              description: source.description,
+              updatedAt: new Date(),
+            })
+            .where(eq(sources.id, existing.id));
+          updated++;
+        } else {
+          skipped++;
+        }
         continue;
       }
 
@@ -362,17 +414,17 @@ export async function seedOfficialSources(workspaceId: string): Promise<{ insert
     }
   }
 
-  return { inserted, skipped };
+  return { inserted, updated, skipped };
 }
 
 export function getOfficialSourcesForRegion(region: string): OfficialSource[] {
-  return ALL_OFFICIAL_SOURCES.filter(s => 
+  return ALL_SOURCES.filter(s => 
     s.region === region || s.region === "mena" && region === "gcc"
   );
 }
 
 export function getOfficialTier1Domains(): string[] {
-  return ALL_OFFICIAL_SOURCES
+  return ALL_SOURCES
     .filter(s => s.tier === 1 && s.isOfficial)
     .map(s => s.domain);
 }

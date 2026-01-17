@@ -1,0 +1,51 @@
+There is a discrepancy between the passing tests and the live app.
+
+In the Replit test replay, the Topic Sources step shows rich Tier 1/Tier 2 lists (Al Bayan, WAM, The National, Zawya, etc.). But in the deployed app at:
+
+  https://santa-helper--ealmousa.replit.app/topics
+
+when I create the topic:
+  - Topic Name: GCC Real Estate & Property News
+  - Content Type: News Monitoring
+  - Region: GCC
+  - Country: (empty)
+  - Language: English
+  - Drafts per Day: 5
+
+the Sources step shows ONLY:
+  - “BBCI” from feeds.bbci.co.uk as Tier 3.
+
+This means the code changes are correct but the DATA or WORKSPACE used in production is not aligned with the test environment.
+
+Please do the following:
+
+1) Identify the workspace & database used by the test vs production:
+   - Print out the workspaceId used in the tests.
+   - Print out the workspaceId for the “Demo Workspace – Free Plan” that appears in the UI.
+   - Check if `sources` and `official` seeds exist for this workspace in the production DB.
+
+2) Inspect the production DB for the current workspace:
+   - SELECT COUNT(*) FROM sources;
+   - SELECT COUNT(*) FROM sources WHERE isOfficial = true;
+   - SELECT name, domain, isOfficial, tier FROM sources WHERE region = 'gcc' ORDER BY name LIMIT 50;
+   - Confirm whether Al Bayan, Al Ittihad, Emarat Al Youm, WAM, The National, Gulf News, Khaleej Times, Zawya, MEED, etc. exist for this workspace.
+
+3) Fix the seeding so the **CURRENT workspace used in the deployed UI** has the proper sources:
+   - Either make seeds global (not workspace-bound), or
+   - Seed the same official and Tier 2 sources for the workspaceId used by the Demo Workspace.
+   - Ensure any workspace scoping in `POST /api/topics/recommend-sources` matches how you seeded the data.
+
+4) Verify using the deployed app context:
+   - From the same environment as the deployed app, call `POST /api/topics/recommend-sources` with:
+     {
+       "topicQuery": "real estate market, property development, housing prices, commercial real estate, construction projects",
+       "contentType": "news",
+       "region": "gcc",
+       "countries": [],
+       "language": "en",
+       "workspaceId": <ID of the Demo Workspace>
+     }
+   - Confirm the response includes Tier 1 official sources (The National, WAM EN, etc.) and multiple Tier 2 GCC business outlets.
+   - Confirm that the Topic wizard Sources step in the deployed UI now shows these same sources (Tier 1, Tier 2, Tier 3).
+
+Important: the goal is to make the **live app** on https://santa-helper--ealmousa.replit.app behave exactly like the passing tests, by aligning the workspace/database and seeding. Do NOT change the Topic wizard UI; only fix workspace scoping and DB seeding so the current Demo Workspace has the full official + business source set.
