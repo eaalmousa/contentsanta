@@ -545,12 +545,16 @@ function SourceSelector({
   onToggleSource,
   isLoading,
   onRetryBroader,
+  isBroadened,
+  language,
 }: {
   sources: RecommendedSource[];
   selectedSourceIds: Set<string>;
   onToggleSource: (id: string) => void;
   isLoading: boolean;
   onRetryBroader?: () => void;
+  isBroadened?: boolean;
+  language?: string;
 }) {
   // Ensure sources is always an array to prevent crashes
   const safeSources = Array.isArray(sources) ? sources : [];
@@ -682,6 +686,14 @@ function SourceSelector({
           </div>
         )}
       </div>
+      
+      {isBroadened && (
+        <div className="mt-3 pt-3 border-t">
+          <p className="text-xs text-muted-foreground text-center">
+            Showing broader results (Global • {language?.toUpperCase() || "EN"})
+          </p>
+        </div>
+      )}
     </ScrollArea>
   );
 }
@@ -704,7 +716,7 @@ function TopicCard({
   const intent = contentIntentConfig[topic.contentIntent as ContentIntent] || contentIntentConfig.mixed;
   const IntentIcon = intent.icon;
   const isLive = topic.isLive === "true";
-  const hasRules = topic.taxonomyRules && typeof topic.taxonomyRules === 'object' && Object.keys(topic.taxonomyRules as object).length > 0;
+  const hasRules = Boolean(topic.taxonomyRules && typeof topic.taxonomyRules === 'object' && Object.keys(topic.taxonomyRules as object).length > 0);
   const canActivate = enabledSourceCount > 0 || isLive;
 
   return (
@@ -801,6 +813,7 @@ export default function TopicsPage() {
   const [recommendedSources, setRecommendedSources] = useState<RecommendedSource[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
   const [isLoadingSources, setIsLoadingSources] = useState(false);
+  const [isBroadenedSearch, setIsBroadenedSearch] = useState(false);
   const [newTopic, setNewTopic] = useState({
     name: "",
     description: "",
@@ -829,20 +842,24 @@ export default function TopicsPage() {
   // Safe array even on error or undefined
   const safeTopics = topics ?? [];
 
-  const fetchRecommendedSources = async () => {
+  const fetchRecommendedSources = async (options?: { broaden?: boolean }) => {
     setIsLoadingSources(true);
+    const broaden = options?.broaden ?? false;
+    
     try {
       const response = await apiRequest("POST", "/api/topics/recommend-sources", {
         topicQuery: newTopic.query,
         contentType: newTopic.contentIntent,
-        region: newTopic.region,
-        countries: newTopic.countries,
+        // When broadening: use global region and drop countries
+        region: broaden ? "global" : newTopic.region,
+        countries: broaden ? [] : newTopic.countries,
         language: newTopic.language,
         workspaceId: "demo-workspace",
       });
       const data = await response.json() as { candidates: RecommendedSource[]; defaultEnabled: string[] };
       setRecommendedSources(data.candidates ?? []);
       setSelectedSourceIds(new Set(data.defaultEnabled ?? []));
+      setIsBroadenedSearch(broaden);
     } catch (error: any) {
       console.error("Failed to fetch recommended sources:", error);
       const errorMsg = error?.message?.includes("401") 
@@ -852,6 +869,11 @@ export default function TopicsPage() {
     } finally {
       setIsLoadingSources(false);
     }
+  };
+
+  const handleTryBroader = async () => {
+    // Stay in Step 2, re-fetch with broadened parameters
+    await fetchRecommendedSources({ broaden: true });
   };
 
   const saveTopicSourcesMutation = useMutation({
@@ -895,6 +917,7 @@ export default function TopicsPage() {
     setWizardStep(1);
     setRecommendedSources([]);
     setSelectedSourceIds(new Set());
+    setIsBroadenedSearch(false);
     setNewTopic({
       name: "",
       description: "",
@@ -1297,7 +1320,9 @@ export default function TopicsPage() {
                 selectedSourceIds={selectedSourceIds}
                 onToggleSource={handleToggleSource}
                 isLoading={isLoadingSources}
-                onRetryBroader={handlePreviousStep}
+                onRetryBroader={handleTryBroader}
+                isBroadened={isBroadenedSearch}
+                language={newTopic.language}
               />
 
               <DialogFooter>
