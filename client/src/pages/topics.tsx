@@ -521,16 +521,18 @@ function TopicSettingsDialog({
 
 interface RecommendedSource {
   sourceId?: string;
-  candidateId?: string;
   name: string;
+  displayName?: string;
   domain: string;
-  country?: string;
+  country?: string | null;
+  region?: string;
   language?: string;
   tier: 1 | 2 | 3;
-  score: number;
-  reasons: string[];
+  relevanceScore: number;
+  matchReason: string;
   isVerified: boolean;
   isExisting: boolean;
+  isOfficial: boolean;
 }
 
 const tierBadgeColors: Record<number, string> = {
@@ -607,7 +609,7 @@ function SourceSelector({
   }
 
   const renderSourceRow = (source: RecommendedSource) => {
-    const id = source.sourceId || source.candidateId || source.domain;
+    const id = source.sourceId || source.domain;
     if (!source.sourceId) return null;
     
     const isSelected = selectedSourceIds.has(source.sourceId);
@@ -630,7 +632,9 @@ function SourceSelector({
         </div>
         
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm truncate">{source.name}</div>
+          <div className="font-medium text-sm truncate">
+            {source.displayName ? `${source.displayName} (${source.name})` : source.name}
+          </div>
           <div className="text-xs text-muted-foreground truncate">{source.domain}</div>
         </div>
         
@@ -856,8 +860,8 @@ export default function TopicsPage() {
         language: newTopic.language,
         workspaceId: "demo-workspace",
       });
-      const data = await response.json() as { candidates: RecommendedSource[]; defaultEnabled: string[] };
-      setRecommendedSources(data.candidates ?? []);
+      const data = await response.json() as { sources: RecommendedSource[]; defaultEnabled: string[]; totalFound: number; query: string };
+      setRecommendedSources(data.sources ?? []);
       setSelectedSourceIds(new Set(data.defaultEnabled ?? []));
       setIsBroadenedSearch(broaden);
     } catch (error: any) {

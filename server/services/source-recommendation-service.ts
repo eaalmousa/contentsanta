@@ -12,23 +12,24 @@ export interface SourceRecommendationRequest {
 
 export interface RecommendedSource {
   sourceId: string;
-  candidateId?: string;
   name: string;
+  displayName?: string;
   domain: string;
-  country?: string;
+  country?: string | null;
   region?: string;
   language?: string;
   tier: 1 | 2 | 3;
-  score: number;
-  reasons: string[];
+  relevanceScore: number;
+  matchReason: string;
   isVerified: boolean;
   isExisting: boolean;
   isOfficial: boolean;
 }
 
 export interface SourceRecommendationResult {
-  candidates: RecommendedSource[];
-  totalCount: number;
+  sources: RecommendedSource[];
+  totalFound: number;
+  query: string;
   defaultEnabled: string[];
 }
 
@@ -40,6 +41,20 @@ const GLOBAL_NEWS_DOMAINS = new Set([
   "bloomberg.com", "ft.com", "wsj.com", "nytimes.com", "washingtonpost.com",
   "theguardian.com", "aljazeera.com", "france24.com", "dw.com", "economist.com",
 ]);
+
+// Arabic to English display name mapping
+const ARABIC_DISPLAY_NAMES: Record<string, string> = {
+  "البيان": "Al Bayan",
+  "الاتحاد": "Al Ittihad",
+  "الإمارات اليوم": "Emarat Al Youm",
+  "وكالة أنباء الإمارات": "WAM (Arabic)",
+  "واس - وكالة الأنباء السعودية": "Saudi Press Agency",
+  "الرياض": "Al Riyadh",
+};
+
+function getDisplayName(name: string): string | undefined {
+  return ARABIC_DISPLAY_NAMES[name];
+}
 
 function extractDomain(url: string): string {
   try {
@@ -166,7 +181,7 @@ function deduplicateByDomain(sources: RecommendedSource[]): RecommendedSource[] 
     const existing = seen.get(key);
     
     if (!existing || source.tier < existing.tier || 
-        (source.tier === existing.tier && source.score > existing.score)) {
+        (source.tier === existing.tier && source.relevanceScore > existing.relevanceScore)) {
       seen.set(key, source);
     }
   }
@@ -186,16 +201,23 @@ export async function getSourceRecommendations(
     const { tier, reasons } = computeTier(source, request);
     const score = calculateScore(source, tier, request);
     
+    // Build matchReason from reasons array
+    const matchReason = reasons.join("; ");
+    
+    // Generate displayName for Arabic sources
+    const displayName = getDisplayName(source.name);
+    
     return {
       sourceId: source.id,
       name: source.name,
+      displayName,
       domain,
-      country: source.country || undefined,
+      country: source.country || null,
       region: source.region || undefined,
       language: source.language || "en",
       tier,
-      score,
-      reasons,
+      relevanceScore: score / 100, // Convert to 0-1 scale
+      matchReason,
       isVerified: true,
       isExisting: true,
       isOfficial: source.isOfficial === "true",
@@ -206,14 +228,15 @@ export async function getSourceRecommendations(
   
   deduplicated.sort((a, b) => {
     if (a.tier !== b.tier) return a.tier - b.tier;
-    return b.score - a.score;
+    return b.relevanceScore - a.relevanceScore;
   });
 
   const defaultEnabled = getDefaultEnabledSources(deduplicated);
 
   return {
-    candidates: deduplicated,
-    totalCount: deduplicated.length,
+    sources: deduplicated,
+    totalFound: deduplicated.length,
+    query: request.topicQuery,
     defaultEnabled,
   };
 }
