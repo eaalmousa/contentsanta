@@ -17,6 +17,7 @@ import {
   Eye,
   Lock,
   Wand2,
+  RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -548,6 +549,46 @@ export default function SmartEditorPage() {
     createDraftMutation.mutate(story);
   };
 
+  const runDiscoveryMutation = useMutation({
+    mutationFn: async (topicId: string) => {
+      const response = await apiRequest("POST", `/api/topics/${topicId}/run-discovery`, {});
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Discovery failed",
+        description: error?.message || "An error occurred",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleRefreshAll = async () => {
+    const liveTopics = topics?.filter(t => t.isLive === "true") || [];
+    if (liveTopics.length === 0) {
+      toast({ title: "No live topics", description: "Enable at least one topic to run discovery" });
+      return;
+    }
+    
+    toast({ title: "Running discovery...", description: `Scanning ${liveTopics.length} live topic(s)` });
+    
+    let totalMatched = 0;
+    for (const topic of liveTopics) {
+      try {
+        const result = await runDiscoveryMutation.mutateAsync(topic.id);
+        totalMatched += result?.matchedStories || 0;
+      } catch (e) {
+        // Individual errors already toasted
+      }
+    }
+    
+    queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+    toast({ title: "Discovery completed", description: `Found ${totalMatched} total matching stories` });
+  };
+
   const filteredDrafts = drafts?.filter(d => 
     statusFilter === "all" || d.status === statusFilter
   ) || [];
@@ -568,6 +609,19 @@ export default function SmartEditorPage() {
             Review stories and manage your content pipeline
           </p>
         </div>
+        <Button 
+          variant="outline" 
+          onClick={handleRefreshAll}
+          disabled={runDiscoveryMutation.isPending}
+          data-testid="button-refresh-discovery"
+        >
+          {runDiscoveryMutation.isPending ? (
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4 mr-2" />
+          )}
+          Refresh Stories
+        </Button>
       </div>
 
       {!hasTopics && !hasContent ? (
