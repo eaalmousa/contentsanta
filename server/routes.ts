@@ -1795,7 +1795,7 @@ export async function registerRoutes(
       const log = await runTopicDiscovery(topic);
       
       // Get updated story count from persisted topic_stories
-      const topicStories = await storage.getTopicStories(topicId, 0.20);
+      const topicStories = await storage.getTopicStories(topicId, 0.15);
       
       res.json({
         status: log.status === "completed" ? "ok" : log.status,
@@ -1803,7 +1803,7 @@ export async function registerRoutes(
         topicName: log.topicName,
         processedStories: log.itemsProcessed || 0,
         matchedStories: topicStories.length,
-        threshold: 0.20,
+        threshold: 0.15,
         trigger: "manual",
         timestamp: log.timestamp,
       });
@@ -1942,7 +1942,7 @@ export async function registerRoutes(
   app.get("/api/topics/:topicId/stories", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const { topicId } = req.params;
-      const minScore = parseFloat(req.query.minScore as string) || 0.20;
+      const minScore = parseFloat(req.query.minScore as string) || 0.15;
       
       const topic = await storage.getTopic(topicId);
       if (!topic) {

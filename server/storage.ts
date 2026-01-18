@@ -1138,7 +1138,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Topic Stories (persisted relevance)
-  async getTopicStories(topicId: string, minScore: number = 0.20): Promise<(TopicStory & { story: Story })[]> {
+  async getTopicStories(topicId: string, minScore: number = 0.15): Promise<(TopicStory & { story: Story })[]> {
     const rows = await db.select({
       topicStory: topicStories,
       story: stories,

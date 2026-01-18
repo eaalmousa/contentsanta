@@ -72,13 +72,19 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
     const { relevantItems, stats } = filterItemsByRelevance(
       recentItems,
       { query: topic.query, name: topic.name },
-      { minScore: 0.20, maxItems: 50, logResults: true }
+      { minScore: 0.15, maxItems: 50, logResults: true }
     );
     
     console.log(`[TopicRun:${requestId}] Relevance filtering: ${stats.accepted} accepted, ${stats.rejected} rejected`);
     
     // Clear stale topic_stories before re-scoring
     await storage.deleteTopicStories(topic.id);
+    
+    // Build source lookup for tier-1 boost
+    const sourceLookup = new Map<string, { tier: number | null; isOfficial: string | null }>();
+    for (const source of enabledSources) {
+      sourceLookup.set(source.id, { tier: source.tier, isOfficial: source.isOfficial });
+    }
     
     // Persist relevance scores for stories in the workspace
     const workspaceStories = await storage.getStories(topic.workspaceId);
@@ -90,13 +96,33 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
         { query: topic.query, name: topic.name }
       );
       
-      if (relevance.isRelevant && relevance.score >= 0.20) {
+      // Apply tier-1 source boost (+0.05) if story comes from tier-1 or official source
+      let adjustedScore = relevance.score;
+      const linkedItems = await storage.getStoryItems(story.id);
+      let hasTier1Source = false;
+      
+      for (const linkItem of linkedItems) {
+        const sourceItem = await storage.getSourceItem(linkItem.sourceItemId);
+        if (sourceItem) {
+          const sourceInfo = sourceLookup.get(sourceItem.sourceId);
+          if (sourceInfo && (sourceInfo.tier === 1 || sourceInfo.isOfficial === "true")) {
+            hasTier1Source = true;
+            break;
+          }
+        }
+      }
+      
+      if (hasTier1Source) {
+        adjustedScore = Math.min(1, adjustedScore + 0.05);
+      }
+      
+      if (relevance.matchedTerms.length >= 1 && adjustedScore >= 0.15) {
         await storage.upsertTopicStory({
           topicId: topic.id,
           storyId: story.id,
-          relevanceScore: relevance.score.toFixed(4),
+          relevanceScore: adjustedScore.toFixed(4),
           matchedTerms: relevance.matchedTerms.slice(0, 10),
-          reason: relevance.reason,
+          reason: hasTier1Source ? `${relevance.reason} (+tier1)` : relevance.reason,
         });
         storiesLinked++;
       }

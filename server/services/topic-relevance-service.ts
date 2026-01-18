@@ -133,7 +133,7 @@ export function calculateTopicRelevance(
       score += 0.12;
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     } else if (content.includes(term)) {
-      score += 0.04;
+      score += 0.05;  // Increased from 0.04
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     }
   }
@@ -146,7 +146,7 @@ export function calculateTopicRelevance(
       score += 0.05;
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     } else if (content.includes(term)) {
-      score += 0.02;
+      score += 0.05;  // Increased from 0.02
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     }
   }
@@ -163,7 +163,7 @@ export function calculateTopicRelevance(
   
   score = Math.max(0, Math.min(1, score));
   
-  const isRelevant = score >= 0.20 && matchedTerms.length >= 1;
+  const isRelevant = score >= 0.15 && matchedTerms.length >= 1;
   
   let reason: string;
   if (isRelevant) {
@@ -192,7 +192,7 @@ export function filterItemsByRelevance<T extends RelevanceItem>(
     logResults?: boolean;
   } = {}
 ): { relevantItems: T[]; stats: { total: number; accepted: number; rejected: number } } {
-  const { minScore = 0.20, maxItems = 50, logResults = true } = options;
+  const { minScore = 0.15, maxItems = 50, logResults = true } = options;
   
   const scoredItems = items.map(item => ({
     item,
