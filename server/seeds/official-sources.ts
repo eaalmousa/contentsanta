@@ -90,24 +90,13 @@ const MAINSTREAM_UAE_SOURCES: OfficialSource[] = [
   {
     name: "Khaleej Times",
     domain: "khaleejtimes.com",
-    feedUrl: "https://www.khaleejtimes.com/rss",
+    feedUrl: "https://www.khaleejtimes.com/stories.rss",
     language: "en",
     region: "gcc",
     country: "AE",
     tier: 2,
     isOfficial: false,
     description: "Khaleej Times - UAE mainstream English newspaper",
-  },
-  {
-    name: "Gulf News",
-    domain: "gulfnews.com",
-    feedUrl: "https://gulfnews.com/rss/uae",
-    language: "en",
-    region: "gcc",
-    country: "AE",
-    tier: 2,
-    isOfficial: false,
-    description: "Gulf News - UAE mainstream English newspaper",
   },
 ];
 
@@ -126,170 +115,65 @@ const OFFICIAL_KSA_SOURCES: OfficialSource[] = [
 ];
 
 // KSA Mainstream Media (Tier 2 - NOT official government outlets)
-const MAINSTREAM_KSA_SOURCES: OfficialSource[] = [
-  {
-    name: "Arab News",
-    domain: "arabnews.com",
-    feedUrl: "https://www.arabnews.com/rss.xml",
-    language: "en",
-    region: "gcc",
-    country: "SA",
-    tier: 2,
-    isOfficial: false,
-    description: "Arab News - Saudi Arabia mainstream English newspaper",
-  },
-  {
-    name: "الرياض",
-    domain: "alriyadh.com",
-    feedUrl: "https://www.alriyadh.com/rss.xml",
-    language: "ar",
-    region: "gcc",
-    country: "SA",
-    tier: 2,
-    isOfficial: false,
-    description: "Al Riyadh - Saudi Arabia mainstream Arabic newspaper",
-  },
-];
+// Note: Arab News and Al Riyadh have blocked RSS access (403/404)
+const MAINSTREAM_KSA_SOURCES: OfficialSource[] = [];
 
-const OFFICIAL_QATAR_SOURCES: OfficialSource[] = [
-  {
-    name: "Qatar News Agency",
-    domain: "qna.org.qa",
-    feedUrl: "https://www.qna.org.qa/en/rss.xml",
-    language: "en",
-    region: "gcc",
-    country: "QA",
-    tier: 1,
-    isOfficial: true,
-    description: "Qatar News Agency (English) - Official government news agency",
-  },
-];
+const OFFICIAL_QATAR_SOURCES: OfficialSource[] = [];
 
 // Qatar Mainstream Media (Tier 2)
 const MAINSTREAM_QATAR_SOURCES: OfficialSource[] = [
   {
-    name: "The Peninsula",
-    domain: "thepeninsulaqatar.com",
-    feedUrl: "https://thepeninsulaqatar.com/rss.xml",
+    name: "Gulf Times",
+    domain: "gulf-times.com",
+    feedUrl: "https://www.gulf-times.com/rssFeed/0",
     language: "en",
     region: "gcc",
     country: "QA",
     tier: 2,
     isOfficial: false,
-    description: "The Peninsula - Qatar mainstream English newspaper",
+    description: "Gulf Times - Qatar leading English daily newspaper",
+  },
+  {
+    name: "Doha News",
+    domain: "dohanews.co",
+    feedUrl: "https://dohanews.co/feed/",
+    language: "en",
+    region: "gcc",
+    country: "QA",
+    tier: 2,
+    isOfficial: false,
+    description: "Doha News - Qatar independent English news",
   },
 ];
 
-const OFFICIAL_KUWAIT_SOURCES: OfficialSource[] = [
-  {
-    name: "KUNA - Kuwait News Agency",
-    domain: "kuna.net.kw",
-    feedUrl: "https://www.kuna.net.kw/rss/english.xml",
-    language: "en",
-    region: "gcc",
-    country: "KW",
-    tier: 1,
-    isOfficial: true,
-    description: "Kuwait News Agency (English) - Official government news agency",
-  },
-];
+const OFFICIAL_KUWAIT_SOURCES: OfficialSource[] = [];
 
 // Kuwait Mainstream Media (Tier 2)
 const MAINSTREAM_KUWAIT_SOURCES: OfficialSource[] = [
   {
-    name: "Kuwait Times",
-    domain: "kuwaittimes.com",
-    feedUrl: "https://www.kuwaittimes.com/feed/",
+    name: "Arab Times",
+    domain: "arabtimesonline.com",
+    feedUrl: "https://www.arabtimesonline.com/rssFeed/92/",
     language: "en",
     region: "gcc",
     country: "KW",
     tier: 2,
     isOfficial: false,
-    description: "Kuwait Times - Kuwait mainstream English newspaper",
+    description: "Arab Times - Kuwait mainstream English newspaper",
   },
 ];
 
-const OFFICIAL_BAHRAIN_SOURCES: OfficialSource[] = [
-  {
-    name: "BNA - Bahrain News Agency",
-    domain: "bna.bh",
-    feedUrl: "https://www.bna.bh/rss/en/news.xml",
-    language: "en",
-    region: "gcc",
-    country: "BH",
-    tier: 1,
-    isOfficial: true,
-    description: "Bahrain News Agency (English) - Official government news agency",
-  },
-];
+const OFFICIAL_BAHRAIN_SOURCES: OfficialSource[] = [];
 
-// Bahrain Mainstream Media (Tier 2)
-const MAINSTREAM_BAHRAIN_SOURCES: OfficialSource[] = [
-  {
-    name: "Gulf Daily News",
-    domain: "gdnonline.com",
-    feedUrl: "https://www.gdnonline.com/rss.xml",
-    language: "en",
-    region: "gcc",
-    country: "BH",
-    tier: 2,
-    isOfficial: false,
-    description: "Gulf Daily News - Bahrain mainstream newspaper",
-  },
-];
+// Bahrain Mainstream Media (Tier 2) - Note: BNA and Gulf Daily News don't have working RSS
+const MAINSTREAM_BAHRAIN_SOURCES: OfficialSource[] = [];
 
-const OFFICIAL_OMAN_SOURCES: OfficialSource[] = [
-  {
-    name: "ONA - Oman News Agency",
-    domain: "omannews.gov.om",
-    feedUrl: "https://omannews.gov.om/rss/english.xml",
-    language: "en",
-    region: "gcc",
-    country: "OM",
-    tier: 1,
-    isOfficial: true,
-    description: "Oman News Agency (English) - Official government news agency",
-  },
-];
+const OFFICIAL_OMAN_SOURCES: OfficialSource[] = [];
 
-// Oman Mainstream Media (Tier 2)
-const MAINSTREAM_OMAN_SOURCES: OfficialSource[] = [
-  {
-    name: "Times of Oman",
-    domain: "timesofoman.com",
-    feedUrl: "https://timesofoman.com/rss.xml",
-    language: "en",
-    region: "gcc",
-    country: "OM",
-    tier: 2,
-    isOfficial: false,
-    description: "Times of Oman - Oman mainstream English newspaper",
-  },
-];
+// Oman Mainstream Media (Tier 2) - Note: ONA and Times of Oman don't have working RSS
+const MAINSTREAM_OMAN_SOURCES: OfficialSource[] = [];
 
 const TIER_2_REGIONAL_BUSINESS: OfficialSource[] = [
-  {
-    name: "Zawya",
-    domain: "zawya.com",
-    feedUrl: "https://www.zawya.com/mena/en/rss.xml",
-    language: "en",
-    region: "mena",
-    country: "AE",
-    tier: 2,
-    isOfficial: false,
-    description: "Zawya - MENA business and financial news",
-  },
-  {
-    name: "Arabian Business",
-    domain: "arabianbusiness.com",
-    feedUrl: "https://www.arabianbusiness.com/rss.xml",
-    language: "en",
-    region: "mena",
-    country: "AE",
-    tier: 2,
-    isOfficial: false,
-    description: "Arabian Business - Regional business news",
-  },
   {
     name: "Gulf Business",
     domain: "gulfbusiness.com",
@@ -302,37 +186,15 @@ const TIER_2_REGIONAL_BUSINESS: OfficialSource[] = [
     description: "Gulf Business - GCC business magazine",
   },
   {
-    name: "MEED",
-    domain: "meed.com",
-    feedUrl: "https://www.meed.com/rss.xml",
+    name: "Al Jazeera English",
+    domain: "aljazeera.com",
+    feedUrl: "https://www.aljazeera.com/xml/rss/all.xml",
     language: "en",
     region: "mena",
-    country: "AE",
+    country: "QA",
     tier: 2,
     isOfficial: false,
-    description: "MEED - Middle East business intelligence",
-  },
-  {
-    name: "Construction Week",
-    domain: "constructionweekonline.com",
-    feedUrl: "https://www.constructionweekonline.com/rss.xml",
-    language: "en",
-    region: "mena",
-    country: "AE",
-    tier: 2,
-    isOfficial: false,
-    description: "Construction Week - MENA construction news",
-  },
-  {
-    name: "Property Finder",
-    domain: "propertyfinder.ae",
-    feedUrl: "https://www.propertyfinder.ae/blog/feed/",
-    language: "en",
-    region: "gcc",
-    country: "AE",
-    tier: 2,
-    isOfficial: false,
-    description: "Property Finder - UAE real estate market insights",
+    description: "Al Jazeera English - International news from Qatar",
   },
 ];
 

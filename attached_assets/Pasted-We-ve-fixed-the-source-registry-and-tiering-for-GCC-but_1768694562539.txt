@@ -1,0 +1,94 @@
+We’ve fixed the source registry and tiering for GCC, but two practical problems remain:
+
+1) Only “Gulf Business” is actually producing items.
+2) The Real Estate topic is not clearly filtering for property-related stories; the Inbox is full of generic business.
+
+Please implement the following two improvements.
+
+--------------------------------------------------
+A) FIX FEED CONNECTIVITY FOR OFFICIAL & GCC SOURCES
+--------------------------------------------------
+
+Problem:
+In the live app (Demo Workspace), Admin → Sources shows many GCC outlets with 0 items and “Error” status on their RSS:
+
+- BNA – Bahrain News Agency
+- Kuwait Times
+- KUNA – Kuwait News Agency
+- The Peninsula
+- Qatar News Agency
+- Al Riyadh
+- Arab News
+- SPA – Saudi Press Agency
+- Gulf News
+- Khaleej Times
+- etc.
+
+Only Gulf Business has working items, so discovery is heavily biased.
+
+Requirements:
+
+1) For each active GCC source in `sources`:
+   - Verify whether the configured feed URL actually returns valid RSS/Atom.
+   - If the URL is obviously wrong (404, HTML page, etc.), update it to a working RSS endpoint for that outlet.
+   - If the outlet does not provide RSS at all, either:
+     - disable that source (`isActive = false`), OR
+     - mark it clearly as “needs HTML scraping” and skip it for now.
+
+2) After updates, run the fetch job and confirm in the LIVE Demo Workspace that:
+   - At least a few official sources (e.g., WAM, BNA, QNA, SPA) and major papers (Gulf News, Khaleej Times, Arab News, etc.) have non-zero items.
+   - Admin → Sources shows “OK” instead of “Error” for those that have RSS.
+
+Do NOT hard-code fake feeds; use real, working RSS or disable the source.
+
+--------------------------------------------------
+B) TOPIC-LEVEL REAL ESTATE FILTERING
+--------------------------------------------------
+
+Problem:
+The global Inbox now shows general business stories (Mitsubishi gas deal, Nestlé infant formula recall, etc.) from Gulf Business. That is fine for the global feed, but the user’s Real Estate topic should primarily pick **property-related** stories.
+
+We already pass `topicQuery` to `runTopicDiscovery`. Now we need a stricter relevance filter.
+
+Requirements:
+
+1) In the topic discovery pipeline (where we select source items for a topic), implement a relevance scoring function that uses:
+   - the topic’s `topicQuery` text
+   - a small built-in vocabulary of real-estate related terms, e.g.:
+     - "real estate", "property", "housing", "homes", "mortgage", "rent", "rental", "leasing", "tenants"
+     - "residential", "commercial real estate", "office space", "warehouse", "industrial park"
+     - "construction", "development", "masterplan", "land department", "land plot", "freehold"
+   - and the item’s title + summary.
+
+2) Use this function to compute a `topicRelevanceScore` per item. Then:
+   - discard or strongly down-rank items with very low score (e.g., no match to either the topicQuery OR the real-estate vocabulary).
+   - prioritize items with strong matches to titles like "housing", "property", "real estate", "mortgage", "home loan", "villa", "apartment", "realty", etc.
+
+3) The global Inbox can still show all items, but:
+   - For topics like “GCC Real Estate & Property News”, the Smart Editor / per-topic story list should only include items above a relevance threshold.
+   - Add logging so that for a test run we can see how many items were rejected vs accepted based on relevance.
+
+--------------------------------------------------
+C) VERIFICATION SCENARIO
+--------------------------------------------------
+
+Use the deployed app in the Demo Workspace and:
+
+1) Create this topic:
+   - Topic Name: "GCC Real Estate & Property News"
+   - Content Type: News Monitoring
+   - What to Track:
+     "real estate market, property development, housing prices, commercial real estate, construction projects, real estate regulation, property transactions, real estate investment"
+   - Region: GCC
+   - Country: (empty)
+   - Language: English
+   - Drafts per Day: 5
+
+2) Trigger topic discovery (or wait for scheduler) and confirm:
+   - Admin → Sources: multiple GCC sources have items (not just Gulf Business).
+   - The per-topic story list / Smart Editor for this topic contains mostly property / housing / development / construction items.
+   - Generic business stories (e.g., Mitsubishi gas deal, Nestlé infant formula recall) are either filtered out or appear with very low relevance.
+
+The goal is:
+- GLOBAL Inbox = all ingested business news (for debugging).
+- TOPIC "GCC Real Estate & Property News" = only highly relevant real-estate stories, using the improved relevance scoring.
