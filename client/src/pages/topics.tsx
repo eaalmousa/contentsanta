@@ -707,14 +707,18 @@ function TopicCard({
   onToggleLive,
   onDelete,
   onOpenSettings,
+  onRunDiscovery,
   isPending,
+  isDiscoveryPending,
   enabledSourceCount
 }: { 
   topic: Topic;
   onToggleLive: () => void;
   onDelete: () => void;
   onOpenSettings: () => void;
+  onRunDiscovery: () => void;
   isPending: boolean;
+  isDiscoveryPending?: boolean;
   enabledSourceCount: number;
 }) {
   const intent = contentIntentConfig[topic.contentIntent as ContentIntent] || contentIntentConfig.mixed;
@@ -748,6 +752,18 @@ function TopicCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem 
+                onClick={onRunDiscovery} 
+                disabled={isDiscoveryPending || enabledSourceCount === 0}
+                data-testid={`menu-run-discovery-${topic.id}`}
+              >
+                {isDiscoveryPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                )}
+                Run Discovery
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={onOpenSettings} data-testid={`menu-edit-${topic.id}`}>
                 <Settings className="w-4 h-4 mr-2" />
                 Edit Settings
@@ -968,6 +984,32 @@ export default function TopicsPage() {
     },
   });
 
+  const runDiscoveryMutation = useMutation({
+    mutationFn: async (topicId: string) => {
+      const response = await apiRequest("POST", `/api/topics/${topicId}/run-discovery`, {});
+      return await response.json();
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/topics", result.topicId, "stories"] });
+      toast({ 
+        title: "Discovery completed", 
+        description: `Found ${result.matchedStories || 0} matching stories` 
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Discovery failed",
+        description: error?.message || "An error occurred",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleRunDiscovery = (topicId: string) => {
+    runDiscoveryMutation.mutate(topicId);
+  };
+
   const handleToggleLive = (topic: Topic) => {
     const newIsLive = topic.isLive === "true" ? "false" : "true";
     updateTopicMutation.mutate(
@@ -1102,7 +1144,9 @@ export default function TopicsPage() {
                     onToggleLive={() => handleToggleLive(topic)}
                     onDelete={() => handleDelete(topic.id)}
                     onOpenSettings={() => setSettingsTopic(topic)}
+                    onRunDiscovery={() => handleRunDiscovery(topic.id)}
                     isPending={updateTopicMutation.isPending}
+                    isDiscoveryPending={runDiscoveryMutation.isPending}
                     enabledSourceCount={topic.enabledSourceCount}
                   />
                 ))}
@@ -1125,7 +1169,9 @@ export default function TopicsPage() {
                     onToggleLive={() => handleToggleLive(topic)}
                     onDelete={() => handleDelete(topic.id)}
                     onOpenSettings={() => setSettingsTopic(topic)}
+                    onRunDiscovery={() => handleRunDiscovery(topic.id)}
                     isPending={updateTopicMutation.isPending}
+                    isDiscoveryPending={runDiscoveryMutation.isPending}
                     enabledSourceCount={topic.enabledSourceCount}
                   />
                 ))}
