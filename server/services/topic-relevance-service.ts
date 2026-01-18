@@ -1,5 +1,9 @@
 import type { Topic } from "@shared/schema";
 
+// Shared relevance scoring constants
+export const MIN_RELEVANCE_SCORE = 0.15;
+export const TIER1_SOURCE_BOOST = 0.05;
+
 interface RelevanceItem {
   title: string | null;
   excerpt: string | null;
@@ -163,7 +167,7 @@ export function calculateTopicRelevance(
   
   score = Math.max(0, Math.min(1, score));
   
-  const isRelevant = score >= 0.15 && matchedTerms.length >= 1;
+  const isRelevant = score >= MIN_RELEVANCE_SCORE && matchedTerms.length >= 1;
   
   let reason: string;
   if (isRelevant) {
@@ -192,7 +196,7 @@ export function filterItemsByRelevance<T extends RelevanceItem>(
     logResults?: boolean;
   } = {}
 ): { relevantItems: T[]; stats: { total: number; accepted: number; rejected: number } } {
-  const { minScore = 0.15, maxItems = 50, logResults = true } = options;
+  const { minScore = MIN_RELEVANCE_SCORE, maxItems = 50, logResults = true } = options;
   
   const scoredItems = items.map(item => ({
     item,

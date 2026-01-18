@@ -1,7 +1,7 @@
 import { storage } from "../storage";
 import type { Topic, Source, InsertTopicStory } from "@shared/schema";
 import crypto from "crypto";
-import { filterItemsByRelevance, scoreStoryRelevance } from "./topic-relevance-service";
+import { filterItemsByRelevance, scoreStoryRelevance, MIN_RELEVANCE_SCORE, TIER1_SOURCE_BOOST } from "./topic-relevance-service";
 
 export interface TopicRunLog {
   requestId: string;
@@ -72,7 +72,7 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
     const { relevantItems, stats } = filterItemsByRelevance(
       recentItems,
       { query: topic.query, name: topic.name },
-      { minScore: 0.15, maxItems: 50, logResults: true }
+      { minScore: MIN_RELEVANCE_SCORE, maxItems: 50, logResults: true }
     );
     
     console.log(`[TopicRun:${requestId}] Relevance filtering: ${stats.accepted} accepted, ${stats.rejected} rejected`);
@@ -113,10 +113,10 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
       }
       
       if (hasTier1Source) {
-        adjustedScore = Math.min(1, adjustedScore + 0.05);
+        adjustedScore = Math.min(1, adjustedScore + TIER1_SOURCE_BOOST);
       }
       
-      if (relevance.matchedTerms.length >= 1 && adjustedScore >= 0.15) {
+      if (relevance.matchedTerms.length >= 1 && adjustedScore >= MIN_RELEVANCE_SCORE) {
         await storage.upsertTopicStory({
           topicId: topic.id,
           storyId: story.id,
