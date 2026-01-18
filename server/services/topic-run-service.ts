@@ -1,6 +1,7 @@
 import { storage } from "../storage";
-import type { Topic, Source } from "@shared/schema";
+import type { Topic, Source, InsertTopicStory } from "@shared/schema";
 import crypto from "crypto";
+import { filterItemsByRelevance, scoreStoryRelevance } from "./topic-relevance-service";
 
 export interface TopicRunLog {
   requestId: string;
@@ -10,6 +11,8 @@ export interface TopicRunLog {
   enabledSourceDomains: string[];
   status: "started" | "skipped" | "completed" | "error";
   itemsProcessed?: number;
+  itemsAccepted?: number;
+  itemsRejected?: number;
   error?: string;
   timestamp: string;
 }
@@ -61,10 +64,45 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
     const recentItems = await storage.getRecentSourceItemsBySourceIds(
       enabledSourceIds,
       24,
-      100
+      200
     );
     
     console.log(`[TopicRun:${requestId}] Found ${recentItems.length} recent items from enabled sources`);
+    
+    const { relevantItems, stats } = filterItemsByRelevance(
+      recentItems,
+      { query: topic.query, name: topic.name },
+      { minScore: 0.20, maxItems: 50, logResults: true }
+    );
+    
+    console.log(`[TopicRun:${requestId}] Relevance filtering: ${stats.accepted} accepted, ${stats.rejected} rejected`);
+    
+    // Clear stale topic_stories before re-scoring
+    await storage.deleteTopicStories(topic.id);
+    
+    // Persist relevance scores for stories in the workspace
+    const workspaceStories = await storage.getStories(topic.workspaceId);
+    let storiesLinked = 0;
+    
+    for (const story of workspaceStories) {
+      const relevance = scoreStoryRelevance(
+        { canonicalTitle: story.canonicalTitle, excerpt: story.excerpt },
+        { query: topic.query, name: topic.name }
+      );
+      
+      if (relevance.isRelevant && relevance.score >= 0.20) {
+        await storage.upsertTopicStory({
+          topicId: topic.id,
+          storyId: story.id,
+          relevanceScore: relevance.score.toFixed(4),
+          matchedTerms: relevance.matchedTerms.slice(0, 10),
+          reason: relevance.reason,
+        });
+        storiesLinked++;
+      }
+    }
+    
+    console.log(`[TopicRun:${requestId}] Cleared stale links, linked ${storiesLinked} relevant stories to topic`);
     
     const log: TopicRunLog = {
       requestId,
@@ -74,10 +112,12 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
       enabledSourceDomains: domains,
       status: "completed",
       itemsProcessed: recentItems.length,
+      itemsAccepted: stats.accepted,
+      itemsRejected: stats.rejected,
       timestamp,
     };
     
-    console.log(`[TopicRun:${requestId}] COMPLETED - processed ${recentItems.length} items`);
+    console.log(`[TopicRun:${requestId}] COMPLETED - processed ${recentItems.length} items, ${storiesLinked} stories linked`);
     
     return log;
   } catch (error: any) {

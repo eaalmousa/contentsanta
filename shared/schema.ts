@@ -963,6 +963,32 @@ export const topicSourcesRelations = relations(topicSources, ({ one }) => ({
   source: one(sources, { fields: [topicSources.sourceId], references: [sources.id] }),
 }));
 
+// ============ TOPIC STORIES (persisted relevance for topic-specific story filtering) ============
+
+export const topicStories = pgTable("topic_stories", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  topicId: varchar("topic_id", { length: 36 }).notNull(),
+  storyId: varchar("story_id", { length: 36 }).notNull(),
+  relevanceScore: numeric("relevance_score", { precision: 5, scale: 4 }).notNull(),
+  matchedTerms: text("matched_terms").array().default([]),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_topic_stories_topic").on(table.topicId),
+  index("idx_topic_stories_story").on(table.storyId),
+  index("idx_topic_stories_score").on(table.relevanceScore),
+  uniqueIndex("uniq_topic_story").on(table.topicId, table.storyId),
+]);
+
+export const insertTopicStorySchema = createInsertSchema(topicStories).omit({ id: true, createdAt: true });
+export type InsertTopicStory = z.infer<typeof insertTopicStorySchema>;
+export type TopicStory = typeof topicStories.$inferSelect;
+
+export const topicStoriesRelations = relations(topicStories, ({ one }) => ({
+  topic: one(topics, { fields: [topicStories.topicId], references: [topics.id] }),
+  story: one(stories, { fields: [topicStories.storyId], references: [stories.id] }),
+}));
+
 // Source recommendation candidates (persisted for audit)
 export const topicSourceRecommendations = pgTable("topic_source_recommendations", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),

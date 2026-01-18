@@ -31,6 +31,7 @@ import { startScheduler } from "./services/scheduler";
 import { runDiscoveryJob, convertDiscoveredSourceToSource } from "./services/discovery-service";
 import { insertContentGoalSchema, insertTopicSchema, insertDraftSchema, insertImageAssetSchema } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
+import { scoreStoryRelevance } from "./services/topic-relevance-service";
 
 // Legacy simulated AI workflow processing (fallback)
 async function processWorkflowLegacy(
@@ -1924,6 +1925,78 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/topics/:topicId/stories", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      const minScore = parseFloat(req.query.minScore as string) || 0.20;
+      
+      const topic = await storage.getTopic(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+      
+      // Use persisted topic_stories for efficient querying
+      const topicStoriesData = await storage.getTopicStories(topicId, minScore);
+      
+      const storiesWithProvenance = await Promise.all(
+        topicStoriesData.map(async ({ story, relevanceScore, matchedTerms, reason }) => {
+          const storyItems = await storage.getStoryItems(story.id);
+          const sources = await Promise.all(
+            storyItems.map(async (item) => {
+              const sourceItem = await storage.getSourceItem(item.sourceItemId);
+              if (!sourceItem) return null;
+              
+              const source = await storage.getSource(sourceItem.sourceId);
+              const sourceName = source?.name || getSourceNameFromUrl(sourceItem.url);
+              const mediaTier = source?.mediaTier || 'tier_3';
+              
+              const metadata = sourceItem.metadataJson as any;
+              return {
+                name: sourceName,
+                url: sourceItem.url,
+                mediaTier,
+                isPrimary: item.isPrimary === 'true',
+                imageUrl: metadata?.thumbnail || null,
+              };
+            })
+          );
+          
+          const validSources = sources.filter((s): s is NonNullable<typeof s> => s !== null);
+          validSources.sort((a, b) => {
+            const tierOrder = { tier_1: 0, tier_2: 1, tier_3: 2 };
+            return tierOrder[a.mediaTier as keyof typeof tierOrder] - tierOrder[b.mediaTier as keyof typeof tierOrder];
+          });
+          
+          const primaryImage = await storage.getPrimaryImageForStory(story.id);
+          
+          return {
+            ...story,
+            sources: validSources,
+            featuredImage: primaryImage || null,
+            topicRelevance: {
+              score: parseFloat(relevanceScore as unknown as string),
+              matchedTerms: matchedTerms?.slice(0, 5) || [],
+              reason: reason || '',
+            },
+          };
+        })
+      );
+      
+      console.log(`[TopicStories] Topic "${topic.name}": ${topicStoriesData.length} persisted stories (minScore=${minScore})`);
+      
+      res.json({
+        stories: storiesWithProvenance,
+        stats: {
+          relevant: topicStoriesData.length,
+          minScore,
+          source: 'persisted',
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch topic stories" });
+    }
+  });
+  
   app.get("/api/stories/:id", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const story = await storage.getStory(req.params.id);

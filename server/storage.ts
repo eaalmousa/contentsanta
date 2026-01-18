@@ -29,6 +29,7 @@ import {
   drafts, type Draft, type InsertDraft,
   topics, type Topic, type InsertTopic,
   topicSources, type TopicSource, type InsertTopicSource,
+  topicStories, type TopicStory, type InsertTopicStory,
   topicSourceRecommendations, type TopicSourceRecommendation,
   imageAssets, type ImageAsset, type InsertImageAsset,
   imageUsages, type ImageUsage, type InsertImageUsage,
@@ -246,6 +247,11 @@ export interface IStorage {
   setTopicSourceEnabled(topicId: string, sourceId: string, isEnabled: boolean): Promise<void>;
   deleteTopicSources(topicId: string): Promise<void>;
   saveTopicSourceRecommendation(topicId: string, payload: any): Promise<TopicSourceRecommendation>;
+  
+  // Topic Stories (persisted relevance)
+  getTopicStories(topicId: string, minScore?: number): Promise<(TopicStory & { story: Story })[]>;
+  upsertTopicStory(data: InsertTopicStory): Promise<TopicStory>;
+  deleteTopicStories(topicId: string): Promise<void>;
   
   // Image Assets
   getImageAssets(workspaceId: string, storyId?: string, sourceItemId?: string): Promise<ImageAsset[]>;
@@ -1129,6 +1135,50 @@ export class DatabaseStorage implements IStorage {
       .values({ topicId, payloadJson: payload })
       .returning();
     return rec;
+  }
+
+  // Topic Stories (persisted relevance)
+  async getTopicStories(topicId: string, minScore: number = 0.20): Promise<(TopicStory & { story: Story })[]> {
+    const rows = await db.select({
+      topicStory: topicStories,
+      story: stories,
+    })
+      .from(topicStories)
+      .innerJoin(stories, eq(topicStories.storyId, stories.id))
+      .where(and(
+        eq(topicStories.topicId, topicId),
+        sql`${topicStories.relevanceScore} >= ${minScore}`
+      ))
+      .orderBy(desc(topicStories.relevanceScore));
+    
+    return rows.map(r => ({ ...r.topicStory, story: r.story }));
+  }
+
+  async upsertTopicStory(data: InsertTopicStory): Promise<TopicStory> {
+    const existing = await db.select().from(topicStories)
+      .where(and(
+        eq(topicStories.topicId, data.topicId),
+        eq(topicStories.storyId, data.storyId)
+      ));
+    
+    if (existing.length > 0) {
+      const [updated] = await db.update(topicStories)
+        .set({ 
+          relevanceScore: data.relevanceScore,
+          matchedTerms: data.matchedTerms,
+          reason: data.reason,
+        })
+        .where(eq(topicStories.id, existing[0].id))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(topicStories).values(data).returning();
+      return created;
+    }
+  }
+
+  async deleteTopicStories(topicId: string): Promise<void> {
+    await db.delete(topicStories).where(eq(topicStories.topicId, topicId));
   }
 
   // Image Assets
