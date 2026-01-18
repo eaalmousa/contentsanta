@@ -1,0 +1,298 @@
+You are the Replit AI agent working on the ContentSanta project.
+
+GOAL
+
+Make ContentSanta’s GCC news coverage robust by:
+
+Supporting Google News RSS as a first-class feed source, including proper URL extraction and geo tagging.
+
+Restoring all GCC Tier-1 official outlets (Al Bayan, Al Ittihad, Emarat Al Youm, WAM, etc.) using Google News RSS “site:” feeds where native RSS is broken.
+
+Ensuring that a topic like “GCC Real Estate & Property News (EN)” reliably discovers relevant stories from GCC outlets (not just BBC / generic sources).
+
+Do not change the Topic wizard UI. All changes should be in backend + Sources admin tooling / seeds.
+
+CONTEXT (IMPORTANT)
+
+We already have:
+
+sources (publisher-level) and RSS feeds linked to them.
+
+Topic discovery & relevance scoring (topic_run_service, topic_stories, relevance 0–1, etc.).
+
+Official GCC outlets seeded as Tier 1, but many have broken RSS feeds, so they’re currently disabled.
+
+A working Sources admin page with “Fetch Now” and item counts.
+
+Earlier, we implemented relevance scoring with higher weight for terms like “real estate”, “property development”, “apartment”, “villa”, etc. Keep using that — we don’t need topic-specific queries in Google News; we can ingest general news per outlet and let topic relevance filter it.
+
+I previously used Google News RSS from n8n with URLs like:
+
+https://news.google.com/rss/search?q=uae+real+estate+OR+property+when:3d&hl=en&gl=AE&ceid=AE:en
+
+https://news.google.com/rss/search?q=saudi+arabia+real+estate+OR+property+when:3d&hl=en&gl=SA&ceid=SA:en
+
+and some custom JS to extract the real article URL from the <content> HTML.
+
+We want to reuse the idea, not n8n itself.
+
+PART 1 — Add Google News RSS support to the RSS ingestion pipeline
+1. Detect Google News feeds
+
+In the backend RSS fetcher/parsing layer (where we currently read a feed.url and parse RSS XML):
+
+Detect if feed.url contains "news.google.com/rss".
+
+When it does, route to a specialized Google News parser; otherwise, use the existing generic RSS parser.
+
+2. Implement parseGoogleNewsRssItem
+
+Create a helper (or extend existing parser) that:
+
+For each RSS <item> from Google News, extracts:
+
+title
+
+link (the Google News redirect URL)
+
+pubDate / ISO date
+
+description / content:encoded
+
+<source> name (if available)
+
+Then use the same logic I used in n8n to extract the real article URL from the HTML content:
+
+// Pseudocode / TypeScript-style
+function extractCanonicalUrlFromGoogleNews(contentHtml: string, fallbackLink: string): string {
+  if (!contentHtml) return fallbackLink;
+  const match = contentHtml.match(/href="([^"]*)"/);
+  if (match && match[1]) return match[1];
+  return fallbackLink;
+}
+
+
+Map into our internal “source item” shape. For each parsed item, set at least:
+
+title
+
+url → canonical article URL from the regex above
+
+originalLink (optional) → Google News link (for debugging)
+
+summary / contentSnippet → from description/content
+
+publishedAt
+
+publisherName → value from <source> if present
+
+3. Geo + language tagging from the feed URL
+
+When parsing a Google News feed, derive geo + language from the feed URL parameters and persist them in the item:
+
+Parse gl= and ceid= query params from the feed URL, e.g.:
+
+gl=AE, ceid=AE:en → country = "AE", language = "en"
+
+gl=SA, ceid=SA:ar → country = "SA", language = "ar"
+
+Store country and language on the source item (or story) in the same way we store them for other feeds.
+
+Also tag: sourceType = "google_news" (or similar) on the item so we can debug later if needed.
+
+Important: Do not change the DB schema unless needed. If we already have fields for country and language on items/stories, reuse them.
+
+PART 2 — Replace broken GCC official feeds with Google News “site:” feeds
+
+We already have official GCC publishers seeded in sources with isOfficial = true, tier = 1, but many of their RSS URLs are 404 or blocked, so they were disabled.
+
+We want to re-enable them using Google News RSS.
+
+1. Prepare Google News URLs for each official outlet
+
+For each official GCC outlet that currently has a broken RSS feed (and is disabled), replace its feed URL with a Google News site-scoped RSS:
+
+Examples (you may tweak if needed, but follow this pattern):
+
+UAE Arabic (AR, country AE):
+
+Al Bayan
+https://news.google.com/rss/search?q=site:albayan.ae+when:3d&hl=ar&gl=AE&ceid=AE:ar
+
+Al Ittihad
+https://news.google.com/rss/search?q=site:alittihad.ae+when:3d&hl=ar&gl=AE&ceid=AE:ar
+
+Emarat Al Youm
+https://news.google.com/rss/search?q=site:emaratalyoum.com+when:3d&hl=ar&gl=AE&ceid=AE:ar
+
+WAM (Arabic)
+https://news.google.com/rss/search?q=site:wam.ae+when:3d&hl=ar&gl=AE&ceid=AE:ar
+
+UAE English (EN, country AE):
+
+The National
+https://news.google.com/rss/search?q=site:thenationalnews.com+when:3d&hl=en&gl=AE&ceid=AE:en
+
+WAM English
+https://news.google.com/rss/search?q=site:wam.ae+when:3d&hl=en&gl=AE&ceid=AE:en
+
+Gulf News
+https://news.google.com/rss/search?q=site:gulfnews.com+when:3d&hl=en&gl=AE&ceid=AE:en
+
+Khaleej Times
+https://news.google.com/rss/search?q=site:khaleejtimes.com+when:3d&hl=en&gl=AE&ceid=AE:en
+
+Other GCC official outlets (examples):
+
+Saudi Press Agency (SPA)
+https://news.google.com/rss/search?q=site:spa.gov.sa+when:3d&hl=ar&gl=SA&ceid=SA:ar
+
+Arab News
+https://news.google.com/rss/search?q=site:arabnews.com+when:3d&hl=en&gl=SA&ceid=SA:en
+
+Qatar News Agency (QNA)
+https://news.google.com/rss/search?q=site:qna.org.qa+when:3d&hl=ar&gl=QA&ceid=QA:ar
+
+Bahrain News Agency (BNA)
+https://news.google.com/rss/search?q=site:bna.bh+when:3d&hl=ar&gl=BH&ceid=BH:ar
+
+Oman News Agency (ONA)
+https://news.google.com/rss/search?q=site:omannews.gov.om+when:3d&hl=ar&gl=OM&ceid=OM:ar
+
+Kuwait News Agency (KUNA)
+https://news.google.com/rss/search?q=site:kuna.net.kw+when:3d&hl=ar&gl=KW&ceid=KW:ar
+
+Note: The exact domains may differ from what’s currently in sources. Use the canonical domains we already store there where possible, and adjust the site: operator accordingly.
+
+2. Implementation steps
+
+Update the seed/migration file that creates / updates sources and feeds:
+
+For each official GCC source with broken RSS:
+
+Set its feed URL to the appropriate Google News RSS URL (as above).
+
+Ensure isActive = true for both source and feed.
+
+Keep isOfficial = true and tier = 1 unchanged.
+
+Run the seed/migration so that the current demo workspace has all GCC official sources re-enabled with Google News RSS feeds.
+
+In the Sources admin UI, verify:
+
+You can see all GCC official outlets again (Al Bayan, The National, WAM, Gulf News, etc.).
+
+“Fetch Now” works and returns items (no “Error” for those Google News URLs).
+
+Item counts increase after fetch.
+
+PART 3 — Ensure topic discovery actually uses these items
+
+No UI change is needed here; just make sure the pipeline behaves correctly:
+
+Topic discovery (automatic + manual “Run Discovery”) should:
+
+Pull items from all enabled feeds, including the new Google News feeds.
+
+Run the existing topic relevance scoring against the story title/summary.
+
+Persist matching stories into topic_stories with relevanceScore ≥ 0.20.
+
+Because Google News feeds are per-outlet and geo-tagged, relevance scoring plus our GCC topic filters should now:
+
+Prefer GCC sources for the “GCC Real Estate & Property News (EN)” topic.
+
+Use Tier 1 GCC outlets (The National, Gulf News, etc.) as primary sources.
+
+Still allow Tier 2 business outlets (Gulf Business, Zawya, etc.) and Tier 3 global (Reuters, etc.) when relevant.
+
+PART 4 — Acceptance tests
+
+Please run and verify the following end-to-end tests:
+
+Test 1 — Sources health
+
+Open Admin Tools → Sources.
+
+Confirm that at least these sources are enabled and show non-zero items after clicking “Fetch Now”:
+
+Al Bayan (Google News RSS)
+
+Al Ittihad
+
+Emarat Al Youm
+
+WAM (AR/EN)
+
+The National
+
+Gulf News
+
+Khaleej Times
+
+Arab News
+
+SPA
+
+QNA
+
+BNA
+
+ONA
+
+KUNA
+
+Confirm there are no 404 / parser errors for these feeds.
+
+Test 2 — Topic discovery for GCC Real Estate (EN)
+
+Go to Topics → Create Topic.
+
+Fill:
+
+Topic Name: GCC Real Estate & Property News
+
+Content Type: News Monitoring
+
+What to Track:
+real estate market, property development, housing prices, commercial real estate, construction projects
+
+Region: GCC
+
+Country: leave empty (or as appropriate)
+
+Language: English
+
+Drafts per day: 5
+
+Step 2 (Sources):
+
+Ensure Tier 1 includes GCC official + business outlets (The National, Gulf News, Khaleej Times, Arab News, Gulf Business, etc.).
+
+Select at least 4–6 GCC outlets.
+
+Activate the topic (Live = ON).
+
+Use the new Run Discovery button on the Topic card (Option B) to trigger discovery immediately.
+
+Then go to Smart Editor:
+
+Select the “GCC Real Estate & Property News” topic.
+
+Confirm that Stories now contains items from GCC outlets (not just BBC).
+
+Spot-check that at least some stories clearly relate to real estate / property / housing, not generic unrelated news.
+
+Test 3 — Arabic GCC Real Estate
+
+Repeat Test 2 with:
+
+Language: Arabic
+
+Topic query: Arabic keywords for property / real estate (e.g. "العقار، العقارات، السوق العقارية، الإيجارات، الإسكان")
+
+Confirm:
+
+Tier 1 sources include Arabic GCC outlets (Al Bayan, Al Ittihad, Emarat Al Youm, WAM Arabic, SPA, QNA, etc.).
+
+Discovery returns Arabic real-estate-related content (titles in AR).

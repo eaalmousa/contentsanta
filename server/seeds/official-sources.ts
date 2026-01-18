@@ -15,73 +15,84 @@ interface OfficialSource {
 }
 
 const OFFICIAL_UAE_SOURCES: OfficialSource[] = [
-  // UAE Arabic Official Media (Tier 1)
+  // UAE Arabic Official Media (Tier 1) - Using Google News RSS for reliable access
   {
     name: "البيان",
     domain: "albayan.ae",
-    feedUrl: "https://www.albayan.ae/rss/default.xml",
+    feedUrl: "https://news.google.com/rss/search?q=site:albayan.ae+when:3d&hl=ar&gl=AE&ceid=AE:ar",
     language: "ar",
     region: "gcc",
     country: "AE",
     tier: 1,
     isOfficial: true,
-    description: "Al Bayan - UAE official Arabic newspaper",
+    description: "Al Bayan - UAE official Arabic newspaper (via Google News)",
   },
   {
     name: "الاتحاد",
     domain: "alittihad.ae",
-    feedUrl: "https://www.alittihad.ae/rss/default.xml",
+    feedUrl: "https://news.google.com/rss/search?q=site:alittihad.ae+when:3d&hl=ar&gl=AE&ceid=AE:ar",
     language: "ar",
     region: "gcc",
     country: "AE",
     tier: 1,
     isOfficial: true,
-    description: "Al Ittihad - UAE official Arabic newspaper",
+    description: "Al Ittihad - UAE official Arabic newspaper (via Google News)",
   },
   {
     name: "الإمارات اليوم",
     domain: "emaratalyoum.com",
-    feedUrl: "https://www.emaratalyoum.com/rss/default.xml",
+    feedUrl: "https://news.google.com/rss/search?q=site:emaratalyoum.com+when:3d&hl=ar&gl=AE&ceid=AE:ar",
     language: "ar",
     region: "gcc",
     country: "AE",
     tier: 1,
     isOfficial: true,
-    description: "Emarat Al Youm - UAE official Arabic newspaper",
+    description: "Emarat Al Youm - UAE official Arabic newspaper (via Google News)",
   },
   {
     name: "وكالة أنباء الإمارات",
     domain: "wam.ae",
-    feedUrl: "https://www.wam.ae/ar/rss/all.xml",
+    feedUrl: "https://news.google.com/rss/search?q=site:wam.ae+when:3d&hl=ar&gl=AE&ceid=AE:ar",
     language: "ar",
     region: "gcc",
     country: "AE",
     tier: 1,
     isOfficial: true,
-    description: "WAM - Emirates News Agency (Arabic)",
+    description: "WAM - Emirates News Agency Arabic (via Google News)",
   },
   // UAE English Official Media (Tier 1)
   {
     name: "The National",
     domain: "thenationalnews.com",
-    feedUrl: "https://www.thenationalnews.com/rss",
+    feedUrl: "https://news.google.com/rss/search?q=site:thenationalnews.com+when:3d&hl=en&gl=AE&ceid=AE:en",
     language: "en",
     region: "gcc",
     country: "AE",
     tier: 1,
     isOfficial: true,
-    description: "The National - UAE's leading English newspaper",
+    description: "The National - UAE's leading English newspaper (via Google News)",
   },
   {
     name: "WAM English",
     domain: "wam.ae",
-    feedUrl: "https://www.wam.ae/en/rss/all.xml",
+    feedUrl: "https://news.google.com/rss/search?q=site:wam.ae+when:3d&hl=en&gl=AE&ceid=AE:en",
     language: "en",
     region: "gcc",
     country: "AE",
     tier: 1,
     isOfficial: true,
-    description: "WAM - Emirates News Agency (English)",
+    description: "WAM - Emirates News Agency English (via Google News)",
+  },
+  {
+    name: "Gulf News",
+    domain: "gulfnews.com",
+    feedUrl: "https://news.google.com/rss/search?q=site:gulfnews.com+when:3d&hl=en&gl=AE&ceid=AE:en",
+    language: "en",
+    region: "gcc",
+    country: "AE",
+    tier: 1,
+    isOfficial: false,
+    description: "Gulf News - UAE leading English daily (via Google News)",
   },
 ];
 
@@ -104,21 +115,66 @@ const OFFICIAL_KSA_SOURCES: OfficialSource[] = [
   {
     name: "واس - وكالة الأنباء السعودية",
     domain: "spa.gov.sa",
-    feedUrl: "https://www.spa.gov.sa/rss/ar/news.xml",
+    feedUrl: "https://news.google.com/rss/search?q=site:spa.gov.sa+when:3d&hl=ar&gl=SA&ceid=SA:ar",
     language: "ar",
     region: "gcc",
     country: "SA",
     tier: 1,
     isOfficial: true,
-    description: "Saudi Press Agency (Arabic) - Official government news agency",
+    description: "Saudi Press Agency Arabic (via Google News)",
+  },
+  {
+    name: "SPA English",
+    domain: "spa.gov.sa",
+    feedUrl: "https://news.google.com/rss/search?q=site:spa.gov.sa+when:3d&hl=en&gl=SA&ceid=SA:en",
+    language: "en",
+    region: "gcc",
+    country: "SA",
+    tier: 1,
+    isOfficial: true,
+    description: "Saudi Press Agency English (via Google News)",
   },
 ];
 
-// KSA Mainstream Media (Tier 2 - NOT official government outlets)
-// Note: Arab News and Al Riyadh have blocked RSS access (403/404)
-const MAINSTREAM_KSA_SOURCES: OfficialSource[] = [];
+// KSA Mainstream Media (Tier 2)
+const MAINSTREAM_KSA_SOURCES: OfficialSource[] = [
+  {
+    name: "Arab News",
+    domain: "arabnews.com",
+    feedUrl: "https://news.google.com/rss/search?q=site:arabnews.com+when:3d&hl=en&gl=SA&ceid=SA:en",
+    language: "en",
+    region: "gcc",
+    country: "SA",
+    tier: 2,
+    isOfficial: false,
+    description: "Arab News - Saudi Arabia English daily (via Google News)",
+  },
+];
 
-const OFFICIAL_QATAR_SOURCES: OfficialSource[] = [];
+const OFFICIAL_QATAR_SOURCES: OfficialSource[] = [
+  {
+    name: "وكالة الأنباء القطرية",
+    domain: "qna.org.qa",
+    feedUrl: "https://news.google.com/rss/search?q=site:qna.org.qa+when:3d&hl=ar&gl=QA&ceid=QA:ar",
+    language: "ar",
+    region: "gcc",
+    country: "QA",
+    tier: 1,
+    isOfficial: true,
+    description: "Qatar News Agency Arabic (via Google News)",
+  },
+  {
+    name: "QNA English",
+    domain: "qna.org.qa",
+    feedUrl: "https://news.google.com/rss/search?q=site:qna.org.qa+when:3d&hl=en&gl=QA&ceid=QA:en",
+    language: "en",
+    region: "gcc",
+    country: "QA",
+    tier: 1,
+    isOfficial: true,
+    description: "Qatar News Agency English (via Google News)",
+  },
+];
 
 // Qatar Mainstream Media (Tier 2)
 const MAINSTREAM_QATAR_SOURCES: OfficialSource[] = [
@@ -146,7 +202,30 @@ const MAINSTREAM_QATAR_SOURCES: OfficialSource[] = [
   },
 ];
 
-const OFFICIAL_KUWAIT_SOURCES: OfficialSource[] = [];
+const OFFICIAL_KUWAIT_SOURCES: OfficialSource[] = [
+  {
+    name: "وكالة الأنباء الكويتية",
+    domain: "kuna.net.kw",
+    feedUrl: "https://news.google.com/rss/search?q=site:kuna.net.kw+when:3d&hl=ar&gl=KW&ceid=KW:ar",
+    language: "ar",
+    region: "gcc",
+    country: "KW",
+    tier: 1,
+    isOfficial: true,
+    description: "Kuwait News Agency Arabic (via Google News)",
+  },
+  {
+    name: "KUNA English",
+    domain: "kuna.net.kw",
+    feedUrl: "https://news.google.com/rss/search?q=site:kuna.net.kw+when:3d&hl=en&gl=KW&ceid=KW:en",
+    language: "en",
+    region: "gcc",
+    country: "KW",
+    tier: 1,
+    isOfficial: true,
+    description: "Kuwait News Agency English (via Google News)",
+  },
+];
 
 // Kuwait Mainstream Media (Tier 2)
 const MAINSTREAM_KUWAIT_SOURCES: OfficialSource[] = [
@@ -163,14 +242,60 @@ const MAINSTREAM_KUWAIT_SOURCES: OfficialSource[] = [
   },
 ];
 
-const OFFICIAL_BAHRAIN_SOURCES: OfficialSource[] = [];
+const OFFICIAL_BAHRAIN_SOURCES: OfficialSource[] = [
+  {
+    name: "وكالة أنباء البحرين",
+    domain: "bna.bh",
+    feedUrl: "https://news.google.com/rss/search?q=site:bna.bh+when:3d&hl=ar&gl=BH&ceid=BH:ar",
+    language: "ar",
+    region: "gcc",
+    country: "BH",
+    tier: 1,
+    isOfficial: true,
+    description: "Bahrain News Agency Arabic (via Google News)",
+  },
+  {
+    name: "BNA English",
+    domain: "bna.bh",
+    feedUrl: "https://news.google.com/rss/search?q=site:bna.bh+when:3d&hl=en&gl=BH&ceid=BH:en",
+    language: "en",
+    region: "gcc",
+    country: "BH",
+    tier: 1,
+    isOfficial: true,
+    description: "Bahrain News Agency English (via Google News)",
+  },
+];
 
-// Bahrain Mainstream Media (Tier 2) - Note: BNA and Gulf Daily News don't have working RSS
+// Bahrain Mainstream Media (Tier 2)
 const MAINSTREAM_BAHRAIN_SOURCES: OfficialSource[] = [];
 
-const OFFICIAL_OMAN_SOURCES: OfficialSource[] = [];
+const OFFICIAL_OMAN_SOURCES: OfficialSource[] = [
+  {
+    name: "وكالة الأنباء العمانية",
+    domain: "omannews.gov.om",
+    feedUrl: "https://news.google.com/rss/search?q=site:omannews.gov.om+when:3d&hl=ar&gl=OM&ceid=OM:ar",
+    language: "ar",
+    region: "gcc",
+    country: "OM",
+    tier: 1,
+    isOfficial: true,
+    description: "Oman News Agency Arabic (via Google News)",
+  },
+  {
+    name: "ONA English",
+    domain: "omannews.gov.om",
+    feedUrl: "https://news.google.com/rss/search?q=site:omannews.gov.om+when:3d&hl=en&gl=OM&ceid=OM:en",
+    language: "en",
+    region: "gcc",
+    country: "OM",
+    tier: 1,
+    isOfficial: true,
+    description: "Oman News Agency English (via Google News)",
+  },
+];
 
-// Oman Mainstream Media (Tier 2) - Note: ONA and Times of Oman don't have working RSS
+// Oman Mainstream Media (Tier 2)
 const MAINSTREAM_OMAN_SOURCES: OfficialSource[] = [];
 
 const TIER_2_REGIONAL_BUSINESS: OfficialSource[] = [
@@ -233,10 +358,12 @@ export async function seedOfficialSources(workspaceId: string): Promise<{ insert
       });
 
       if (existing) {
-        // Update existing source with correct tier and isOfficial values
+        // Update existing source with correct tier, isOfficial, feedUrl, and enable it
         const needsUpdate = 
           existing.tier !== source.tier || 
-          existing.isOfficial !== (source.isOfficial ? "true" : "false");
+          existing.isOfficial !== (source.isOfficial ? "true" : "false") ||
+          existing.feedUrl !== source.feedUrl ||
+          existing.isActive !== "true";
         
         if (needsUpdate) {
           await db.update(sources)
@@ -245,6 +372,9 @@ export async function seedOfficialSources(workspaceId: string): Promise<{ insert
               isOfficial: source.isOfficial ? "true" : "false",
               mediaTier: source.tier === 1 ? "tier_1" : source.tier === 2 ? "tier_2" : "tier_3",
               description: source.description,
+              feedUrl: source.feedUrl, // Update to Google News RSS if needed
+              isActive: "true", // Ensure source is enabled
+              lastError: null, // Clear any previous errors
               updatedAt: new Date(),
             })
             .where(eq(sources.id, existing.id));

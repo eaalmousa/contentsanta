@@ -17,6 +17,7 @@ const parser = new Parser({
       ["media:thumbnail", "mediaThumbnail"],
       ["media:content", "mediaContent"],
       ["enclosure", "enclosure"],
+      ["source", "source"], // For Google News RSS publisher name
     ],
   },
 });
@@ -229,6 +230,82 @@ export function generateGuidNormalized(guid: string | undefined, link: string, t
   return crypto.createHash("sha256").update(fallback).digest("hex").substring(0, 32);
 }
 
+// ========== Google News RSS Support ==========
+
+/**
+ * Detect if a feed URL is from Google News RSS
+ */
+export function isGoogleNewsFeed(feedUrl: string): boolean {
+  return feedUrl.includes("news.google.com/rss");
+}
+
+/**
+ * Extract the canonical article URL from Google News RSS item content HTML.
+ * Google News embeds the real article link in the content HTML.
+ */
+export function extractCanonicalUrlFromGoogleNews(contentHtml: string | undefined, fallbackLink: string): string {
+  if (!contentHtml) return fallbackLink;
+  
+  // Google News embeds real article links in the content HTML
+  // Look for href="..." pattern - the first link is usually the canonical article
+  const match = contentHtml.match(/href="([^"]+)"/);
+  if (match && match[1]) {
+    const extractedUrl = match[1];
+    // Validate it's not another Google News URL
+    if (!extractedUrl.includes("news.google.com")) {
+      return extractedUrl;
+    }
+  }
+  
+  return fallbackLink;
+}
+
+/**
+ * Parse geo (country) and language from Google News RSS feed URL parameters.
+ * Example: ?hl=en&gl=AE&ceid=AE:en → { country: "AE", language: "en" }
+ */
+export function parseGoogleNewsGeoParams(feedUrl: string): { country: string | null; language: string | null } {
+  try {
+    const url = new URL(feedUrl);
+    const gl = url.searchParams.get("gl"); // Country code (e.g., AE, SA)
+    const hl = url.searchParams.get("hl"); // Language code (e.g., en, ar)
+    const ceid = url.searchParams.get("ceid"); // Combined (e.g., AE:en)
+    
+    let country = gl || null;
+    let language = hl || null;
+    
+    // Fallback: parse from ceid if gl/hl missing
+    if (ceid && (!country || !language)) {
+      const parts = ceid.split(":");
+      if (parts.length === 2) {
+        if (!country) country = parts[0];
+        if (!language) language = parts[1];
+      }
+    }
+    
+    return { country, language };
+  } catch {
+    return { country: null, language: null };
+  }
+}
+
+/**
+ * Extract the publisher name from Google News RSS item's <source> element
+ */
+export function extractGoogleNewsPublisher(item: any): string | null {
+  // rss-parser may store <source> in different ways
+  if (item.source && typeof item.source === "string") {
+    return item.source;
+  }
+  if (item.source && item.source._) {
+    return item.source._;
+  }
+  if (item.source && item.source.$text) {
+    return item.source.$text;
+  }
+  return null;
+}
+
 export function parsePublishedAt(dateStr: string | undefined): Date | null {
   if (!dateStr) return null;
   try {
@@ -377,6 +454,14 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
     console.log(`[RSS:${requestId}] feedTitle: ${feed.title}`);
     console.log(`[RSS:${requestId}] parsedItemsCount: ${items.length}`);
 
+    // Detect Google News feed and parse geo params
+    const isGoogleNews = isGoogleNewsFeed(source.feedUrl);
+    const googleNewsGeo = isGoogleNews ? parseGoogleNewsGeoParams(source.feedUrl) : null;
+    
+    if (isGoogleNews) {
+      console.log(`[RSS:${requestId}] Google News feed detected - country: ${googleNewsGeo?.country}, language: ${googleNewsGeo?.language}`);
+    }
+
     const existingCountBefore = await storage.getSourceItemCount(source.workspaceId);
     console.log(`[RSS:${requestId}] existingCountBefore: ${existingCountBefore}`);
 
@@ -395,8 +480,28 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
         continue;
       }
 
-      const contentHash = generateContentHash(item.link, item.title, item.guid);
-      const guidNormalized = generateGuidNormalized(item.guid, item.link, item.title, item.pubDate || item.isoDate);
+      const itemAny = item as any;
+      
+      // For Google News feeds, extract the canonical article URL from content HTML
+      let articleUrl = item.link;
+      let originalGoogleNewsLink: string | undefined;
+      let publisherName: string | null = null;
+      
+      if (isGoogleNews) {
+        const contentHtml = item.content || itemAny["content:encoded"] || item.contentSnippet || "";
+        const extractedUrl = extractCanonicalUrlFromGoogleNews(contentHtml, item.link);
+        
+        if (extractedUrl !== item.link) {
+          originalGoogleNewsLink = item.link;
+          articleUrl = extractedUrl;
+        }
+        
+        // Extract publisher name from <source> element
+        publisherName = extractGoogleNewsPublisher(itemAny);
+      }
+
+      const contentHash = generateContentHash(articleUrl, item.title, item.guid);
+      const guidNormalized = generateGuidNormalized(item.guid, articleUrl, item.title, item.pubDate || item.isoDate);
 
       const exists = await storage.sourceItemExists(source.workspaceId, contentHash);
       if (exists) {
@@ -408,25 +513,43 @@ export async function fetchRSSSource(source: Source): Promise<FetchResult> {
       const thumbnail = images.length > 0 ? images[0].url : null;
       const publishedAt = parsePublishedAt(item.pubDate || item.isoDate);
 
-      const itemAny = item as any;
+      // Build metadata with Google News-specific fields
+      const metadata: Record<string, any> = {
+        categories: item.categories || [],
+        guid: item.guid,
+        thumbnail,
+        images,
+      };
+      
+      if (isGoogleNews) {
+        metadata.sourceType = "google_news";
+        if (originalGoogleNewsLink) {
+          metadata.originalLink = originalGoogleNewsLink;
+        }
+        if (publisherName) {
+          metadata.publisherName = publisherName;
+        }
+        if (googleNewsGeo?.country) {
+          metadata.country = googleNewsGeo.country;
+        }
+        if (googleNewsGeo?.language) {
+          metadata.language = googleNewsGeo.language;
+        }
+      }
+
       const sourceItem: InsertSourceItem = {
         workspaceId: source.workspaceId,
         sourceId: source.id,
         title: item.title,
-        url: normalizeLink(item.link),
+        url: normalizeLink(articleUrl),
         publishedAt,
-        author: item.creator || itemAny.author || null,
+        author: item.creator || itemAny.author || publisherName || null,
         excerpt: item.contentSnippet || item.content?.substring(0, 500) || item.summary || null,
         rawContent: item.content || itemAny["content:encoded"] || null,
         contentHash,
         guidNormalized,
         status: "new",
-        metadataJson: {
-          categories: item.categories || [],
-          guid: item.guid,
-          thumbnail,
-          images, // All extracted images with metadata
-        },
+        metadataJson: metadata,
       };
 
       try {
