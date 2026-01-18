@@ -240,23 +240,29 @@ export function isGoogleNewsFeed(feedUrl: string): boolean {
 }
 
 /**
- * Extract the canonical article URL from Google News RSS item content HTML.
- * Google News embeds the real article link in the content HTML.
+ * Extract the canonical article URL from Google News RSS item.
+ * Google News encodes the actual article URL in a base64-like format in the link.
+ * However, following the redirect is more reliable - for now we keep the Google News URL
+ * as it still redirects to the actual article when clicked.
+ * 
+ * We try to find any non-Google URL in the content HTML as a fallback.
  */
 export function extractCanonicalUrlFromGoogleNews(contentHtml: string | undefined, fallbackLink: string): string {
   if (!contentHtml) return fallbackLink;
   
-  // Google News embeds real article links in the content HTML
-  // Look for href="..." pattern - the first link is usually the canonical article
-  const match = contentHtml.match(/href="([^"]+)"/);
-  if (match && match[1]) {
-    const extractedUrl = match[1];
-    // Validate it's not another Google News URL
-    if (!extractedUrl.includes("news.google.com")) {
-      return extractedUrl;
+  // Try to find any URL in the content that's NOT a Google News URL
+  const urlPattern = /href="(https?:\/\/[^"]+)"/g;
+  let match;
+  while ((match = urlPattern.exec(contentHtml)) !== null) {
+    const url = match[1];
+    // Skip Google News URLs
+    if (!url.includes("news.google.com") && !url.includes("google.com/rss")) {
+      return url;
     }
   }
   
+  // Google News RSS links still work - they redirect to the actual article
+  // This is acceptable since clicking them will reach the original article
   return fallbackLink;
 }
 
