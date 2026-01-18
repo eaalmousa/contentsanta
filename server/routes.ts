@@ -1789,10 +1789,24 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Topic not found" });
       }
       
+      console.log(`[ManualDiscovery] User triggered discovery for topic: ${topic.name} (${topic.id})`);
+      
       const { runTopicDiscovery } = await import("./services/topic-run-service");
       const log = await runTopicDiscovery(topic);
       
-      res.json(log);
+      // Get updated story count from persisted topic_stories
+      const topicStories = await storage.getTopicStories(topicId, 0.20);
+      
+      res.json({
+        status: log.status === "completed" ? "ok" : log.status,
+        topicId: log.topicId,
+        topicName: log.topicName,
+        processedStories: log.itemsProcessed || 0,
+        matchedStories: topicStories.length,
+        threshold: 0.20,
+        trigger: "manual",
+        timestamp: log.timestamp,
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to run discovery" });
     }

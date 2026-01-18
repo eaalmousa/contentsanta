@@ -1,0 +1,124 @@
+You are the Replit AI agent working on the ContentSanta repo.
+
+IMPORTANT: DO NOT start coding immediately.
+
+STEP 0 — REVIEW FIRST
+Before implementing anything new, carefully review the **current discovery flow end-to-end** and confirm how it behaves in BOTH cases:
+
+A) Automatic discovery (scheduler / cron)
+B) Manual discovery (if any existing endpoint already exists)
+
+Specifically review and report internally on:
+- How topic discovery is triggered today (scheduler entry point).
+- Which service function actually performs discovery and relevance scoring.
+- Where topic-story relevance is persisted (`topic_stories`).
+- How Smart Editor loads stories (which endpoint and data source).
+- Whether any existing manual trigger endpoint exists (even partially).
+
+Only after confirming the above, proceed to implementation.
+
+--------------------------------------------------
+GOAL
+--------------------------------------------------
+Add **Option B – Manual Topic Discovery Trigger** (for testing and QA),
+WHILE ensuring that **automatic discovery continues to work exactly as before**.
+
+This is a strict requirement:
+❗ Manual and automatic discovery MUST share the same core logic.
+❗ No duplicated pipelines.
+❗ No behaviour divergence.
+
+--------------------------------------------------
+OPTION B — MANUAL TOPIC DISCOVERY
+--------------------------------------------------
+
+Add a **manual “Run Discovery” trigger** that:
+
+1) Runs discovery for ONE topic immediately.
+2) Uses the SAME logic as the scheduler (same service function).
+3) Persists relevance results into `topic_stories`.
+4) Refreshes Smart Editor so stories appear without waiting for cron.
+5) Does NOT break or bypass automatic discovery.
+
+--------------------------------------------------
+PART 1 — BACKEND (REVIEW + IMPLEMENT IF NEEDED)
+--------------------------------------------------
+
+1. Check if an endpoint already exists similar to:
+   POST /api/topics/:topicId/run-discovery
+
+IF IT EXISTS:
+- Verify it calls the same discovery service as the scheduler.
+- Verify it persists into `topic_stories`.
+- Fix it if it diverges from scheduler behaviour.
+
+IF IT DOES NOT EXIST:
+- Create it.
+- It must:
+  - Load the topic (with workspace ownership validation).
+  - Call the SAME discovery function used by the scheduler.
+  - Clear old topic-story links.
+  - Persist new relevant stories.
+  - Return a concise JSON summary:
+
+    {
+      "status": "ok",
+      "topicId": "...",
+      "processedStories": 42,
+      "matchedStories": 18,
+      "threshold": 0.20
+    }
+
+--------------------------------------------------
+PART 2 — FRONTEND (MANUAL TRIGGER UI)
+--------------------------------------------------
+
+Add a manual trigger in TWO places (reuse existing UI patterns):
+
+A) Topics page (topic card menu)
+- Add “Run discovery” or “Refresh stories”
+- Show loading state
+- Toast on success/failure
+
+B) Smart Editor (topic header)
+- Add a “Run Discovery” button near the topic badge
+- While running: disable + spinner
+- On success:
+  - Re-fetch stories from /api/topics/:topicId/stories
+  - Show toast: “Discovery completed – X stories found”
+
+DO NOT modify:
+- Topic creation wizard
+- Relevance scoring logic
+- Source tiering rules
+
+--------------------------------------------------
+PART 3 — VERIFY BOTH MODES WORK
+--------------------------------------------------
+
+After implementation, confirm BOTH of these work:
+
+AUTOMATIC:
+- Scheduler continues running discovery on live topics
+- Results are persisted to `topic_stories`
+- Smart Editor loads stories normally
+
+MANUAL:
+- Clicking “Run Discovery” triggers immediate discovery
+- Results appear instantly in Smart Editor
+- Data matches what automatic discovery would produce
+
+--------------------------------------------------
+PART 4 — FINAL CHECKLIST (MANDATORY)
+--------------------------------------------------
+
+Confirm internally that:
+- Manual trigger calls the same service as scheduler
+- No duplicated discovery code exists
+- `topic_stories` is the single source of truth
+- Smart Editor NEVER recalculates relevance on the fly
+- Logs clearly show when discovery was triggered manually vs scheduled
+
+Only after all of the above is verified should the task be marked complete.
+
+This feature is for **testing, QA, and tuning** — not to replace automatic discovery.
