@@ -241,11 +241,19 @@ export function isGoogleNewsFeed(feedUrl: string): boolean {
 
 /**
  * Extract the canonical article URL from Google News RSS item.
- * Google News encodes the actual article URL in a base64-like format in the link.
- * However, following the redirect is more reliable - for now we keep the Google News URL
- * as it still redirects to the actual article when clicked.
  * 
- * We try to find any non-Google URL in the content HTML as a fallback.
+ * KNOWN LIMITATION: Google News encodes the actual article URL in a protobuf format
+ * (base64-encoded payload starting with "CBMi"). Decoding this would require implementing
+ * protobuf parsing, which is complex.
+ * 
+ * Current approach: Google News redirect URLs still work correctly when clicked - they
+ * redirect to the actual article. For deduplication, we rely on:
+ * 1. The URL includes the encoded article identifier, making it unique per article
+ * 2. We store publisher metadata (publisherName) for attribution
+ * 3. The sourceType='google_news' flag identifies these items
+ * 
+ * TODO: Consider implementing protobuf decoding for canonical URL extraction if needed
+ * for strict deduplication across sources.
  */
 export function extractCanonicalUrlFromGoogleNews(contentHtml: string | undefined, fallbackLink: string): string {
   if (!contentHtml) return fallbackLink;
@@ -261,8 +269,7 @@ export function extractCanonicalUrlFromGoogleNews(contentHtml: string | undefine
     }
   }
   
-  // Google News RSS links still work - they redirect to the actual article
-  // This is acceptable since clicking them will reach the original article
+  // Google News RSS redirect URLs work correctly - they redirect to the actual article
   return fallbackLink;
 }
 
