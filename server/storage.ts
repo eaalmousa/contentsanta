@@ -1094,13 +1094,30 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getEnabledSourceIdsForTopic(topicId: string): Promise<string[]> {
+    // First, check if there are explicit topic_sources links
     const rows = await db.select({ sourceId: topicSources.sourceId })
       .from(topicSources)
       .where(and(
         eq(topicSources.topicId, topicId),
         eq(topicSources.isEnabled, true)
       ));
-    return rows.map(r => r.sourceId);
+    
+    if (rows.length > 0) {
+      return rows.map(r => r.sourceId);
+    }
+    
+    // Fallback: Use ALL active sources in the topic's workspace
+    const [topic] = await db.select().from(topics).where(eq(topics.id, topicId));
+    if (!topic) return [];
+    
+    const allActiveSources = await db.select({ id: sources.id })
+      .from(sources)
+      .where(and(
+        eq(sources.workspaceId, topic.workspaceId),
+        eq(sources.isActive, "true")
+      ));
+    
+    return allActiveSources.map(s => s.id);
   }
 
   async upsertTopicSource(data: InsertTopicSource): Promise<TopicSource> {

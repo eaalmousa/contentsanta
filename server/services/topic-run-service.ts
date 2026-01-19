@@ -2,6 +2,7 @@ import { storage } from "../storage";
 import type { Topic, Source, InsertTopicStory } from "@shared/schema";
 import crypto from "crypto";
 import { filterItemsByRelevance, scoreStoryRelevance, MIN_RELEVANCE_SCORE, TIER1_SOURCE_BOOST } from "./topic-relevance-service";
+import { processNewItemsForClustering } from "./story-clustering-service";
 
 export interface TopicRunLog {
   requestId: string;
@@ -61,10 +62,11 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
   console.log(`[TopicRun:${requestId}] enabled_source_domains=[${domains.join(", ")}]${enabledSources.length > 5 ? ` (+${enabledSources.length - 5} more)` : ""}`);
   
   try {
+    // Use 7 days (168 hours) to include older items that may still be relevant
     const recentItems = await storage.getRecentSourceItemsBySourceIds(
       enabledSourceIds,
-      24,
-      200
+      168,
+      500
     );
     
     console.log(`[TopicRun:${requestId}] Found ${recentItems.length} recent items from enabled sources`);
@@ -76,6 +78,10 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
     );
     
     console.log(`[TopicRun:${requestId}] Relevance filtering: ${stats.accepted} accepted, ${stats.rejected} rejected`);
+    
+    // Process any new items into stories (clustering)
+    const clusterResult = await processNewItemsForClustering(topic.workspaceId);
+    console.log(`[TopicRun:${requestId}] Story clustering: ${clusterResult.newStories} new stories, ${clusterResult.clustered} clustered`);
     
     // Clear stale topic_stories before re-scoring
     await storage.deleteTopicStories(topic.id);
