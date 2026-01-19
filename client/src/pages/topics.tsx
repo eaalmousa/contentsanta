@@ -702,12 +702,18 @@ function SourceSelector({
   );
 }
 
-interface TopicStoryResponse {
+interface TopicStory {
   id: string;
-  storyId: string;
-  relevanceScore: string;
-  matchedTerms: string[];
-  story: { canonicalTitle: string; excerpt?: string };
+  canonicalTitle: string;
+  topicRelevance?: {
+    score: number;
+    matchedTerms: string[];
+  };
+}
+
+interface TopicStoriesResponse {
+  stories: TopicStory[];
+  stats: { relevant: number };
 }
 
 function TopicCard({ 
@@ -732,9 +738,11 @@ function TopicCard({
   const [showStories, setShowStories] = useState(false);
   
   // Fetch topic stories
-  const { data: topicStories = [] } = useQuery<TopicStoryResponse[]>({
+  const { data: storiesData } = useQuery<TopicStoriesResponse>({
     queryKey: ["/api/topics", topic.id, "stories"],
   });
+  
+  const topicStories = storiesData?.stories || [];
   
   const intent = contentIntentConfig[topic.contentIntent as ContentIntent] || contentIntentConfig.mixed;
   const IntentIcon = intent.icon;
@@ -861,23 +869,25 @@ function TopicCard({
             </div>
             <ScrollArea className="max-h-48">
               <div className="space-y-2">
-                {topicStories.slice(0, 10).map((ts) => (
+                {topicStories.slice(0, 10).map((story) => (
                   <div 
-                    key={ts.id} 
+                    key={story.id} 
                     className="p-2 rounded-md bg-muted/50 text-sm"
-                    data-testid={`story-item-${ts.storyId}`}
+                    data-testid={`story-item-${story.id}`}
                   >
-                    <div className="font-medium line-clamp-1">{ts.story.canonicalTitle}</div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Badge variant="outline" className="text-xs">
-                        {(parseFloat(ts.relevanceScore) * 100).toFixed(0)}% match
-                      </Badge>
-                      {ts.matchedTerms?.slice(0, 3).map((term) => (
-                        <Badge key={term} variant="secondary" className="text-xs">
-                          {term}
+                    <div className="font-medium line-clamp-1">{story.canonicalTitle}</div>
+                    {story.topicRelevance && (
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <Badge variant="outline" className="text-xs">
+                          {(story.topicRelevance.score * 100).toFixed(0)}% match
                         </Badge>
-                      ))}
-                    </div>
+                        {story.topicRelevance.matchedTerms?.slice(0, 3).map((term) => (
+                          <Badge key={term} variant="secondary" className="text-xs">
+                            {term}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
                 {storiesCount > 10 && (

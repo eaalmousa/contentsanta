@@ -223,7 +223,7 @@ export interface IStorage {
   
   // Story Items
   getStoryItems(storyId: string): Promise<StoryItem[]>;
-  createStoryItem(data: InsertStoryItem): Promise<StoryItem>;
+  createStoryItem(data: InsertStoryItem): Promise<StoryItem | null>;
   
   // Drafts
   getDrafts(workspaceId: string, status?: DraftStatus, topicId?: string): Promise<Draft[]>;
@@ -1019,9 +1019,13 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(storyItems.createdAt));
   }
 
-  async createStoryItem(data: InsertStoryItem): Promise<StoryItem> {
-    const [item] = await db.insert(storyItems).values(data).returning();
-    return item;
+  async createStoryItem(data: InsertStoryItem): Promise<StoryItem | null> {
+    // Use onConflictDoNothing to handle duplicate story_id + source_item_id combinations
+    const result = await db.insert(storyItems)
+      .values(data)
+      .onConflictDoNothing({ target: [storyItems.storyId, storyItems.sourceItemId] })
+      .returning();
+    return result[0] || null;
   }
 
   // Drafts
