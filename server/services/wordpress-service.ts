@@ -321,15 +321,28 @@ export interface WordPressPublishResult {
 function parseCredentials(target: PublishingTarget): WordPressCredentials | null {
   try {
     const config = target.configJson as any;
-    if (!config?.siteUrl || !config?.username || !config?.applicationPassword) {
+    
+    // Support both old field names (apiUrl, apiKey) and new ones (siteUrl, applicationPassword)
+    const siteUrl = config?.siteUrl || config?.apiUrl;
+    const username = config?.username;
+    const applicationPassword = config?.applicationPassword || config?.apiKey;
+    
+    if (!siteUrl || !username || !applicationPassword) {
+      console.log('[WordPress] parseCredentials failed - missing fields:', { 
+        hasSiteUrl: !!siteUrl, 
+        hasUsername: !!username, 
+        hasAppPassword: !!applicationPassword,
+        configKeys: config ? Object.keys(config) : [] 
+      });
       return null;
     }
     return {
-      siteUrl: config.siteUrl,
-      username: config.username,
-      applicationPassword: config.applicationPassword,
+      siteUrl,
+      username,
+      applicationPassword,
     };
-  } catch {
+  } catch (err) {
+    console.error('[WordPress] parseCredentials error:', err);
     return null;
   }
 }
