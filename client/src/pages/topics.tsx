@@ -702,6 +702,14 @@ function SourceSelector({
   );
 }
 
+interface TopicStoryResponse {
+  id: string;
+  storyId: string;
+  relevanceScore: string;
+  matchedTerms: string[];
+  story: { canonicalTitle: string; excerpt?: string };
+}
+
 function TopicCard({ 
   topic, 
   onToggleLive,
@@ -721,11 +729,19 @@ function TopicCard({
   isDiscoveryPending?: boolean;
   enabledSourceCount: number;
 }) {
+  const [showStories, setShowStories] = useState(false);
+  
+  // Fetch topic stories
+  const { data: topicStories = [] } = useQuery<TopicStoryResponse[]>({
+    queryKey: ["/api/topics", topic.id, "stories"],
+  });
+  
   const intent = contentIntentConfig[topic.contentIntent as ContentIntent] || contentIntentConfig.mixed;
   const IntentIcon = intent.icon;
   const isLive = topic.isLive === "true";
   const hasRules = Boolean(topic.taxonomyRules && typeof topic.taxonomyRules === 'object' && Object.keys(topic.taxonomyRules as object).length > 0);
   const canActivate = enabledSourceCount > 0 || isLive;
+  const storiesCount = topicStories.length;
 
   return (
     <Card className="hover-elevate" data-testid={`topic-card-${topic.id}`}>
@@ -804,6 +820,17 @@ function TopicCard({
                 Rules
               </Badge>
             )}
+            {storiesCount > 0 && (
+              <Badge 
+                variant="default" 
+                className="text-xs cursor-pointer"
+                onClick={() => setShowStories(!showStories)}
+                data-testid={`badge-stories-${topic.id}`}
+              >
+                <Newspaper className="w-3 h-3 mr-1" />
+                {storiesCount} stories
+              </Badge>
+            )}
           </div>
           
           <div className="flex items-center gap-2">
@@ -818,6 +845,50 @@ function TopicCard({
             />
           </div>
         </div>
+        
+        {showStories && storiesCount > 0 && (
+          <div className="mt-4 pt-4 border-t space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Matched Stories</span>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => setShowStories(false)}
+                className="h-6 px-2 text-xs"
+              >
+                Hide
+              </Button>
+            </div>
+            <ScrollArea className="max-h-48">
+              <div className="space-y-2">
+                {topicStories.slice(0, 10).map((ts) => (
+                  <div 
+                    key={ts.id} 
+                    className="p-2 rounded-md bg-muted/50 text-sm"
+                    data-testid={`story-item-${ts.storyId}`}
+                  >
+                    <div className="font-medium line-clamp-1">{ts.story.canonicalTitle}</div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Badge variant="outline" className="text-xs">
+                        {(parseFloat(ts.relevanceScore) * 100).toFixed(0)}% match
+                      </Badge>
+                      {ts.matchedTerms?.slice(0, 3).map((term) => (
+                        <Badge key={term} variant="secondary" className="text-xs">
+                          {term}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {storiesCount > 10 && (
+                  <p className="text-xs text-muted-foreground text-center py-1">
+                    +{storiesCount - 10} more stories
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
