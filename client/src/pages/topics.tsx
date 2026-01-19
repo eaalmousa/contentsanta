@@ -63,6 +63,7 @@ import { Link } from "wouter";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 
 const contentIntentConfig: Record<ContentIntent, { label: string; icon: any; color: string }> = {
   news_monitoring: { label: "News", icon: Globe, color: "bg-blue-500" },
@@ -301,8 +302,70 @@ function TopicSettingsDialog({
           </TabsList>
           
           <TabsContent value="general" className="space-y-4 pt-4">
-            <div className="text-sm text-muted-foreground">
-              General topic settings will be added here.
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Default Content Language</Label>
+                <Select 
+                  value={topic.language || "en"} 
+                  disabled
+                >
+                  <SelectTrigger data-testid="select-topic-language">
+                    <SelectValue placeholder="Select language..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en">English</SelectItem>
+                    <SelectItem value="ar">Arabic</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Language for generated content from this topic
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Content Intent</Label>
+                <Select 
+                  value={topic.contentIntent || "news_monitoring"} 
+                  disabled
+                >
+                  <SelectTrigger data-testid="select-topic-intent">
+                    <SelectValue placeholder="Select intent..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="news_monitoring">News Monitoring</SelectItem>
+                    <SelectItem value="informational">Informational</SelectItem>
+                    <SelectItem value="evergreen">Evergreen</SelectItem>
+                    <SelectItem value="mixed">Mixed</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Determines how content is processed and prioritized
+                </p>
+              </div>
+              
+              <Separator />
+              
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Discovery Status</Label>
+                  <p className="text-xs text-muted-foreground">
+                    {topic.isLive === "true" ? "Topic is live and discovering stories" : "Topic is paused"}
+                  </p>
+                </div>
+                <Badge variant={topic.isLive === "true" ? "default" : "secondary"}>
+                  {topic.isLive === "true" ? "Live" : "Paused"}
+                </Badge>
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Output Volume</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Target {topic.outputVolumePerDay || 5} stories per day
+                  </p>
+                </div>
+                <Badge variant="outline">{topic.outputVolumePerDay || 5}/day</Badge>
+              </div>
             </div>
           </TabsContent>
           
