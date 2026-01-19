@@ -504,41 +504,75 @@ export async function testWordPressConnection(
   const credentials = parseCredentials(target);
   
   if (!credentials) {
+    const config = target.configJson as any;
     return {
       success: false,
-      error: "Invalid credentials configuration",
+      error: `Missing credentials. Please ensure Site URL, Username, and Application Password are all provided. (Fields found: ${config ? Object.keys(config).join(', ') : 'none'})`,
     };
   }
   
   try {
+    // First check if the WordPress REST API is accessible
+    const apiUrl = `${credentials.siteUrl}/wp-json/wp/v2/users/me`;
+    console.log(`[WordPress] Testing connection to: ${apiUrl}`);
+    
     const auth = Buffer.from(
       `${credentials.username}:${credentials.applicationPassword}`
     ).toString("base64");
     
-    const response = await fetch(`${credentials.siteUrl}/wp-json/wp/v2/users/me`, {
+    const response = await fetch(apiUrl, {
       headers: {
         Authorization: `Basic ${auth}`,
       },
     });
     
     if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      console.log(`[WordPress] Auth failed: ${response.status} - ${errorText}`);
+      
+      if (response.status === 401) {
+        return {
+          success: false,
+          error: "Authentication failed. Check your username and application password. Make sure the application password was generated in WordPress under Users > Profile > Application Passwords.",
+        };
+      }
+      if (response.status === 403) {
+        return {
+          success: false,
+          error: "Access forbidden. Your user may not have REST API access. Check WordPress user permissions.",
+        };
+      }
+      if (response.status === 404) {
+        return {
+          success: false,
+          error: "WordPress REST API not found. Make sure your Site URL is correct and REST API is enabled.",
+        };
+      }
       return {
         success: false,
-        error: `Authentication failed: ${response.status}`,
+        error: `WordPress API error: ${response.status}. ${errorText.slice(0, 100)}`,
       };
     }
     
     const siteResponse = await fetch(`${credentials.siteUrl}/wp-json`);
     const siteInfo = await siteResponse.json();
     
+    console.log(`[WordPress] Connection successful to: ${siteInfo.name}`);
     return {
       success: true,
       siteName: siteInfo.name,
     };
   } catch (error: any) {
+    console.error(`[WordPress] Connection error:`, error);
+    if (error.code === 'ENOTFOUND') {
+      return {
+        success: false,
+        error: `Cannot reach ${credentials.siteUrl}. Check that the URL is correct and the site is accessible.`,
+      };
+    }
     return {
       success: false,
-      error: error.message,
+      error: `Connection error: ${error.message}`,
     };
   }
 }
@@ -572,7 +606,11 @@ export async function fetchWordPressCategories(
   const credentials = parseCredentials(target);
   
   if (!credentials) {
-    return { success: false, error: "Invalid credentials" };
+    const config = target.configJson as any;
+    return { 
+      success: false, 
+      error: `Missing credentials. Fields found: ${config ? Object.keys(config).join(', ') : 'none'}` 
+    };
   }
   
   try {
@@ -627,7 +665,11 @@ export async function fetchWordPressTags(
   const credentials = parseCredentials(target);
   
   if (!credentials) {
-    return { success: false, error: "Invalid credentials" };
+    const config = target.configJson as any;
+    return { 
+      success: false, 
+      error: `Missing credentials. Fields found: ${config ? Object.keys(config).join(', ') : 'none'}` 
+    };
   }
   
   try {
