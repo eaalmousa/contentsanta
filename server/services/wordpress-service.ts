@@ -605,6 +605,8 @@ export async function fetchWordPressCategories(
 ): Promise<{ success: boolean; categories?: WpCategory[]; error?: string }> {
   const credentials = parseCredentials(target);
   
+  console.log(`[WordPress] fetchWordPressCategories - target configJson:`, JSON.stringify(target.configJson, null, 2));
+  
   if (!credentials) {
     const config = target.configJson as any;
     return { 
@@ -612,6 +614,10 @@ export async function fetchWordPressCategories(
       error: `Missing credentials. Fields found: ${config ? Object.keys(config).join(', ') : 'none'}` 
     };
   }
+  
+  // Normalize siteUrl - remove trailing slash
+  const normalizedSiteUrl = credentials.siteUrl.replace(/\/+$/, '');
+  console.log(`[WordPress] Using siteUrl: "${normalizedSiteUrl}" (original: "${credentials.siteUrl}")`);
   
   try {
     const auth = Buffer.from(
@@ -623,7 +629,7 @@ export async function fetchWordPressCategories(
     const perPage = 100;
     
     while (true) {
-      const apiUrl = `${credentials.siteUrl}/wp-json/wp/v2/categories?per_page=${perPage}&page=${page}`;
+      const apiUrl = `${normalizedSiteUrl}/wp-json/wp/v2/categories?per_page=${perPage}&page=${page}`;
       console.log(`[WordPress] Fetching categories from: ${apiUrl}`);
       
       const response = await fetch(apiUrl, {
