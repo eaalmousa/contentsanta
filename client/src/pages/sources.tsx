@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Clock,
   AlertCircle,
+  Download,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -103,12 +104,26 @@ export default function SourcesPage() {
     },
   });
 
+  const seedMutation = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/sources/seed-official"),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sources"] });
+      toast({
+        title: "Official sources added",
+        description: `Added ${data.created} new sources, updated ${data.updated} existing sources`,
+      });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error seeding sources", description: error.message, variant: "destructive" });
+    },
+  });
+
   const testFeed = async () => {
     if (!newSource.feedUrl) return;
     setTestingFeed(true);
     setTestResult(null);
     try {
-      const result = await apiRequest("POST", "/api/sources/test-feed", { url: newSource.feedUrl });
+      const result = await apiRequest("POST", "/api/sources/test-feed", { url: newSource.feedUrl }) as any;
       setTestResult(result);
       if (result.success && result.title && !newSource.name) {
         setNewSource((prev) => ({ ...prev, name: result.title }));
@@ -139,6 +154,20 @@ export default function SourcesPage() {
           <h1 className="text-2xl font-semibold" data-testid="text-page-title">News Sources</h1>
           <p className="text-sm text-muted-foreground">Monitor RSS feeds and discover content for automation</p>
         </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => seedMutation.mutate()}
+            disabled={seedMutation.isPending}
+            data-testid="button-seed-sources"
+          >
+            {seedMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
+            Add GCC Official Sources
+          </Button>
         <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-source">
@@ -241,6 +270,7 @@ export default function SourcesPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {!sources || sources.length === 0 ? (
