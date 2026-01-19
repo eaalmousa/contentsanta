@@ -208,6 +208,11 @@ function StoryCard({
             src={story.featuredImage?.originalUrl || primarySource?.imageUrl} 
             alt=""
             className="w-full h-full object-cover"
+            onError={(e) => {
+              const target = e.currentTarget;
+              target.style.display = 'none';
+              target.parentElement?.classList.add('flex', 'items-center', 'justify-center');
+            }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
         </div>
