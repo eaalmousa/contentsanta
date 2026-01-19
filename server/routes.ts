@@ -823,7 +823,7 @@ export async function registerRoutes(
       
       // Enrich with user data
       const enrichedMembers = await Promise.all(members.map(async (member) => {
-        const user = await storage.getUser(member.userId);
+        const user = await authStorage.getUser(member.userId);
         return { ...member, user };
       }));
       
@@ -901,7 +901,7 @@ export async function registerRoutes(
         totalRuns: runs.length,
         successfulRuns,
         failedRuns,
-        tokensUsed: runs.reduce((sum, r) => sum + (r.tokensUsed || 0), 0),
+        tokensUsed: 0, // Token tracking not implemented
         storageUsed: 12,
       });
     } catch (error) {
@@ -999,7 +999,7 @@ export async function registerRoutes(
           id: story.id,
           canonicalTitle: story.canonicalTitle,
           sourceCount: story.sourceCount,
-          dateBucket: story.dateBucket,
+          dateBucket: story.publishedDateBucket,
           createdAt: story.createdAt,
         },
         linkedSourceItems: linkedSourceItems.filter(Boolean),
@@ -1032,7 +1032,7 @@ export async function registerRoutes(
             id: story.id,
             canonicalTitle: story.canonicalTitle,
             sourceCount: story.sourceCount,
-            dateBucket: story.dateBucket,
+            dateBucket: story.publishedDateBucket,
             imageCount: imageAssets.length,
             hasPrimaryImage: !!primaryImage,
             primaryImageUrl: primaryImage?.originalUrl || null,
@@ -1189,7 +1189,7 @@ export async function registerRoutes(
       
       await storage.updateSourceItem(item.id, { status: "queued" });
       
-      processWorkflowWithAI(workflowRun.id, input.id, workflowType, undefined, asset.id)
+      processWorkflowWithAI(workflowRun.id, input.id, workflowType, "demo-workspace", null)
         .then(async () => {
           await storage.updateSourceItem(item.id, { status: "processed" });
         })
@@ -2244,18 +2244,27 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Only WordPress connections can be tested" });
       }
       
-      const config = target.configJson as any;
-      const testPost = {
+      // Create a mock AssetVersion for test publishing
+      const testVersion = {
+        id: "test-version",
+        assetId: "test-asset",
         title: `ContentSanta Test Post - ${new Date().toISOString()}`,
-        content: "<p>This is a test post created by ContentSanta to verify your WordPress connection.</p><p>You can safely delete this post.</p>",
-        status: "draft" as const,
+        body: "<p>This is a test post created by ContentSanta to verify your WordPress connection.</p><p>You can safely delete this post.</p>",
+        format: "html" as const,
+        versionNo: 1,
+        language: "en",
+        channel: null,
+        workflowType: null,
+        metadataJson: null,
+        createdAt: new Date(),
+        runId: null,
       };
       
-      const result = await publishToWordPress(config, testPost);
+      const result = await publishToWordPress(target, testVersion, { status: "draft" });
       
       res.json({
-        success: true,
-        message: "Test draft created successfully",
+        success: result.success,
+        message: result.success ? "Test draft created successfully" : result.error,
         postId: result.postId,
         postUrl: result.postUrl,
       });
