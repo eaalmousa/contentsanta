@@ -623,16 +623,27 @@ export async function fetchWordPressCategories(
     const perPage = 100;
     
     while (true) {
-      const response = await fetch(
-        `${credentials.siteUrl}/wp-json/wp/v2/categories?per_page=${perPage}&page=${page}`,
-        {
-          headers: { Authorization: `Basic ${auth}` },
-        }
-      );
+      const apiUrl = `${credentials.siteUrl}/wp-json/wp/v2/categories?per_page=${perPage}&page=${page}`;
+      console.log(`[WordPress] Fetching categories from: ${apiUrl}`);
+      
+      const response = await fetch(apiUrl, {
+        headers: { Authorization: `Basic ${auth}` },
+      });
       
       if (!response.ok) {
         if (response.status === 400) break; // No more pages
+        const text = await response.text().catch(() => '');
+        console.log(`[WordPress] Categories API error: ${response.status} - ${text.slice(0, 200)}`);
         return { success: false, error: `API error: ${response.status}` };
+      }
+      
+      // Check content type - if HTML returned, the URL is wrong
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        return { 
+          success: false, 
+          error: `WordPress REST API not found at ${credentials.siteUrl}. The site returned HTML instead of JSON. Check if WordPress is installed in a subdirectory (e.g., /blog or /wp).` 
+        };
       }
       
       const data = await response.json();
@@ -655,6 +666,14 @@ export async function fetchWordPressCategories(
     console.log(`[WordPress] Fetched ${categories.length} categories`);
     return { success: true, categories };
   } catch (error: any) {
+    console.error(`[WordPress] Categories fetch error:`, error);
+    // Check for JSON parse errors - indicates HTML response
+    if (error.message?.includes('Unexpected token') || error.message?.includes('not valid JSON')) {
+      return { 
+        success: false, 
+        error: `WordPress REST API not reachable. The site URL may be incorrect or WordPress may be installed in a subdirectory. Try adding the subdirectory path (e.g., /blog, /wp, /geg).` 
+      };
+    }
     return { success: false, error: error.message };
   }
 }
