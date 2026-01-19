@@ -489,16 +489,29 @@ function CreateTargetDialog({
   const { toast } = useToast();
   const isEditing = !!editTarget;
 
+  // Load form values - handle WordPress field name mapping
+  const getDefaultConfigValues = () => {
+    const config = editTarget?.configJson as any;
+    if (editTarget?.type === "wordpress") {
+      return {
+        apiUrl: config?.siteUrl || "",
+        apiKey: config?.applicationPassword || "",
+        username: config?.username || "",
+      };
+    }
+    return {
+      apiUrl: config?.apiUrl || "",
+      apiKey: config?.apiKey || "",
+      username: config?.username || "",
+    };
+  };
+
   const form = useForm<TargetFormValues>({
     resolver: zodResolver(targetSchema),
     defaultValues: {
       name: editTarget?.name || "",
       type: editTarget?.type || "",
-      configJson: {
-        apiUrl: (editTarget?.configJson as any)?.apiUrl || "",
-        apiKey: (editTarget?.configJson as any)?.apiKey || "",
-        username: (editTarget?.configJson as any)?.username || "",
-      },
+      configJson: getDefaultConfigValues(),
     },
   });
 
@@ -506,11 +519,24 @@ function CreateTargetDialog({
 
   const createMutation = useMutation({
     mutationFn: async (data: TargetFormValues) => {
+      // Transform field names for WordPress to match what the service expects
+      let payload: any = { ...data };
+      if (data.type === "wordpress") {
+        payload = {
+          ...data,
+          configJson: {
+            siteUrl: data.configJson.apiUrl,
+            username: data.configJson.username,
+            applicationPassword: data.configJson.apiKey,
+          },
+        };
+      }
+      
       if (isEditing) {
-        await apiRequest("PATCH", `/api/publishing-targets/${editTarget.id}`, data);
+        await apiRequest("PATCH", `/api/publishing-targets/${editTarget.id}`, payload);
       } else {
         await apiRequest("POST", "/api/publishing-targets", {
-          ...data,
+          ...payload,
           workspaceId: "demo-workspace",
         });
       }
