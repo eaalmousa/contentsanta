@@ -4,6 +4,41 @@ import type { Topic } from "@shared/schema";
 export const MIN_RELEVANCE_SCORE = 0.15;
 export const TIER1_SOURCE_BOOST = 0.05;
 
+// Common stop-words that should not be used for topic matching
+// These are truly generic terms that appear in all articles regardless of topic
+// NOTE: Domain-specific terms like "property", "market", "investment" are NOT here
+// because they have meaning in context (e.g., "real estate market" vs "stock market")
+const STOP_WORDS = new Set([
+  // English grammatical stop-words
+  "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been",
+  "being", "have", "has", "had", "do", "does", "did", "will", "would", "could",
+  "should", "may", "might", "must", "shall", "can", "to", "of", "in", "for",
+  "on", "with", "at", "by", "from", "as", "into", "through", "during", "before",
+  "after", "above", "below", "between", "under", "again", "further", "then",
+  "once", "here", "there", "when", "where", "why", "how", "all", "each", "few",
+  "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+  "same", "so", "than", "too", "very", "just", "also", "now", "even", "still",
+  "already", "yet", "ever", "never", "always", "often", "sometimes", "usually",
+  "this", "that", "these", "those", "what", "which", "who", "whom", "whose",
+  "it", "its", "itself", "he", "him", "his", "himself", "she", "her", "hers",
+  "herself", "they", "them", "their", "theirs", "themselves", "we", "us", "our",
+  "ours", "ourselves", "you", "your", "yours", "yourself", "yourselves", "my",
+  "me", "i", "up", "down", "out", "off", "over", "about", "any", "both",
+  
+  // News-specific generic terms (appear in headlines regardless of topic)
+  "news", "new", "says", "said", "according", "announced", "report", "reports",
+  "reported", "latest", "today", "yesterday", "tomorrow", "week", "month", "year",
+  "million", "billion", "percent", "people", "first", "last", "next", "previous",
+  "official", "officials", "world", "global", "international", "national", "local",
+  "regional", "country", "countries", "state", "states", "city", "cities",
+  "major", "key", "top", "big", "small", "large", "high", "low",
+  "launched", "signed", "approved", "rise", "fall", "growth", "increase", "decrease",
+  
+  // Arabic stop-words
+  "في", "من", "إلى", "على", "عن", "مع", "هذا", "هذه", "التي", "الذي", "أن", "كان",
+  "بعد", "قبل", "خلال", "حول", "بين", "أو", "ثم", "لكن", "وقد", "كما", "أيضا",
+]);
+
 interface RelevanceItem {
   title: string | null;
   excerpt: string | null;
@@ -83,11 +118,14 @@ function normalizeText(text: string): string {
 
 function extractQueryKeywords(query: string): string[] {
   const normalized = normalizeText(query);
-  const words = normalized.split(' ').filter(w => w.length > 2);
+  // Filter out words that are too short or are stop-words
+  const words = normalized.split(' ')
+    .filter(w => w.length > 2)
+    .filter(w => !STOP_WORDS.has(w));
   
   const phrases: string[] = [];
-  const queryLower = query.toLowerCase();
   
+  // Generate 2-word and 3-word phrases from non-stop-words
   for (let i = 0; i < words.length - 1; i++) {
     phrases.push(words[i] + ' ' + words[i + 1]);
   }
@@ -113,7 +151,10 @@ export function calculateTopicRelevance(
   let score = 0;
   const matchedTerms: string[] = [];
   const negativeMatches: string[] = [];
+  let highWeightMatches = 0;
+  let mediumWeightMatches = 0;
   
+  // Match query keywords (from topic query, already filtered for stop-words)
   for (const keyword of queryKeywords) {
     if (title.includes(keyword)) {
       score += 0.15;
@@ -129,32 +170,41 @@ export function calculateTopicRelevance(
     }
   }
   
+  // High-weight domain vocabulary (strong real estate indicators)
   for (const term of REAL_ESTATE_VOCABULARY_HIGH_WEIGHT) {
     if (title.includes(term)) {
       score += 0.20;
+      highWeightMatches++;
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     } else if (summary.includes(term)) {
       score += 0.12;
+      highWeightMatches++;
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     } else if (content.includes(term)) {
-      score += 0.05;  // Increased from 0.04
+      score += 0.05;
+      highWeightMatches++;
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     }
   }
   
+  // Medium-weight vocabulary (require context to be meaningful)
   for (const term of REAL_ESTATE_VOCABULARY_MEDIUM_WEIGHT) {
     if (title.includes(term)) {
-      score += 0.10;
+      score += 0.08;  // Reduced from 0.10 - single medium terms less impactful
+      mediumWeightMatches++;
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     } else if (summary.includes(term)) {
-      score += 0.05;
+      score += 0.04;  // Reduced from 0.05
+      mediumWeightMatches++;
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     } else if (content.includes(term)) {
-      score += 0.05;  // Increased from 0.02
+      score += 0.02;  // Reduced from 0.05
+      mediumWeightMatches++;
       if (!matchedTerms.includes(term)) matchedTerms.push(term);
     }
   }
   
+  // Negative keywords (off-topic indicators)
   for (const term of NEGATIVE_KEYWORDS) {
     if (title.includes(term)) {
       score -= 0.25;
@@ -167,13 +217,20 @@ export function calculateTopicRelevance(
   
   score = Math.max(0, Math.min(1, score));
   
-  const isRelevant = score >= MIN_RELEVANCE_SCORE && matchedTerms.length >= 1;
+  // Relevance requires EITHER:
+  // 1. At least one high-weight term (strong domain signal), OR
+  // 2. At least two medium-weight terms (combined context signal)
+  // Single medium-weight terms alone (like "market", "prices") are not enough
+  const hasStrongSignal = highWeightMatches >= 1 || mediumWeightMatches >= 2;
+  const isRelevant = score >= MIN_RELEVANCE_SCORE && matchedTerms.length >= 1 && hasStrongSignal;
   
   let reason: string;
   if (isRelevant) {
     reason = `Matched: ${matchedTerms.slice(0, 5).join(', ')}`;
   } else if (negativeMatches.length > 0) {
     reason = `Off-topic: ${negativeMatches.slice(0, 3).join(', ')}`;
+  } else if (matchedTerms.length >= 1 && !hasStrongSignal) {
+    reason = `Weak signal: ${matchedTerms.slice(0, 3).join(', ')} (need more context)`;
   } else {
     reason = 'No relevant keywords found';
   }
