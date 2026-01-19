@@ -2281,16 +2281,22 @@ export async function registerRoutes(
   // Sync WordPress categories
   app.post("/api/publishing-targets/:id/sync-categories", isAuthenticated, async (req: Request, res: Response) => {
     try {
+      console.log(`[Sync Categories] Fetching target: ${req.params.id}`);
       const target = await storage.getPublishingTarget(req.params.id);
       if (!target) {
+        console.log(`[Sync Categories] Target not found: ${req.params.id}`);
         return res.status(404).json({ error: "Publishing target not found" });
       }
+      
+      console.log(`[Sync Categories] Target found: ${target.name}, type: ${target.type}, config keys: ${Object.keys(target.configJson || {}).join(', ')}`);
       
       if (target.type !== "wordpress") {
         return res.status(400).json({ error: "Only WordPress connections support taxonomy sync" });
       }
       
       const result = await fetchWordPressCategories(target);
+      console.log(`[Sync Categories] WordPress result:`, result.success ? `${result.categories?.length} categories` : result.error);
+      
       if (!result.success || !result.categories) {
         return res.status(400).json({ error: result.error || "Failed to fetch categories" });
       }
