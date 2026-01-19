@@ -585,14 +585,42 @@ function CreateTargetDialog({
                 name="configJson.apiUrl"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>API URL</FormLabel>
+                    <FormLabel>{selectedType === "wordpress" ? "Site URL" : "API URL"}</FormLabel>
                     <FormControl>
                       <Input 
-                        placeholder={selectedType === "wordpress" ? "https://yourblog.com/wp-json/wp/v2" : "https://api.example.com/webhook"} 
+                        placeholder={selectedType === "wordpress" ? "https://yourblog.com" : "https://api.example.com/webhook"} 
                         {...field} 
                         data-testid="input-target-url"
                       />
                     </FormControl>
+                    {selectedType === "wordpress" && (
+                      <FormDescription>
+                        Your WordPress site URL (without /wp-json)
+                      </FormDescription>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {selectedType === "wordpress" && (
+              <FormField
+                control={form.control}
+                name="configJson.username"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>WordPress Username</FormLabel>
+                    <FormControl>
+                      <Input 
+                        placeholder="Your WordPress username" 
+                        {...field} 
+                        data-testid="input-target-username"
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      The username you use to log into WordPress
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -605,15 +633,20 @@ function CreateTargetDialog({
                 name="configJson.apiKey"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>API Key / Token</FormLabel>
+                    <FormLabel>{selectedType === "wordpress" ? "Application Password" : "API Key / Token"}</FormLabel>
                     <FormControl>
                       <Input 
                         type="password"
-                        placeholder="Your API key or access token" 
+                        placeholder={selectedType === "wordpress" ? "xxxx xxxx xxxx xxxx xxxx xxxx" : "Your API key or access token"} 
                         {...field} 
                         data-testid="input-target-apikey"
                       />
                     </FormControl>
+                    {selectedType === "wordpress" && (
+                      <FormDescription>
+                        Generate in WordPress → Users → Profile → Application Passwords
+                      </FormDescription>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
