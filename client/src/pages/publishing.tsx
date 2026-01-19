@@ -345,8 +345,9 @@ function TaxonomySyncSection({ targetId }: { targetId: string }) {
       queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", targetId, "taxonomy"] });
       toast({ title: "Categories synced", description: `${data.count} categories imported` });
     },
-    onError: () => {
-      toast({ title: "Failed to sync categories", variant: "destructive" });
+    onError: (error: any) => {
+      const errorMessage = error?.message || "Could not sync categories";
+      toast({ title: "Failed to sync categories", description: errorMessage, variant: "destructive" });
     },
   });
   
@@ -358,8 +359,9 @@ function TaxonomySyncSection({ targetId }: { targetId: string }) {
       queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", targetId, "taxonomy"] });
       toast({ title: "Tags synced", description: `${data.count} tags imported` });
     },
-    onError: () => {
-      toast({ title: "Failed to sync tags", variant: "destructive" });
+    onError: (error: any) => {
+      const errorMessage = error?.message || "Could not sync tags";
+      toast({ title: "Failed to sync tags", description: errorMessage, variant: "destructive" });
     },
   });
   
