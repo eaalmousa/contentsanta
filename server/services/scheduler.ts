@@ -3,10 +3,12 @@ import type { ScheduledTask } from "node-cron";
 import { fetchAllActiveSources } from "./rss-service";
 import { runAllActiveAutomations } from "./automation-service";
 import { runAllLiveTopics, type TopicRunLog } from "./topic-run-service";
+import { runAllLivePipelines } from "./pipeline-jobs-service";
 
 let rssFetchJob: ScheduledTask | null = null;
 let automationJob: ScheduledTask | null = null;
 let topicDiscoveryJob: ScheduledTask | null = null;
+let pipelineAutomationJob: ScheduledTask | null = null;
 
 export function startScheduler() {
   console.log("[Scheduler] Starting background jobs...");
@@ -43,10 +45,26 @@ export function startScheduler() {
     }
   });
   
+  pipelineAutomationJob = cron.schedule("*/10 * * * *", async () => {
+    console.log("[Scheduler] Running pipeline automation job...");
+    try {
+      const results = await runAllLivePipelines();
+      console.log(`[Scheduler] Pipeline automation: ${results.length} pipelines processed`);
+      for (const result of results) {
+        const published = result.results.publish?.success || 0;
+        const quarantined = result.results.publish?.quarantined || 0;
+        console.log(`[Scheduler]   - ${result.topicName}: ${published} published, ${quarantined} quarantined`);
+      }
+    } catch (error: any) {
+      console.error("[Scheduler] Pipeline automation error:", error.message);
+    }
+  });
+  
   console.log("[Scheduler] Background jobs started:");
   console.log("  - RSS Fetch: every 30 minutes");
   console.log("  - Automations: every 15 minutes");
   console.log("  - Topic Discovery: every 20 minutes");
+  console.log("  - Pipeline Automation: every 10 minutes");
 }
 
 export function stopScheduler() {
@@ -61,6 +79,10 @@ export function stopScheduler() {
   if (topicDiscoveryJob) {
     topicDiscoveryJob.stop();
     topicDiscoveryJob = null;
+  }
+  if (pipelineAutomationJob) {
+    pipelineAutomationJob.stop();
+    pipelineAutomationJob = null;
   }
   console.log("[Scheduler] Background jobs stopped");
 }
@@ -78,4 +100,9 @@ export async function triggerAutomations() {
 export async function triggerTopicDiscovery(): Promise<TopicRunLog[]> {
   console.log("[Scheduler] Manual topic discovery triggered");
   return await runAllLiveTopics();
+}
+
+export async function triggerPipelineAutomation() {
+  console.log("[Scheduler] Manual pipeline automation triggered");
+  return await runAllLivePipelines();
 }

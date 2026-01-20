@@ -2463,6 +2463,183 @@ export async function registerRoutes(
       <!-- TRUNCATED - no closing tags -->`);
   });
 
+  // =====================
+  // Pipeline Automation API
+  // =====================
+  
+  app.get("/api/topics/:topicId/pipeline-items", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      const status = req.query.status as string | undefined;
+      
+      const items = await storage.getPipelineItems(topicId);
+      
+      const filteredItems = status 
+        ? items.filter(item => item.status === status)
+        : items;
+      
+      const itemsWithStories = await Promise.all(
+        filteredItems.map(async (item) => {
+          const story = await storage.getStory(item.storyId);
+          return {
+            ...item,
+            story: story ? {
+              id: story.id,
+              canonicalTitle: story.canonicalTitle,
+              excerpt: story.excerpt,
+            } : null,
+          };
+        })
+      );
+      
+      res.json(itemsWithStories);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch pipeline items" });
+    }
+  });
+  
+  app.post("/api/topics/:topicId/run-pipeline", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      
+      const topic = await storage.getTopic(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+      
+      const { runFullPipelineForTopic } = await import("./services/pipeline-jobs-service");
+      const result = await runFullPipelineForTopic(topic);
+      
+      res.json({
+        success: true,
+        topicId: result.topicId,
+        topicName: result.topicName,
+        results: result.results,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to run pipeline" });
+    }
+  });
+  
+  app.post("/api/pipeline-items/:itemId/retry", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { itemId } = req.params;
+      
+      const item = await storage.getPipelineItem(itemId);
+      if (!item) {
+        return res.status(404).json({ error: "Pipeline item not found" });
+      }
+      
+      if (item.status !== "quarantined" && item.status !== "retrying") {
+        return res.status(400).json({ error: "Item is not in a retryable state" });
+      }
+      
+      const errorCode = item.lastErrorCode || "";
+      let newStatus: string;
+      
+      if (errorCode.includes("GENERATION") || errorCode === "CONTENT_TOO_SHORT") {
+        newStatus = "ranked";
+      } else if (errorCode.includes("PUBLISH") || errorCode === "MAX_RETRIES") {
+        newStatus = "scheduled";
+      } else if (errorCode.includes("VERIFY")) {
+        newStatus = "published";
+      } else {
+        newStatus = "ranked";
+      }
+      
+      await storage.updatePipelineItem(itemId, {
+        status: newStatus as any,
+        retryCount: 0,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      });
+      
+      res.json({ success: true, newStatus });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to retry item" });
+    }
+  });
+  
+  app.get("/api/topics/:topicId/job-runs", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      const limit = parseInt(req.query.limit as string) || 20;
+      
+      const runs = await storage.getAutomationJobRuns(topicId);
+      
+      res.json(runs.slice(0, limit));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch job runs" });
+    }
+  });
+  
+  app.get("/api/pipeline-items/:itemId/publish-attempts", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { itemId } = req.params;
+      
+      const attempts = await storage.getPublishAttempts(itemId);
+      
+      res.json(attempts);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch publish attempts" });
+    }
+  });
+  
+  app.get("/api/quarantine", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId is required" });
+      }
+      
+      const topics = await storage.getTopics(workspaceId);
+      const quarantinedItems = [];
+      
+      for (const topic of topics) {
+        const items = await storage.getPipelineItems(topic.id);
+        const quarantined = items.filter(item => item.status === "quarantined");
+        
+        for (const item of quarantined) {
+          const story = await storage.getStory(item.storyId);
+          quarantinedItems.push({
+            ...item,
+            topicName: topic.name,
+            story: story ? {
+              id: story.id,
+              canonicalTitle: story.canonicalTitle,
+              excerpt: story.excerpt,
+            } : null,
+          });
+        }
+      }
+      
+      res.json(quarantinedItems);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch quarantined items" });
+    }
+  });
+  
+  app.post("/api/trigger-pipelines", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { triggerPipelineAutomation } = await import("./services/scheduler");
+      const results = await triggerPipelineAutomation();
+      
+      res.json({
+        success: true,
+        pipelinesProcessed: results.length,
+        results: results.map(r => ({
+          topicId: r.topicId,
+          topicName: r.topicName,
+          published: r.results.publish?.success || 0,
+          quarantined: r.results.publish?.quarantined || 0,
+        })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to trigger pipelines" });
+    }
+  });
+
   // Mock Valid RSS (for comparison)
   app.get("/__test/rss/valid", (req: Request, res: Response) => {
     res.status(200)
