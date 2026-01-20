@@ -1347,7 +1347,7 @@ export async function registerRoutes(
         const result = await testWordPressConnection(target);
         const latencyMs = Date.now() - startTime;
         
-        console.log(`[WordPress Test] Result for ${target.name}: success=${result.success}, latency=${latencyMs}ms`);
+        console.log(`[WordPress Test] Result for ${target.name}: success=${result.success}, errorCode=${result.errorCode || 'none'}, latency=${latencyMs}ms`);
         
         // Return consistent schema with both ok and success fields
         res.json({
@@ -1355,6 +1355,7 @@ export async function registerRoutes(
           success: result.success,
           siteName: result.siteName,
           error: result.error,
+          errorCode: result.errorCode,
           latencyMs,
         });
       } else {
