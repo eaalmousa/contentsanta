@@ -496,6 +496,33 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
                 </div>
               )}
               
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => {
+                    toast({ 
+                      title: "How to Test Connection",
+                      description: "Install the Content Santa plugin in WordPress, enter your Site ID and Secret, then click 'Test Connection' in the plugin settings.",
+                      duration: 8000,
+                    });
+                  }}
+                >
+                  <CheckCircle className="mr-2 h-3 w-3" />
+                  How to Test
+                </Button>
+                {target.siteId && target.secretLast4 && (
+                  <Badge variant="default" className="bg-green-600">
+                    Ready for Plugin
+                  </Badge>
+                )}
+                {target.siteId && !target.secretLast4 && (
+                  <Badge variant="outline" className="border-yellow-500 text-yellow-600">
+                    Secret Required
+                  </Badge>
+                )}
+              </div>
+              
               <div className="bg-muted/50 rounded-lg p-4 space-y-2">
                 <div className="text-sm font-medium">Plugin Setup Instructions</div>
                 <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
