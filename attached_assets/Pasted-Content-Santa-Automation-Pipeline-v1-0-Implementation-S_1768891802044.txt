@@ -1,0 +1,681 @@
+Content Santa Automation Pipeline v1.0 — Implementation Spec
+0) Objective
+
+Transform Content Santa from a manual, editor-led workflow into an automation-first pipeline where the user only:
+
+Creates a Topic Pipeline (topic + region + rules + schedule)
+
+Connects a Target (WordPress/blog)
+
+Then the system automatically fetches, matches, generates, publishes, and verifies posts.
+Any exceptions route to Quarantine with actionable reasons and one-click retry after fixes.
+
+1) Product Rules
+1.1 Default mode
+
+AUTO mode is the default for all new topics.
+
+Manual actions (Create Draft / Approve / Publish) are not part of the default path.
+
+1.2 Single source of truth
+
+There must be one canonical publish queue and one canonical status model.
+
+Remove duplicate “Ready to Publish” implementations. The canonical view becomes Topic Pipeline → Approved/Scheduled/Publishing.
+
+1.3 “Published” must mean published on the real target
+
+Hard rule: An item is not “Published” unless:
+
+the target returns target_post_id and permalink, and
+
+the system stores them, and
+
+(recommended) a follow-up GET confirms it exists.
+
+If publish fails, the item remains NOT published and goes to Retrying then Quarantine.
+
+2) Information Architecture (Navigation)
+
+Replace the current fragmented UX with:
+
+Dashboard
+
+Pipelines (Topics live here)
+
+Quarantine
+
+Targets (WordPress connections)
+
+Logs (job runs + publish attempts)
+
+Sources (advanced/admin; not required for normal user flow)
+
+Settings
+
+Smart Editor becomes Quarantine Review (exception handling only).
+
+3) Core Entities
+3.1 Target (WordPress/blog)
+
+A configured destination with auth, taxonomy mapping, and health checks.
+
+3.2 Pipeline (Topic)
+
+The orchestrator: region, language, rules, schedule, caps, target selection, output style.
+
+3.3 Pipeline Item
+
+A story matched to a pipeline, turned into an automated article, then published/verified.
+
+4) Status Model (State Machine)
+
+Implement a single enum for pipeline_items.status:
+
+FETCHED
+
+MATCHED
+
+DEDUPED
+
+RANKED
+
+GENERATED
+
+GATED
+
+SCHEDULED
+
+PUBLISHING
+
+PUBLISHED (target responded successfully)
+
+VERIFIED (target post confirmed)
+
+RETRYING
+
+QUARANTINED
+
+SKIPPED (daily cap/quiet hours/off-topic/etc.)
+
+Transitions
+
+Normal: FETCHED → MATCHED → DEDUPED → RANKED → GENERATED → GATED → SCHEDULED → PUBLISHING → PUBLISHED → VERIFIED
+
+Failure: any step → RETRYING (bounded) → QUARANTINED
+
+Policy/cap: GATED → SKIPPED or SCHEDULED → SKIPPED
+
+5) Database Schema
+
+Use Postgres (existing). Adjust naming to match your codebase conventions.
+
+5.1 targets
+
+id (uuid pk)
+
+name
+
+base_url (e.g., https://example.com)
+
+platform (wordpress)
+
+auth_type (app_password, future: oauth)
+
+wp_username
+
+wp_app_password_encrypted (or secrets store reference)
+
+default_post_status (default: publish)
+
+default_post_type (default: posts)
+
+is_active (bool)
+
+last_health_check_at
+
+last_health_status (ok|fail)
+
+last_health_message
+
+5.2 pipelines (topics)
+
+id (uuid pk)
+
+name
+
+description
+
+region_scope (enum or json: GCC, UAE, KSA, etc.)
+
+language (default: en)
+
+source_mode (all|whitelist)
+
+source_whitelist (json array of source IDs; nullable)
+
+include_keywords (json array)
+
+exclude_keywords (json array)
+
+policy_flags (json: { avoid_politics: true, avoid_conflict: true })
+
+automation_mode (AUTO) (keep enum for future)
+
+schedule_cron (string) or run_interval_minutes
+
+daily_cap (int default e.g., 5)
+
+min_spacing_minutes (int default e.g., 120)
+
+quiet_hours (json: { start:"22:00", end:"07:00", tz:"Asia/Dubai" } nullable)
+
+target_id (fk → targets.id)
+
+output_settings (json: tone/style/length/attribution rules)
+
+is_live (bool default false)
+
+created_at, updated_at
+
+5.3 pipeline_items
+
+id (uuid pk)
+
+pipeline_id (fk)
+
+source_story_id (fk to existing stories table)
+
+status (enum)
+
+score (numeric)
+
+dedupe_hash (text)
+
+language_detected (text)
+
+generated_title (text)
+
+generated_body (text)
+
+generated_excerpt (text)
+
+generated_tags (json array)
+
+generated_category (text or json)
+
+target_id (fk)
+
+target_post_id (text)
+
+target_permalink (text)
+
+publish_attempts (int default 0)
+
+retry_count (int default 0)
+
+last_error_code (text)
+
+last_error_message (text)
+
+last_error_payload (jsonb)
+
+scheduled_for (timestamp)
+
+published_at (timestamp)
+
+verified_at (timestamp)
+
+created_at, updated_at
+
+5.4 job_runs
+
+id (uuid)
+
+pipeline_id (nullable for global jobs)
+
+job_type (fetch|match|generate|gate|schedule|publish|verify)
+
+status (running|success|fail|partial)
+
+started_at, ended_at
+
+processed_count, success_count, fail_count, skipped_count, quarantined_count
+
+error_summary (text)
+
+logs (jsonb) (optional; keep lightweight)
+
+5.5 publish_attempts (recommended)
+
+id
+
+pipeline_item_id
+
+target_id
+
+attempt_number
+
+request_payload (jsonb)
+
+response_status (int)
+
+response_body (jsonb)
+
+result (success|fail)
+
+created_at
+
+This is critical for trust/debugging.
+
+6) Background Jobs (Automation Engine)
+
+You need a job runner (cron + queue). Implement as:
+
+Node cron + DB polling, or
+
+a simple queue table + worker, or
+
+your existing infra.
+
+6.1 Job cadence
+
+For each live pipeline:
+
+Run Fetch → Match/Rank → Generate/Gate → Schedule → Publish → Verify as a chain.
+
+Jobs can be separate functions but must be observable.
+
+6.2 Jobs (definitions)
+A) FetchJob(pipeline_id)
+
+Pull new stories from sources relevant to pipeline’s source_mode.
+
+Store in stories (existing).
+
+Mark as FETCHED pipeline_items if you do direct item creation here, or defer to MatchJob.
+
+Output:
+
+Create/identify candidate stories since last run.
+
+B) MatchAndRankJob(pipeline_id)
+
+Select recent stories not yet associated to pipeline.
+
+Apply:
+
+region relevance (if supported)
+
+include/exclude keywords
+
+language pre-check (quick)
+
+Create pipeline_items with MATCHED.
+
+Compute dedupe_hash, run dedupe:
+
+If duplicate of already PUBLISHED/VERIFIED, set SKIPPED with reason “duplicate”
+
+Else proceed DEDUPED
+
+Score & rank; update score, set RANKED.
+
+C) GenerateJob(pipeline_id)
+
+Take top N ranked items not generated.
+
+Generate article content using pipeline output_settings.
+
+Save generated_title/body/excerpt/tags/category.
+
+Set status GENERATED.
+
+D) QualityGateJob(pipeline_id)
+
+Automated checks:
+
+language detection (strict): if pipeline language=en and detected not English → QUARANTINED reason LANGUAGE_MISMATCH
+
+off-topic threshold (score below threshold) → SKIPPED reason LOW_RELEVANCE
+
+policy flags (politics/conflict) → QUARANTINED reason POLICY_BLOCK
+
+missing fields → QUARANTINED reason INVALID_CONTENT
+If passes → GATED
+
+E) ScheduleJob(pipeline_id)
+
+Apply:
+
+daily cap
+
+min spacing between published posts
+
+quiet hours
+Assign scheduled_for and set SCHEDULED.
+If cap reached or quiet hours → SKIPPED reason CAP/QUIET_HOURS or schedule for next window.
+
+F) PublishJob(pipeline_id)
+
+Select items where:
+
+status=SCHEDULED
+
+scheduled_for <= now
+Set PUBLISHING, increment attempts.
+Call target publish API.
+On success:
+
+store target_post_id, target_permalink, wp_status
+
+set PUBLISHED, set published_at
+On failure:
+
+set RETRYING, store error (status code, payload)
+
+Important: Do not set published internally unless API returns success.
+
+G) VerifyJob(pipeline_id)
+
+For PUBLISHED items:
+
+GET by target_post_id (or fetch permalink).
+If exists:
+
+set VERIFIED, set verified_at
+If not:
+
+RETRYING then QUARANTINED reason VERIFY_FAILED
+
+6.3 Retry policy
+
+retry_count < 5
+
+Backoff schedule: 1 min, 5 min, 20 min, 60 min, 6 hours
+
+After max retries → QUARANTINED with reason and suggested fix
+
+7) WordPress Publishing Contract (Target Adapter)
+7.1 Endpoint
+
+Create post: POST {base_url}/wp-json/wp/v2/posts
+
+Verify post: GET {base_url}/wp-json/wp/v2/posts/{id}
+
+7.2 Auth
+
+Use Application Passwords: Basic Auth with wp_username:wp_app_password
+
+Ensure you store only encrypted secret.
+
+7.3 Payload
+
+Minimum:
+
+title (generated_title)
+
+content (generated_body)
+
+excerpt (generated_excerpt)
+
+status = publish (default)
+
+Optional:
+
+categories and tags IDs (requires mapping sync)
+
+featured image upload then set featured_media
+
+7.4 Taxonomy sync
+
+In Targets screen:
+
+“Sync Categories/Tags” button
+
+Pull WP taxonomies and store mapping locally
+
+If mapping missing at publish time:
+
+either publish without category (safe default), OR quarantine with TAXONOMY_MAPPING_MISSING depending on strictness setting.
+
+Recommended default: publish without taxonomy if missing; log warning; do not fail.
+
+8) UI Specifications
+8.1 Dashboard
+
+Show system status + per-pipeline summary:
+
+Running/Paused
+
+Next run time
+
+Published today vs cap
+
+Queue count (Scheduled)
+
+Quarantine count
+
+Last run status
+
+Last publish error (if any)
+
+8.2 Pipelines List
+
+Each card:
+
+Pipeline name + region + language
+
+Target connected (name)
+
+Toggle: Live / Paused
+
+Counters: Published today, Scheduled, Quarantined
+
+CTA: “View Pipeline”
+
+8.3 Pipeline Detail (single canonical view)
+
+Tabs (single truth):
+
+Activity (timeline of job runs)
+
+Scheduled (items queued to publish)
+
+Published (VERIFIED items with permalink)
+
+Skipped (reasons)
+
+Settings (rules, schedule, caps, target)
+
+Each item row shows:
+
+title, source, score, current status
+
+scheduled time (if applicable)
+
+publish result/permalink (if published)
+
+if quarantined: reason + fix CTA
+
+8.4 Quarantine
+
+List quarantined items across all pipelines with filters:
+
+reason type
+
+pipeline
+
+target
+
+date
+
+Quarantine item detail:
+
+reason (human-readable)
+
+technical error (status code, payload link)
+
+recommended fix
+
+actions:
+
+Edit generated content
+
+Override gate (admin)
+
+Retry publish
+
+Mark skipped
+
+8.5 Targets
+
+Target cards:
+
+Status (health)
+
+Test Connection
+
+Test Draft Publish
+
+Sync Taxonomies
+
+View publish logs
+
+Remove “Ready to Publish” from Targets/Publishing module (or make it read-only links to pipeline detail; no actions).
+
+9) API Endpoints (Backend)
+Pipelines
+
+POST /api/pipelines create pipeline
+
+GET /api/pipelines list
+
+GET /api/pipelines/:id detail
+
+PATCH /api/pipelines/:id update settings
+
+POST /api/pipelines/:id/toggle live/pause
+
+POST /api/pipelines/:id/run manual run (admin/debug)
+
+Pipeline Items
+
+GET /api/pipelines/:id/items?status=...
+
+GET /api/items/:id
+
+POST /api/items/:id/retry
+
+POST /api/items/:id/override (admin)
+
+Targets
+
+POST /api/targets
+
+GET /api/targets
+
+GET /api/targets/:id
+
+POST /api/targets/:id/test-connection
+
+POST /api/targets/:id/test-publish
+
+POST /api/targets/:id/sync-taxonomies
+
+Logs
+
+GET /api/logs/job-runs?pipeline_id=...
+
+GET /api/logs/publish-attempts?pipeline_item_id=...
+
+10) Migration Plan
+Phase 1 — Status unification
+
+Introduce pipeline_items and canonical status enum.
+
+Map existing Draft/Approved/Published records into pipeline_items where possible.
+
+Phase 2 — UI restructure
+
+Add new navigation + Pipeline screens.
+
+Convert Smart Editor into Quarantine-only.
+
+Phase 3 — Job runner
+
+Implement job chain with job_runs logging.
+
+Ensure pipeline runs automatically when is_live=true.
+
+Phase 4 — Remove duplicates
+
+Remove/disable old “Ready to Publish” lists that conflict.
+
+Ensure only pipeline screens show publish queue.
+
+11) Acceptance Criteria (Sanity Check)
+
+A pipeline is considered “logical, working, automated” only if:
+
+Auto publish without manual clicks
+
+Create pipeline + connect target + turn on
+
+System publishes at least 1 post automatically on next run
+
+Published = real
+
+Every item marked VERIFIED has:
+
+target_post_id + target_permalink
+
+WordPress shows the post
+
+Failures are visible and honest
+
+If WP publish fails:
+
+item is NOT published internally
+
+item is set to RETRYING then QUARANTINED
+
+quarantine shows exact error + retry button
+
+Topic drives content
+
+Pipeline queues show only matched items for that pipeline
+
+Language mismatch goes to quarantine
+
+Observability exists
+
+Logs show job runs and publish attempts with clear outcomes
+
+12) Default Settings (Recommended)
+
+daily_cap = 5
+
+min_spacing_minutes = 120
+
+quiet_hours = 22:00–07:00 Asia/Dubai
+
+taxonomy_strict = false (publish without taxonomy if missing)
+
+max_retries = 5
+
+13) Deliverable Output
+
+At the end of implementation, the user sees:
+
+A Pipeline dashboard that clearly shows:
+
+“Running”
+
+“Next run”
+
+“Published today”
+
+“0 quarantined” (or a number with reasons)
+
+And WordPress posts appear reliably with stored permalinks.
