@@ -6,6 +6,7 @@ import {
   Target,
   Rss,
   Inbox,
+  Workflow,
 } from "lucide-react";
 import {
   Sidebar,
@@ -24,6 +25,7 @@ import {
 const mainNavItems = [
   { title: "Smart Editor", url: "/", icon: Edit3 },
   { title: "Topics", url: "/topics", icon: Target },
+  { title: "Pipeline", url: "/pipeline", icon: Workflow },
   { title: "Publishing", url: "/publishing", icon: Send },
 ];
 

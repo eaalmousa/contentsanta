@@ -27,6 +27,7 @@ import Automations from "@/pages/automations";
 import ContentGoals from "@/pages/content-goals";
 import SmartEditor from "@/pages/smart-editor";
 import Topics from "@/pages/topics";
+import Pipeline from "@/pages/pipeline";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -34,6 +35,7 @@ function Router() {
     <Switch>
       <Route path="/" component={SmartEditor} />
       <Route path="/topics" component={Topics} />
+      <Route path="/pipeline" component={Pipeline} />
       <Route path="/library" component={ContentLibrary} />
       <Route path="/publishing" component={Publishing} />
       <Route path="/dashboard" component={Dashboard} />
