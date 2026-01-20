@@ -305,12 +305,16 @@ export const publishingTargets = pgTable("publishing_targets", {
   lastErrorCode: text("last_error_code"),
   lastErrorMessage: text("last_error_message"),
   
+  // Access control - who created this target
+  createdByUserId: varchar("created_by_user_id", { length: 255 }),
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   index("idx_publishing_targets_workspace").on(table.workspaceId),
   index("idx_publishing_targets_active").on(table.isActive),
   uniqueIndex("idx_publishing_targets_site_id").on(table.siteId),
+  index("idx_publishing_targets_created_by").on(table.createdByUserId),
 ]);
 
 export const insertPublishingTargetSchema = createInsertSchema(publishingTargets).omit({ 

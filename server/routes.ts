@@ -420,11 +420,14 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Publishing target not found" });
       }
       
-      // Verify user has access to the workspace (any workspace member can view diagnostics)
+      // Verify user has access: must be workspace admin/owner OR target creator
       const userId = (req.user as any)?.claims?.sub;
       if (userId && target.workspaceId) {
         const workspaceUser = await storage.getWorkspaceUser(target.workspaceId, userId);
-        if (!workspaceUser) {
+        const isAdminOrOwner = workspaceUser && ["owner", "admin"].includes(workspaceUser.role);
+        const isCreator = target.createdByUserId === userId;
+        
+        if (!isAdminOrOwner && !isCreator) {
           return res.status(403).json({ error: "Access denied" });
         }
       }
@@ -1016,6 +1019,10 @@ export async function registerRoutes(
       }
       const data = insertPublishingTargetSchema.parse(req.body);
       
+      // Set createdByUserId to current authenticated user
+      const userId = (req.user as any)?.claims?.sub;
+      (data as any).createdByUserId = userId || null;
+      
       // For wordpress_pull targets, generate a siteId
       if (data.type === "wordpress_pull") {
         const { generateSiteId } = await import("./services/wp-pull-service");
@@ -1059,7 +1066,9 @@ export async function registerRoutes(
         });
       }
       
-      const { target, rawSecret } = await createWordPressPullTarget(workspaceId, name, wpSiteUrl);
+      // Pass current user ID as creator
+      const userId = (req.user as any)?.claims?.sub;
+      const { target, rawSecret } = await createWordPressPullTarget(workspaceId, name, wpSiteUrl, userId);
       
       res.status(201).json({
         ok: true,

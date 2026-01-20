@@ -242,7 +242,8 @@ export async function getStatus(siteId: string): Promise<StatusResult | null> {
 export async function createWordPressPullTarget(
   workspaceId: string,
   name: string,
-  wpSiteUrl?: string
+  wpSiteUrl?: string,
+  createdByUserId?: string
 ): Promise<{ target: PublishingTarget; rawSecret: string }> {
   const siteId = generateSiteId();
   const { raw, hash, last4 } = await generateSecret();
@@ -254,7 +255,8 @@ export async function createWordPressPullTarget(
     siteId,
     wpSiteUrl: wpSiteUrl || null,
     isActive: true,
-  });
+    createdByUserId: createdByUserId || null,
+  } as any);
   
   const updatedTarget = await storage.updatePublishingTarget(target.id, {
     secretHash: hash,
