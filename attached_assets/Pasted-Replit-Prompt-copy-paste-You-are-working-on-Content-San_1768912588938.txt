@@ -1,0 +1,245 @@
+Replit Prompt (copy/paste)
+
+You are working on Content Santa (Replit app). We are adding a WordPress Plugin Connector (Pull Model) to avoid SiteGround/host CAPTCHA blocks that break server-to-server pushes.
+
+Context
+
+We will ship a WordPress plugin named “Content Santa Connector” that runs a WP-Cron job every 2–5 minutes. The plugin pulls “publish jobs” from Content Santa, creates/updates WP posts locally, then reports results back to Content Santa.
+
+This means Content Santa must provide:
+
+a way to create/manage a Site ID per WordPress site connection
+
+a way to generate/store/rotate a Secret per site connection (API key)
+
+endpoints for pull and report (and optional status) that authenticate using the secret
+
+Requirements (implement fully)
+1) Data model changes
+
+Add/extend a table/collection for publishing targets (WordPress type) with fields:
+
+id (internal UUID)
+
+workspaceId / userId (ownership)
+
+name (friendly connection name)
+
+type = wordpress_pull
+
+siteId (public identifier used by plugin; unique, non-guessable; ex: cs_site_XXXXXXXX)
+
+secretHash (store hashed secret only; never store raw secret)
+
+secretLast4 (for display)
+
+secretCreatedAt, secretRotatedAt
+
+status (healthy/degraded/unhealthy)
+
+lastPullAt, lastReportAt
+
+lastErrorCode, lastErrorMessage
+
+wpSiteUrl (optional informational, not required)
+
+createdAt, updatedAt
+
+Also add a publishing jobs queue table/collection if not already present (or adapt existing):
+
+jobId (UUID)
+
+targetId (publishing target internal UUID)
+
+siteId (redundant index for fast pull by plugin)
+
+contentId or storyId (reference to approved content)
+
+payload (title, html, excerpt, tags, categories, slug, status)
+
+state = queued | leased | publishing | published | failed
+
+leaseToken, leaseExpiresAt
+
+attempts, lastAttemptAt
+
+resultWpPostId, resultWpUrl
+
+error
+
+createdAt, updatedAt
+
+2) Admin/UI for “Site ID” + “Secret”
+
+On the Publishing Target screen for WordPress Pull connections:
+
+Display Site ID (copy button)
+
+Provide button “Generate Secret” (shows the secret ONCE, then only last4 is stored/displayed)
+
+Provide button “Rotate Secret” (same behavior; invalidates previous secret immediately)
+
+Provide “Plugin Setup” instructions panel (what to paste into WP plugin settings)
+
+3) Authentication scheme
+
+Plugin will send:
+
+Header: X-ContentSanta-Secret: <raw secret>
+
+Query: siteId=...
+
+On API:
+
+Lookup target by siteId
+
+Verify secret by comparing hash (bcrypt/argon recommended)
+
+Reject with 401 if invalid
+
+4) Required endpoints (REST)
+A) Pull next job
+
+GET /api/wp/pull?siteId=CS_SITE_ID
+Headers:
+
+X-ContentSanta-Secret: SECRET
+
+Behavior:
+
+Authenticate siteId + secret
+
+Find next job for this siteId with state='queued'
+
+Implement leasing to prevent duplicates:
+
+set state to leased
+
+set leaseToken (random)
+
+set leaseExpiresAt = now + 5 minutes
+
+Return 204 No Content if no job
+
+Return 200 JSON payload if job exists:
+
+{
+  "jobId": "uuid",
+  "leaseToken": "random",
+  "title": "Post title",
+  "contentHtml": "<p>...</p>",
+  "status": "draft|publish",
+  "categories": ["Bahrain","Countries"],
+  "tags": ["2023 East Africa"],
+  "excerpt": "optional",
+  "slug": "optional",
+  "sourceUrl": "optional",
+  "featuredImageUrl": "optional",
+  "meta": { "topicId": "...", "storyId": "..." }
+}
+
+B) Report result
+
+POST /api/wp/report
+Headers:
+
+X-ContentSanta-Secret: SECRET
+Body:
+
+{
+  "siteId": "CS_SITE_ID",
+  "jobId": "uuid",
+  "leaseToken": "random",
+  "ok": true,
+  "wpPostId": 123,
+  "wpUrl": "https://site.com/?p=123",
+  "error": null
+}
+
+
+Behavior:
+
+Authenticate using secret
+
+Verify job exists and leaseToken matches current lease (prevents random spoof)
+
+If ok=true:
+
+set job state = published
+
+store resultWpPostId, resultWpUrl
+
+update target lastReportAt, status maybe healthy
+
+If ok=false:
+
+set job state = failed (or back to queued with attempts++ if retry policy)
+
+store error text
+
+update target status = degraded if repeated failures
+
+Return:
+
+200 { "ok": true }
+
+C) Optional status endpoint (nice to have)
+
+GET /api/wp/status?siteId=...
+Returns last pull/report timestamps, status, and any error message (for UI troubleshooting).
+
+5) Job creation wiring (“Ready to Publish”)
+
+When Content Santa marks an item as approved and ready to publish to a WordPress Pull target:
+
+Create a job record with the payload needed by WP plugin.
+
+Do NOT attempt server-to-server WordPress REST publishing for this target type.
+
+The plugin will do the final publishing locally.
+
+6) Reliability & edge cases
+
+If a job is leased but not reported before leaseExpiresAt, it should become queued again (or a cron cleanup in backend).
+
+Implement cleanup worker that runs every few minutes to reset expired leases.
+
+Rate limit pull endpoint to prevent abuse (per siteId).
+
+Log all requests with siteId, endpoint, code, but never log full secret.
+
+Ensure JSON always returned; no HTML.
+
+7) What to deliver
+
+Backend endpoints implemented
+
+DB changes + migrations
+
+UI updated to show Site ID + secret generation/rotation
+
+“WordPress Pull Target” type supported end-to-end
+
+Tests or minimal manual test steps:
+
+Create WP Pull target
+
+Generate secret (copy)
+
+Create a job
+
+Call pull endpoint → returns job
+
+Call report endpoint → job marked published
+
+Also: clarify the values for WordPress plugin settings
+
+Content Santa must provide, for each WP Pull target:
+
+Base URL (your app URL)
+
+Site ID (generated, stored)
+
+Secret (generated once; user copies into plugin)
+
+Implement these fields and display them clearly on the target card.

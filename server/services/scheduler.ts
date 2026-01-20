@@ -4,11 +4,13 @@ import { fetchAllActiveSources } from "./rss-service";
 import { runAllActiveAutomations } from "./automation-service";
 import { runAllLiveTopics, type TopicRunLog } from "./topic-run-service";
 import { runAllLivePipelines } from "./pipeline-jobs-service";
+import { storage } from "../storage";
 
 let rssFetchJob: ScheduledTask | null = null;
 let automationJob: ScheduledTask | null = null;
 let topicDiscoveryJob: ScheduledTask | null = null;
 let pipelineAutomationJob: ScheduledTask | null = null;
+let wpPullLeaseCleanupJob: ScheduledTask | null = null;
 
 export function startScheduler() {
   console.log("[Scheduler] Starting background jobs...");
@@ -60,11 +62,24 @@ export function startScheduler() {
     }
   });
   
+  wpPullLeaseCleanupJob = cron.schedule("*/2 * * * *", async () => {
+    console.log("[Scheduler] Running WP Pull lease cleanup job...");
+    try {
+      const released = await storage.releaseExpiredWpPullJobLeases();
+      if (released > 0) {
+        console.log(`[Scheduler] WP Pull lease cleanup: ${released} expired leases released`);
+      }
+    } catch (error: any) {
+      console.error("[Scheduler] WP Pull lease cleanup error:", error.message);
+    }
+  });
+  
   console.log("[Scheduler] Background jobs started:");
   console.log("  - RSS Fetch: every 30 minutes");
   console.log("  - Automations: every 15 minutes");
   console.log("  - Topic Discovery: every 20 minutes");
   console.log("  - Pipeline Automation: every 10 minutes");
+  console.log("  - WP Pull Lease Cleanup: every 2 minutes");
 }
 
 export function stopScheduler() {
@@ -83,6 +98,10 @@ export function stopScheduler() {
   if (pipelineAutomationJob) {
     pipelineAutomationJob.stop();
     pipelineAutomationJob = null;
+  }
+  if (wpPullLeaseCleanupJob) {
+    wpPullLeaseCleanupJob.stop();
+    wpPullLeaseCleanupJob = null;
   }
   console.log("[Scheduler] Background jobs stopped");
 }

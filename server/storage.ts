@@ -12,6 +12,7 @@ import {
   comments, type Comment, type InsertComment,
   publishingTargets, type PublishingTarget, type InsertPublishingTarget,
   publishJobs, type PublishJob, type InsertPublishJob,
+  wpPullJobs, type WpPullJob, type InsertWpPullJob, type WpPullJobStatus,
   usageLedger, type UsageLedger, type InsertUsageLedger,
   sources, type Source, type InsertSource,
   sourceItems, type SourceItem, type InsertSourceItem,
@@ -138,6 +139,16 @@ export interface IStorage {
   getPublishJob(id: string): Promise<PublishJob | undefined>;
   createPublishJob(data: InsertPublishJob): Promise<PublishJob>;
   updatePublishJob(id: string, data: Partial<PublishJob>): Promise<PublishJob | undefined>;
+  
+  // WordPress Pull Jobs
+  getPublishingTargetBySiteId(siteId: string): Promise<PublishingTarget | undefined>;
+  updatePublishingTargetBySiteId(siteId: string, data: Partial<PublishingTarget>): Promise<PublishingTarget | undefined>;
+  getWpPullJobs(targetId: string, status?: WpPullJobStatus): Promise<WpPullJob[]>;
+  getWpPullJob(id: string): Promise<WpPullJob | undefined>;
+  createWpPullJob(data: InsertWpPullJob): Promise<WpPullJob>;
+  updateWpPullJob(id: string, data: Partial<WpPullJob>): Promise<WpPullJob | undefined>;
+  leaseNextWpPullJob(siteId: string, leaseToken: string, leaseMinutes: number): Promise<WpPullJob | null>;
+  releaseExpiredWpPullJobLeases(): Promise<number>;
   
   // Usage Ledger
   getUsageLedger(workspaceId: string): Promise<UsageLedger[]>;
@@ -668,6 +679,77 @@ export class DatabaseStorage implements IStorage {
   async updatePublishJob(id: string, data: Partial<PublishJob>): Promise<PublishJob | undefined> {
     const [job] = await db.update(publishJobs).set(data).where(eq(publishJobs.id, id)).returning();
     return job;
+  }
+
+  // WordPress Pull Jobs
+  async getPublishingTargetBySiteId(siteId: string): Promise<PublishingTarget | undefined> {
+    const [target] = await db.select().from(publishingTargets).where(eq(publishingTargets.siteId, siteId));
+    return target;
+  }
+
+  async updatePublishingTargetBySiteId(siteId: string, data: Partial<PublishingTarget>): Promise<PublishingTarget | undefined> {
+    const [target] = await db.update(publishingTargets)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(publishingTargets.siteId, siteId))
+      .returning();
+    return target;
+  }
+
+  async getWpPullJobs(targetId: string, status?: WpPullJobStatus): Promise<WpPullJob[]> {
+    if (status) {
+      return await db.select().from(wpPullJobs)
+        .where(and(eq(wpPullJobs.targetId, targetId), eq(wpPullJobs.status, status)))
+        .orderBy(desc(wpPullJobs.createdAt));
+    }
+    return await db.select().from(wpPullJobs)
+      .where(eq(wpPullJobs.targetId, targetId))
+      .orderBy(desc(wpPullJobs.createdAt));
+  }
+
+  async getWpPullJob(id: string): Promise<WpPullJob | undefined> {
+    const [job] = await db.select().from(wpPullJobs).where(eq(wpPullJobs.id, id));
+    return job;
+  }
+
+  async createWpPullJob(data: InsertWpPullJob): Promise<WpPullJob> {
+    const [job] = await db.insert(wpPullJobs).values(data).returning();
+    return job;
+  }
+
+  async updateWpPullJob(id: string, data: Partial<WpPullJob>): Promise<WpPullJob | undefined> {
+    const [job] = await db.update(wpPullJobs).set({ ...data, updatedAt: new Date() }).where(eq(wpPullJobs.id, id)).returning();
+    return job;
+  }
+
+  async leaseNextWpPullJob(siteId: string, leaseToken: string, leaseMinutes: number): Promise<WpPullJob | null> {
+    const now = new Date();
+    const leaseExpiresAt = new Date(now.getTime() + leaseMinutes * 60 * 1000);
+    
+    const [job] = await db.select().from(wpPullJobs)
+      .where(and(eq(wpPullJobs.siteId, siteId), eq(wpPullJobs.status, "queued")))
+      .orderBy(wpPullJobs.createdAt)
+      .limit(1);
+    
+    if (!job) return null;
+    
+    const [leasedJob] = await db.update(wpPullJobs)
+      .set({ status: "leased", leaseToken, leaseExpiresAt, updatedAt: now })
+      .where(and(eq(wpPullJobs.id, job.id), eq(wpPullJobs.status, "queued")))
+      .returning();
+    
+    return leasedJob || null;
+  }
+
+  async releaseExpiredWpPullJobLeases(): Promise<number> {
+    const now = new Date();
+    const result = await db.update(wpPullJobs)
+      .set({ status: "queued", leaseToken: null, leaseExpiresAt: null, updatedAt: now })
+      .where(and(
+        eq(wpPullJobs.status, "leased"),
+        sql`${wpPullJobs.leaseExpiresAt} < ${now}`
+      ))
+      .returning();
+    return result.length;
   }
 
   // Usage Ledger

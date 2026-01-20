@@ -246,6 +246,77 @@ export async function registerRoutes(
     }
   });
   
+  // =====================================================
+  // WordPress Pull Connector API (Plugin Authentication)
+  // =====================================================
+  
+  // Pull next job (called by WordPress plugin)
+  app.get("/api/wp/pull", async (req: Request, res: Response) => {
+    const { authenticateWpPullRequest, pullNextJob } = await import("./services/wp-pull-service");
+    
+    const siteId = req.query.siteId as string | undefined;
+    const secret = req.headers["x-contentsanta-secret"] as string | undefined;
+    
+    const auth = await authenticateWpPullRequest(siteId, secret);
+    if (!auth.ok) {
+      console.log(`[WP Pull] Auth failed for siteId=${siteId}: ${auth.error}`);
+      return res.status(401).json({ ok: false, error: auth.error, errorCode: auth.errorCode });
+    }
+    
+    const result = await pullNextJob(siteId!);
+    
+    if (!result.job) {
+      return res.status(204).send();
+    }
+    
+    console.log(`[WP Pull] Job ${result.job.jobId} leased for siteId=${siteId}`);
+    res.json(result.job);
+  });
+  
+  // Report job result (called by WordPress plugin after publishing)
+  app.post("/api/wp/report", async (req: Request, res: Response) => {
+    const { authenticateWpPullRequest, reportJobResult } = await import("./services/wp-pull-service");
+    
+    const { siteId, jobId, leaseToken, ok, wpPostId, wpUrl, error } = req.body;
+    const secret = req.headers["x-contentsanta-secret"] as string | undefined;
+    
+    const auth = await authenticateWpPullRequest(siteId, secret);
+    if (!auth.ok) {
+      console.log(`[WP Report] Auth failed for siteId=${siteId}: ${auth.error}`);
+      return res.status(401).json({ ok: false, error: auth.error, errorCode: auth.errorCode });
+    }
+    
+    const result = await reportJobResult({ siteId, jobId, leaseToken, ok, wpPostId, wpUrl, error });
+    
+    if (!result.ok) {
+      console.log(`[WP Report] Failed for jobId=${jobId}: ${result.error}`);
+      return res.status(400).json({ ok: false, error: result.error, errorCode: result.errorCode });
+    }
+    
+    console.log(`[WP Report] Job ${jobId} reported as ${ok ? "published" : "failed"}`);
+    res.json({ ok: true });
+  });
+  
+  // Status endpoint (for plugin diagnostics)
+  app.get("/api/wp/status", async (req: Request, res: Response) => {
+    const { authenticateWpPullRequest, getStatus } = await import("./services/wp-pull-service");
+    
+    const siteId = req.query.siteId as string | undefined;
+    const secret = req.headers["x-contentsanta-secret"] as string | undefined;
+    
+    const auth = await authenticateWpPullRequest(siteId, secret);
+    if (!auth.ok) {
+      return res.status(401).json({ ok: false, error: auth.error, errorCode: auth.errorCode });
+    }
+    
+    const status = await getStatus(siteId!);
+    if (!status) {
+      return res.status(404).json({ ok: false, error: "Site not found" });
+    }
+    
+    res.json({ ok: true, ...status });
+  });
+  
   // Stats (public for dashboard)
   app.get("/api/stats", async (req: Request, res: Response) => {
     try {
@@ -806,6 +877,112 @@ export async function registerRoutes(
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete publishing target" });
+    }
+  });
+
+  // WordPress Pull Target Management
+  app.post("/api/publishing-targets/wordpress-pull", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { createWordPressPullTarget } = await import("./services/wp-pull-service");
+      const { workspaceId, name, wpSiteUrl } = req.body;
+      
+      if (!workspaceId || !name) {
+        return res.status(400).json({ 
+          ok: false, 
+          error: "workspaceId and name are required",
+          errorCode: "VALIDATION_FAILED"
+        });
+      }
+      
+      const { target, rawSecret } = await createWordPressPullTarget(workspaceId, name, wpSiteUrl);
+      
+      res.status(201).json({
+        ok: true,
+        target,
+        secret: rawSecret,
+        message: "Save this secret - it will only be shown once!"
+      });
+    } catch (error) {
+      console.error("[WP Pull Target] Create failed:", error);
+      res.status(500).json({ ok: false, error: "Failed to create WordPress Pull target" });
+    }
+  });
+
+  app.post("/api/publishing-targets/:id/generate-secret", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { generateSecret } = await import("./services/wp-pull-service");
+      const target = await storage.getPublishingTarget(req.params.id);
+      
+      if (!target) {
+        return res.status(404).json({ ok: false, error: "Target not found" });
+      }
+      
+      if (target.type !== "wordpress_pull") {
+        return res.status(400).json({ ok: false, error: "Only WordPress Pull targets support secrets" });
+      }
+      
+      if (target.secretHash) {
+        return res.status(400).json({ 
+          ok: false, 
+          error: "Secret already exists. Use rotate-secret to replace it.",
+          errorCode: "SECRET_EXISTS"
+        });
+      }
+      
+      const { raw, hash, last4 } = await generateSecret();
+      
+      await storage.updatePublishingTarget(req.params.id, {
+        secretHash: hash,
+        secretLast4: last4,
+        secretCreatedAt: new Date(),
+      } as any);
+      
+      res.json({
+        ok: true,
+        secret: raw,
+        last4,
+        message: "Save this secret - it will only be shown once!"
+      });
+    } catch (error) {
+      console.error("[WP Pull Target] Generate secret failed:", error);
+      res.status(500).json({ ok: false, error: "Failed to generate secret" });
+    }
+  });
+
+  app.post("/api/publishing-targets/:id/rotate-secret", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { rotateSecret } = await import("./services/wp-pull-service");
+      
+      const result = await rotateSecret(req.params.id);
+      if (!result) {
+        return res.status(404).json({ ok: false, error: "Target not found or not a WordPress Pull target" });
+      }
+      
+      res.json({
+        ok: true,
+        secret: result.rawSecret,
+        last4: result.last4,
+        message: "Previous secret is now invalid. Save this new secret - it will only be shown once!"
+      });
+    } catch (error) {
+      console.error("[WP Pull Target] Rotate secret failed:", error);
+      res.status(500).json({ ok: false, error: "Failed to rotate secret" });
+    }
+  });
+
+  app.get("/api/publishing-targets/:id/wp-pull-jobs", async (req: Request, res: Response) => {
+    try {
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) {
+        return res.status(404).json({ ok: false, error: "Target not found" });
+      }
+      
+      const status = req.query.status as string | undefined;
+      const jobs = await storage.getWpPullJobs(req.params.id, status as any);
+      
+      res.json({ ok: true, jobs });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: "Failed to fetch jobs" });
     }
   });
 

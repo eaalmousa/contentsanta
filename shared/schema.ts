@@ -260,7 +260,7 @@ export type InsertComment = z.infer<typeof insertCommentSchema>;
 export type Comment = typeof comments.$inferSelect;
 
 // Publishing target types
-export const targetTypes = ["wordpress", "webflow", "x", "linkedin", "meta", "email", "custom"] as const;
+export const targetTypes = ["wordpress", "wordpress_pull", "webflow", "x", "linkedin", "meta", "email", "custom"] as const;
 export type TargetType = typeof targetTypes[number];
 
 // Publish status
@@ -293,11 +293,24 @@ export const publishingTargets = pgTable("publishing_targets", {
   defaultPostStatus: text("default_post_status").default("publish"),
   defaultPostType: text("default_post_type").default("posts"),
   
+  // WordPress Pull connector fields (type = wordpress_pull)
+  siteId: varchar("site_id", { length: 64 }), // Public identifier for plugin (cs_site_XXXXXXXX)
+  secretHash: text("secret_hash"), // bcrypt hash of secret (never store raw)
+  secretLast4: varchar("secret_last_4", { length: 4 }), // Last 4 chars for display
+  secretCreatedAt: timestamp("secret_created_at"),
+  secretRotatedAt: timestamp("secret_rotated_at"),
+  wpSiteUrl: text("wp_site_url"), // Informational URL (not required for auth)
+  lastPullAt: timestamp("last_pull_at"),
+  lastReportAt: timestamp("last_report_at"),
+  lastErrorCode: text("last_error_code"),
+  lastErrorMessage: text("last_error_message"),
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   index("idx_publishing_targets_workspace").on(table.workspaceId),
   index("idx_publishing_targets_active").on(table.isActive),
+  uniqueIndex("idx_publishing_targets_site_id").on(table.siteId),
 ]);
 
 export const insertPublishingTargetSchema = createInsertSchema(publishingTargets).omit({ 
@@ -307,9 +320,83 @@ export const insertPublishingTargetSchema = createInsertSchema(publishingTargets
   lastHealthCheckAt: true,
   lastHealthStatus: true,
   lastHealthMessage: true,
+  secretHash: true,
+  secretLast4: true,
+  secretCreatedAt: true,
+  secretRotatedAt: true,
+  lastPullAt: true,
+  lastReportAt: true,
+  lastErrorCode: true,
+  lastErrorMessage: true,
 });
 export type InsertPublishingTarget = z.infer<typeof insertPublishingTargetSchema>;
 export type PublishingTarget = typeof publishingTargets.$inferSelect;
+
+// WordPress Pull Job statuses
+export const wpPullJobStatuses = ["queued", "leased", "publishing", "published", "failed"] as const;
+export type WpPullJobStatus = typeof wpPullJobStatuses[number];
+
+// WordPress Pull Jobs (job queue for plugin-based publishing)
+export const wpPullJobs = pgTable("wp_pull_jobs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  targetId: varchar("target_id", { length: 36 }).notNull(),
+  siteId: varchar("site_id", { length: 64 }).notNull(), // Redundant index for fast pull by plugin
+  
+  // Content reference (can be from various sources)
+  storyId: varchar("story_id", { length: 36 }),
+  pipelineItemId: varchar("pipeline_item_id", { length: 36 }),
+  
+  // Content payload for WordPress
+  title: text("title").notNull(),
+  contentHtml: text("content_html").notNull(),
+  postStatus: text("post_status").default("publish"), // draft | publish
+  categories: text("categories").array(),
+  tags: text("tags").array(),
+  excerpt: text("excerpt"),
+  slug: text("slug"),
+  sourceUrl: text("source_url"),
+  featuredImageUrl: text("featured_image_url"),
+  metadataJson: jsonb("metadata_json").default({}), // topicId, storyId, etc.
+  
+  // Job status
+  status: text("status").notNull().$type<WpPullJobStatus>().default("queued"),
+  
+  // Lease fields (prevent duplicate processing)
+  leaseToken: varchar("lease_token", { length: 64 }),
+  leaseExpiresAt: timestamp("lease_expires_at"),
+  
+  // Tracking
+  attempts: integer("attempts").default(0),
+  lastAttemptAt: timestamp("last_attempt_at"),
+  
+  // Result
+  resultWpPostId: integer("result_wp_post_id"),
+  resultWpUrl: text("result_wp_url"),
+  error: text("error"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_wp_pull_jobs_target").on(table.targetId),
+  index("idx_wp_pull_jobs_site_id").on(table.siteId),
+  index("idx_wp_pull_jobs_status").on(table.status),
+  index("idx_wp_pull_jobs_lease").on(table.leaseExpiresAt),
+]);
+
+export const insertWpPullJobSchema = createInsertSchema(wpPullJobs).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true,
+  leaseToken: true,
+  leaseExpiresAt: true,
+  attempts: true,
+  lastAttemptAt: true,
+  resultWpPostId: true,
+  resultWpUrl: true,
+  error: true,
+});
+export type InsertWpPullJob = z.infer<typeof insertWpPullJobSchema>;
+export type WpPullJob = typeof wpPullJobs.$inferSelect;
 
 // Publish Jobs
 export const publishJobs = pgTable("publish_jobs", {

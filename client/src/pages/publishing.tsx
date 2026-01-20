@@ -66,8 +66,9 @@ import type { PublishingTarget, PublishJob, Asset, AssetVersion, TargetType, WpT
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDistanceToNow } from "date-fns";
 
-const platformOptions: { value: TargetType; label: string; icon: React.ElementType; color: string }[] = [
-  { value: "wordpress", label: "WordPress", icon: SiWordpress, color: "text-blue-600" },
+const platformOptions: { value: TargetType; label: string; icon: React.ElementType; color: string; description?: string }[] = [
+  { value: "wordpress", label: "WordPress (Direct)", icon: SiWordpress, color: "text-blue-600", description: "Server pushes content directly to WordPress REST API" },
+  { value: "wordpress_pull", label: "WordPress (Plugin)", icon: SiWordpress, color: "text-green-600", description: "WP plugin pulls content - avoids CAPTCHA blocks" },
   { value: "webflow", label: "Webflow", icon: Globe, color: "text-blue-500" },
   { value: "linkedin", label: "LinkedIn", icon: SiLinkedin, color: "text-blue-700" },
   { value: "x", label: "X (Twitter)", icon: Globe, color: "text-gray-800 dark:text-gray-200" },
@@ -231,7 +232,32 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
 
   const platformInfo = platformOptions.find((p) => p.value === target.type);
   const isWordPress = target.type === "wordpress";
+  const isWordPressPull = target.type === "wordpress_pull";
   const isTesting = testConnectionMutation.isPending || testDraftMutation.isPending;
+
+  const [showSecret, setShowSecret] = useState<string | null>(null);
+  
+  const rotateSecretMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/publishing-targets/${target.id}/rotate-secret`);
+      return await res.json();
+    },
+    onSuccess: (data: any) => {
+      if (data.ok) {
+        setShowSecret(data.secret);
+        queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
+        toast({ 
+          title: "Secret rotated", 
+          description: "Copy the new secret now - it won't be shown again!" 
+        });
+      } else {
+        toast({ title: "Failed to rotate secret", description: data.error, variant: "destructive" });
+      }
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to rotate secret", description: error?.message, variant: "destructive" });
+    },
+  });
 
   const healthCheckMutation = useMutation({
     mutationFn: async () => {
@@ -384,6 +410,104 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
               </div>
               <TaxonomySyncSection targetId={target.id} />
             </>
+          )}
+          
+          {isWordPressPull && (
+            <div className="pt-2 border-t space-y-4">
+              <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
+                  <CheckCircle className="h-4 w-4" />
+                  <span className="font-medium">Plugin-Based Publishing</span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  This target uses our WordPress plugin to pull content. No server-to-server connection needed - avoids CAPTCHA blocks!
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Site ID</div>
+                <div className="flex items-center gap-2">
+                  <code className="px-3 py-2 bg-muted rounded text-sm font-mono flex-1">
+                    {target.siteId || "Not configured"}
+                  </code>
+                  {target.siteId && (
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={() => {
+                        navigator.clipboard.writeText(target.siteId!);
+                        toast({ title: "Site ID copied" });
+                      }}
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Secret Key</div>
+                {showSecret ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <code className="px-3 py-2 bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-900 rounded text-sm font-mono flex-1 break-all">
+                        {showSecret}
+                      </code>
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => {
+                          navigator.clipboard.writeText(showSecret);
+                          toast({ title: "Secret copied" });
+                        }}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                      Copy this secret now - it won't be shown again!
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <code className="px-3 py-2 bg-muted rounded text-sm font-mono flex-1">
+                      {target.secretLast4 ? `****${target.secretLast4}` : "Not configured"}
+                    </code>
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={() => rotateSecretMutation.mutate()}
+                      disabled={rotateSecretMutation.isPending}
+                    >
+                      {rotateSecretMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3 mr-1" />
+                      )}
+                      {target.secretLast4 ? "Rotate" : "Generate"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+              
+              {target.lastPullAt && (
+                <div className="text-xs text-muted-foreground">
+                  Last pull: {formatDistanceToNow(new Date(target.lastPullAt), { addSuffix: true })}
+                </div>
+              )}
+              
+              <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+                <div className="text-sm font-medium">Plugin Setup Instructions</div>
+                <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
+                  <li>Install the "Content Santa Connector" plugin in WordPress</li>
+                  <li>Go to Settings → Content Santa Connector</li>
+                  <li>Enter the Base URL: <code className="px-1 bg-muted rounded">{window.location.origin}</code></li>
+                  <li>Enter the Site ID: <code className="px-1 bg-muted rounded">{target.siteId}</code></li>
+                  <li>Enter the Secret Key from above</li>
+                  <li>Save and test the connection</li>
+                </ol>
+              </div>
+            </div>
           )}
         </div>
       </CardContent>
@@ -825,6 +949,18 @@ function CreateTargetDialog({
             {(selectedType === "x" || selectedType === "linkedin" || selectedType === "meta") && (
               <div className="rounded-lg border bg-muted/50 p-4 text-sm text-muted-foreground">
                 Social media publishing requires OAuth authentication. After saving, you'll be redirected to authorize the connection.
+              </div>
+            )}
+
+            {selectedType === "wordpress_pull" && (
+              <div className="rounded-lg border bg-green-50 dark:bg-green-950/30 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-green-700 dark:text-green-400 font-medium">
+                  <CheckCircle className="h-4 w-4" />
+                  Plugin-Based Publishing
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  No credentials needed! After creating this target, you'll get a Site ID and Secret to configure in your WordPress plugin. The plugin will securely pull content from Content Santa.
+                </p>
               </div>
             )}
 
