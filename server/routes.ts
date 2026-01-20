@@ -2639,6 +2639,21 @@ export async function registerRoutes(
       res.status(500).json({ error: error.message || "Failed to trigger pipelines" });
     }
   });
+  
+  app.get("/api/analytics/pipeline", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId is required" });
+      }
+      
+      const analytics = await storage.getPipelineAnalytics(workspaceId);
+      res.json(analytics);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch pipeline analytics" });
+    }
+  });
 
   // Mock Valid RSS (for comparison)
   app.get("/__test/rss/valid", (req: Request, res: Response) => {

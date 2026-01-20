@@ -303,6 +303,17 @@ export interface IStorage {
   
   // Publishing Target health
   updatePublishingTargetHealth(id: string, status: TargetHealthStatus, message?: string): Promise<void>;
+  
+  // ============ ANALYTICS ============
+  getPipelineAnalytics(workspaceId: string): Promise<{
+    statusCounts: Record<string, number>;
+    totalItems: number;
+    successRate: number;
+    avgProcessingTime: number | null;
+    dailyTrends: Array<{ date: string; published: number; quarantined: number; total: number }>;
+    topicPerformance: Array<{ topicId: string; topicName: string; published: number; quarantined: number; pending: number }>;
+    jobRunStats: { total: number; byType: Record<string, number>; recentFailures: number };
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1478,6 +1489,112 @@ export class DatabaseStorage implements IStorage {
         lastHealthMessage: message || null,
       })
       .where(eq(publishingTargets.id, id));
+  }
+
+  // ============ ANALYTICS ============
+  async getPipelineAnalytics(workspaceId: string): Promise<{
+    statusCounts: Record<string, number>;
+    totalItems: number;
+    successRate: number;
+    avgProcessingTime: number | null;
+    dailyTrends: Array<{ date: string; published: number; quarantined: number; total: number }>;
+    topicPerformance: Array<{ topicId: string; topicName: string; published: number; quarantined: number; pending: number }>;
+    jobRunStats: { total: number; byType: Record<string, number>; recentFailures: number };
+  }> {
+    const allItems = await db.select().from(pipelineItems)
+      .where(eq(pipelineItems.workspaceId, workspaceId));
+    
+    const statusCounts: Record<string, number> = {};
+    for (const item of allItems) {
+      statusCounts[item.status] = (statusCounts[item.status] || 0) + 1;
+    }
+    
+    const totalItems = allItems.length;
+    const publishedCount = statusCounts["published"] || 0;
+    const verifiedCount = statusCounts["verified"] || 0;
+    const quarantinedCount = statusCounts["quarantined"] || 0;
+    const successfulCount = publishedCount + verifiedCount;
+    const completedCount = successfulCount + quarantinedCount;
+    const successRate = completedCount > 0 ? (successfulCount / completedCount) * 100 : 0;
+    
+    const itemsWithTimes = allItems.filter(i => i.createdAt && i.publishedAt);
+    let avgProcessingTime: number | null = null;
+    if (itemsWithTimes.length > 0) {
+      const totalMs = itemsWithTimes.reduce((sum, i) => {
+        const start = new Date(i.createdAt!).getTime();
+        const end = new Date(i.publishedAt!).getTime();
+        return sum + (end - start);
+      }, 0);
+      avgProcessingTime = Math.round(totalMs / itemsWithTimes.length / 1000 / 60);
+    }
+    
+    const dailyMap = new Map<string, { published: number; quarantined: number; total: number }>();
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    for (const item of allItems) {
+      if (!item.createdAt) continue;
+      const itemDate = new Date(item.createdAt);
+      if (itemDate < thirtyDaysAgo) continue;
+      
+      const dateKey = itemDate.toISOString().split("T")[0];
+      const existing = dailyMap.get(dateKey) || { published: 0, quarantined: 0, total: 0 };
+      existing.total++;
+      if (item.status === "published" || item.status === "verified") existing.published++;
+      if (item.status === "quarantined") existing.quarantined++;
+      dailyMap.set(dateKey, existing);
+    }
+    
+    const dailyTrends = Array.from(dailyMap.entries())
+      .map(([date, data]) => ({ date, ...data }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    
+    const workspaceTopics = await db.select().from(topics).where(eq(topics.workspaceId, workspaceId));
+    const topicPerformance = [];
+    
+    for (const topic of workspaceTopics) {
+      const topicItems = allItems.filter(i => i.topicId === topic.id);
+      const pub = topicItems.filter(i => i.status === "published" || i.status === "verified").length;
+      const quar = topicItems.filter(i => i.status === "quarantined").length;
+      const pend = topicItems.filter(i => 
+        !["published", "verified", "quarantined", "skipped"].includes(i.status)
+      ).length;
+      
+      topicPerformance.push({
+        topicId: topic.id,
+        topicName: topic.name,
+        published: pub,
+        quarantined: quar,
+        pending: pend,
+      });
+    }
+    
+    const recentJobRuns = await db.select().from(automationJobRuns)
+      .where(eq(automationJobRuns.workspaceId, workspaceId))
+      .orderBy(desc(automationJobRuns.startedAt))
+      .limit(500);
+    
+    const byType: Record<string, number> = {};
+    let recentFailures = 0;
+    
+    for (const run of recentJobRuns) {
+      byType[run.jobType] = (byType[run.jobType] || 0) + 1;
+      if (run.status === "failed") recentFailures++;
+    }
+    
+    return {
+      statusCounts,
+      totalItems,
+      successRate: Math.round(successRate * 10) / 10,
+      avgProcessingTime,
+      dailyTrends,
+      topicPerformance,
+      jobRunStats: {
+        total: recentJobRuns.length,
+        byType,
+        recentFailures,
+      },
+    };
   }
 }
 

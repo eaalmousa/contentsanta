@@ -28,6 +28,7 @@ import ContentGoals from "@/pages/content-goals";
 import SmartEditor from "@/pages/smart-editor";
 import Topics from "@/pages/topics";
 import Pipeline from "@/pages/pipeline";
+import Analytics from "@/pages/analytics";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -36,6 +37,7 @@ function Router() {
       <Route path="/" component={SmartEditor} />
       <Route path="/topics" component={Topics} />
       <Route path="/pipeline" component={Pipeline} />
+      <Route path="/analytics" component={Analytics} />
       <Route path="/library" component={ContentLibrary} />
       <Route path="/publishing" component={Publishing} />
       <Route path="/dashboard" component={Dashboard} />

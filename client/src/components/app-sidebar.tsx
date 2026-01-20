@@ -7,6 +7,7 @@ import {
   Rss,
   Inbox,
   Workflow,
+  BarChart3,
 } from "lucide-react";
 import {
   Sidebar,
@@ -26,6 +27,7 @@ const mainNavItems = [
   { title: "Smart Editor", url: "/", icon: Edit3 },
   { title: "Topics", url: "/topics", icon: Target },
   { title: "Pipeline", url: "/pipeline", icon: Workflow },
+  { title: "Analytics", url: "/analytics", icon: BarChart3 },
   { title: "Publishing", url: "/publishing", icon: Send },
 ];
 
