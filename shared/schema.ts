@@ -17,6 +17,8 @@ export const workspaces = pgTable("workspaces", {
   slug: text("slug").notNull().unique(),
   planId: text("plan_id"),
   features: jsonb("features").default({}),
+  automationKeyHash: text("automation_key_hash"),
+  automationKeyLast4: text("automation_key_last4"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { storage } from "./storage";
-import { setupAuth, registerAuthRoutes, isAuthenticated, authStorage } from "./replit_integrations/auth";
+import { setupAuth, registerAuthRoutes, isAuthenticated, authStorage, createAutomationAuthMiddleware } from "./replit_integrations/auth";
 import { processWorkflowWithAI } from "./ai-workflow";
 import { 
   insertInputSchema, 
@@ -2686,6 +2686,93 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== WORKSPACE AUTOMATION KEYS ====================
+  
+  // Generate or rotate workspace automation key
+  app.post("/api/workspaces/:id/automation-key", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { generateAutomationKey } = await import("./replit_integrations/auth");
+      const workspaceId = req.params.id;
+      const userId = (req.user as any)?.claims?.sub;
+      
+      // Verify user has admin/owner access to workspace
+      const workspaceUser = await storage.getWorkspaceUser(workspaceId, userId);
+      if (!workspaceUser || !["owner", "admin"].includes(workspaceUser.role)) {
+        return res.status(403).json({ 
+          ok: false, 
+          error: "Only workspace owners and admins can manage automation keys" 
+        });
+      }
+      
+      const workspace = await storage.getWorkspace(workspaceId);
+      if (!workspace) {
+        return res.status(404).json({ ok: false, error: "Workspace not found" });
+      }
+      
+      const { raw, hash, last4 } = await generateAutomationKey();
+      
+      await storage.updateWorkspace(workspaceId, {
+        automationKeyHash: hash,
+        automationKeyLast4: last4,
+      } as any);
+      
+      res.status(201).json({
+        ok: true,
+        automationKey: raw,
+        last4,
+        message: "Save this key - it will only be shown once! Use it in the X-ContentSanta-Automation-Key header."
+      });
+    } catch (error: any) {
+      console.error("[Automation Key] Generate failed:", error);
+      res.status(500).json({ ok: false, error: "Failed to generate automation key" });
+    }
+  });
+  
+  // Delete workspace automation key
+  app.delete("/api/workspaces/:id/automation-key", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.params.id;
+      const userId = (req.user as any)?.claims?.sub;
+      
+      // Verify user has admin/owner access to workspace
+      const workspaceUser = await storage.getWorkspaceUser(workspaceId, userId);
+      if (!workspaceUser || !["owner", "admin"].includes(workspaceUser.role)) {
+        return res.status(403).json({ 
+          ok: false, 
+          error: "Only workspace owners and admins can manage automation keys" 
+        });
+      }
+      
+      await storage.updateWorkspace(workspaceId, {
+        automationKeyHash: null,
+        automationKeyLast4: null,
+      } as any);
+      
+      res.json({ ok: true, message: "Automation key deleted" });
+    } catch (error: any) {
+      console.error("[Automation Key] Delete failed:", error);
+      res.status(500).json({ ok: false, error: "Failed to delete automation key" });
+    }
+  });
+  
+  // Get workspace automation key status (not the key itself)
+  app.get("/api/workspaces/:id/automation-key", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspace = await storage.getWorkspace(req.params.id);
+      if (!workspace) {
+        return res.status(404).json({ ok: false, error: "Workspace not found" });
+      }
+      
+      res.json({
+        ok: true,
+        hasKey: !!(workspace as any).automationKeyHash,
+        last4: (workspace as any).automationKeyLast4 || null,
+      });
+    } catch (error: any) {
+      res.status(500).json({ ok: false, error: "Failed to fetch automation key status" });
+    }
+  });
+
   // ==================== PUBLISHING TEST ====================
   
   // Note: /api/publishing-targets/:id/test is defined earlier in the routes
@@ -2948,6 +3035,23 @@ export async function registerRoutes(
   // Pipeline Automation API
   // =====================
   
+  // Create pipeline auth middleware that accepts both user session and automation key
+  const pipelineAuthMiddleware = createAutomationAuthMiddleware(async (req: Request) => {
+    const topicId = req.params.topicId;
+    if (!topicId) return null;
+    
+    const topic = await storage.getTopic(topicId);
+    if (!topic) return null;
+    
+    const workspace = await storage.getWorkspace(topic.workspaceId);
+    if (!workspace) return null;
+    
+    return {
+      id: workspace.id,
+      automationKeyHash: (workspace as any).automationKeyHash || null,
+    };
+  });
+  
   app.get("/api/topics/:topicId/pipeline-items", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const { topicId } = req.params;
@@ -2979,18 +3083,23 @@ export async function registerRoutes(
     }
   });
   
-  app.post("/api/topics/:topicId/run-pipeline", isAuthenticated, async (req: Request, res: Response) => {
+  app.post("/api/topics/:topicId/run-pipeline", pipelineAuthMiddleware, async (req: Request, res: Response) => {
     try {
       const { topicId } = req.params;
+      const isAutomationAuth = !!(req as any).automationAuth;
+      console.log(`[Pipeline] Run pipeline request for topic: ${topicId}, auth: ${isAutomationAuth ? "automation-key" : "user-session"}`);
       
       const topic = await storage.getTopic(topicId);
       if (!topic) {
+        console.log(`[Pipeline] Topic not found: ${topicId}`);
         return res.status(404).json({ error: "Topic not found" });
       }
       
+      console.log(`[Pipeline] Starting pipeline for topic: ${topic.name} (${topicId})`);
       const { runFullPipelineForTopic } = await import("./services/pipeline-jobs-service");
       const result = await runFullPipelineForTopic(topic);
       
+      console.log(`[Pipeline] Completed pipeline for topic: ${topic.name}`);
       res.json({
         success: true,
         topicId: result.topicId,
@@ -2998,7 +3107,11 @@ export async function registerRoutes(
         results: result.results,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to run pipeline" });
+      console.error(`[Pipeline] Error running pipeline:`, error?.stack || error);
+      res.status(500).json({ 
+        error: error.message || "Failed to run pipeline",
+        errorCode: "PIPELINE_ERROR"
+      });
     }
   });
   
