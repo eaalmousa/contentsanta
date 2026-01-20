@@ -297,7 +297,7 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
     // Fall back to stored status
     const status = target.lastHealthStatus;
     if (!status || status === "unknown") {
-      return <Badge variant="outline" className="text-muted-foreground">Unknown</Badge>;
+      return <Badge variant="outline" className="text-muted-foreground">Awaiting Connection</Badge>;
     }
     if (status === "ok") {
       return <Badge variant="default" className="bg-green-600">Healthy</Badge>;

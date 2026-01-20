@@ -263,6 +263,17 @@ export async function registerRoutes(
       return res.status(401).json({ ok: false, error: auth.error, errorCode: auth.errorCode });
     }
     
+    // Update health status on successful authentication (even if no jobs)
+    const now = new Date();
+    await storage.updatePublishingTargetBySiteId(siteId!, {
+      lastPullAt: now,
+      lastHealthStatus: "ok",
+      lastHealthCheckAt: now,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+    });
+    console.log(`[WP Pull] Authenticated successfully for siteId=${siteId}`);
+    
     const result = await pullNextJob(siteId!);
     
     if (!result.job) {
