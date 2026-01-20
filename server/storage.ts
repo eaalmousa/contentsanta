@@ -34,6 +34,10 @@ import {
   imageAssets, type ImageAsset, type InsertImageAsset,
   imageUsages, type ImageUsage, type InsertImageUsage,
   wpTaxonomyCache, type WpTaxonomyCache, type InsertWpTaxonomyCache, type WpTaxonomyType,
+  pipelineItems, type PipelineItem, type InsertPipelineItem, type PipelineItemStatus,
+  automationJobRuns, type AutomationJobRun, type InsertAutomationJobRun, type AutomationJobType, type AutomationJobStatus,
+  publishAttempts, type PublishAttempt, type InsertPublishAttempt,
+  type TargetHealthStatus,
   type RoleType,
   type RunStatus,
   type AssetStatus,
@@ -273,6 +277,32 @@ export interface IStorage {
   upsertWpTaxonomyCache(data: InsertWpTaxonomyCache): Promise<WpTaxonomyCache>;
   clearWpTaxonomyCache(publishingTargetId: string, taxonomyType?: WpTaxonomyType): Promise<void>;
   getWpTaxonomySyncStatus(publishingTargetId: string): Promise<{ categories: Date | null; tags: Date | null }>;
+  
+  // ============ AUTOMATION PIPELINE ============
+  
+  // Pipeline Items
+  getPipelineItems(topicId: string, status?: PipelineItemStatus): Promise<PipelineItem[]>;
+  getPipelineItemsByWorkspace(workspaceId: string, status?: PipelineItemStatus): Promise<PipelineItem[]>;
+  getPipelineItem(id: string): Promise<PipelineItem | undefined>;
+  getPipelineItemByTopicAndStory(topicId: string, storyId: string): Promise<PipelineItem | undefined>;
+  createPipelineItem(data: InsertPipelineItem): Promise<PipelineItem>;
+  updatePipelineItem(id: string, data: Partial<PipelineItem>): Promise<PipelineItem | undefined>;
+  deletePipelineItem(id: string): Promise<void>;
+  getScheduledPipelineItems(topicId?: string): Promise<PipelineItem[]>;
+  getQuarantinedPipelineItems(workspaceId: string): Promise<PipelineItem[]>;
+  
+  // Automation Job Runs
+  getAutomationJobRuns(topicId?: string, jobType?: AutomationJobType): Promise<AutomationJobRun[]>;
+  getAutomationJobRun(id: string): Promise<AutomationJobRun | undefined>;
+  createAutomationJobRun(data: InsertAutomationJobRun): Promise<AutomationJobRun>;
+  updateAutomationJobRun(id: string, data: Partial<AutomationJobRun>): Promise<AutomationJobRun | undefined>;
+  
+  // Publish Attempts
+  getPublishAttempts(pipelineItemId: string): Promise<PublishAttempt[]>;
+  createPublishAttempt(data: InsertPublishAttempt): Promise<PublishAttempt>;
+  
+  // Publishing Target health
+  updatePublishingTargetHealth(id: string, status: TargetHealthStatus, message?: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1328,6 +1358,126 @@ export class DatabaseStorage implements IStorage {
       if (r.taxonomyType === "tag") status.tags = r.lastSync;
     }
     return status;
+  }
+
+  // ============ AUTOMATION PIPELINE ============
+
+  // Pipeline Items
+  async getPipelineItems(topicId: string, status?: PipelineItemStatus): Promise<PipelineItem[]> {
+    const conditions = [eq(pipelineItems.topicId, topicId)];
+    if (status) conditions.push(eq(pipelineItems.status, status));
+    
+    return await db.select().from(pipelineItems)
+      .where(and(...conditions))
+      .orderBy(desc(pipelineItems.createdAt));
+  }
+
+  async getPipelineItemsByWorkspace(workspaceId: string, status?: PipelineItemStatus): Promise<PipelineItem[]> {
+    const conditions = [eq(pipelineItems.workspaceId, workspaceId)];
+    if (status) conditions.push(eq(pipelineItems.status, status));
+    
+    return await db.select().from(pipelineItems)
+      .where(and(...conditions))
+      .orderBy(desc(pipelineItems.createdAt));
+  }
+
+  async getPipelineItem(id: string): Promise<PipelineItem | undefined> {
+    const [item] = await db.select().from(pipelineItems).where(eq(pipelineItems.id, id));
+    return item;
+  }
+
+  async getPipelineItemByTopicAndStory(topicId: string, storyId: string): Promise<PipelineItem | undefined> {
+    const [item] = await db.select().from(pipelineItems)
+      .where(and(eq(pipelineItems.topicId, topicId), eq(pipelineItems.storyId, storyId)));
+    return item;
+  }
+
+  async createPipelineItem(data: InsertPipelineItem): Promise<PipelineItem> {
+    const [item] = await db.insert(pipelineItems).values(data).returning();
+    return item;
+  }
+
+  async updatePipelineItem(id: string, data: Partial<PipelineItem>): Promise<PipelineItem | undefined> {
+    const [item] = await db.update(pipelineItems)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(pipelineItems.id, id))
+      .returning();
+    return item;
+  }
+
+  async deletePipelineItem(id: string): Promise<void> {
+    await db.delete(pipelineItems).where(eq(pipelineItems.id, id));
+  }
+
+  async getScheduledPipelineItems(topicId?: string): Promise<PipelineItem[]> {
+    const conditions = [eq(pipelineItems.status, "scheduled" as PipelineItemStatus)];
+    if (topicId) conditions.push(eq(pipelineItems.topicId, topicId));
+    
+    return await db.select().from(pipelineItems)
+      .where(and(...conditions))
+      .orderBy(pipelineItems.scheduledAt);
+  }
+
+  async getQuarantinedPipelineItems(workspaceId: string): Promise<PipelineItem[]> {
+    return await db.select().from(pipelineItems)
+      .where(and(
+        eq(pipelineItems.workspaceId, workspaceId),
+        eq(pipelineItems.status, "quarantined" as PipelineItemStatus)
+      ))
+      .orderBy(desc(pipelineItems.updatedAt));
+  }
+
+  // Automation Job Runs
+  async getAutomationJobRuns(topicId?: string, jobType?: AutomationJobType): Promise<AutomationJobRun[]> {
+    const conditions = [];
+    if (topicId) conditions.push(eq(automationJobRuns.topicId, topicId));
+    if (jobType) conditions.push(eq(automationJobRuns.jobType, jobType));
+    
+    return await db.select().from(automationJobRuns)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(automationJobRuns.startedAt))
+      .limit(100);
+  }
+
+  async getAutomationJobRun(id: string): Promise<AutomationJobRun | undefined> {
+    const [run] = await db.select().from(automationJobRuns).where(eq(automationJobRuns.id, id));
+    return run;
+  }
+
+  async createAutomationJobRun(data: InsertAutomationJobRun): Promise<AutomationJobRun> {
+    const [run] = await db.insert(automationJobRuns).values(data).returning();
+    return run;
+  }
+
+  async updateAutomationJobRun(id: string, data: Partial<AutomationJobRun>): Promise<AutomationJobRun | undefined> {
+    const [run] = await db.update(automationJobRuns)
+      .set(data)
+      .where(eq(automationJobRuns.id, id))
+      .returning();
+    return run;
+  }
+
+  // Publish Attempts
+  async getPublishAttempts(pipelineItemId: string): Promise<PublishAttempt[]> {
+    return await db.select().from(publishAttempts)
+      .where(eq(publishAttempts.pipelineItemId, pipelineItemId))
+      .orderBy(desc(publishAttempts.attemptedAt));
+  }
+
+  async createPublishAttempt(data: InsertPublishAttempt): Promise<PublishAttempt> {
+    const [attempt] = await db.insert(publishAttempts).values(data).returning();
+    return attempt;
+  }
+
+  // Publishing Target health
+  async updatePublishingTargetHealth(id: string, status: TargetHealthStatus, message?: string): Promise<void> {
+    await db.update(publishingTargets)
+      .set({
+        lastHealthCheckAt: new Date(),
+        lastHealthStatus: status,
+        lastHealthMessage: message || null,
+      })
+      .where(eq(publishingTargets.id, id));
   }
 }
 

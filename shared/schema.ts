@@ -267,7 +267,11 @@ export type TargetType = typeof targetTypes[number];
 export const publishStatuses = ["queued", "scheduled", "running", "succeeded", "failed", "cancelled"] as const;
 export type PublishStatus = typeof publishStatuses[number];
 
-// Publishing Targets
+// Target health status
+export const targetHealthStatuses = ["ok", "fail", "unknown"] as const;
+export type TargetHealthStatus = typeof targetHealthStatuses[number];
+
+// Publishing Targets (evolved to support automation pipeline)
 export const publishingTargets = pgTable("publishing_targets", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
@@ -276,10 +280,34 @@ export const publishingTargets = pgTable("publishing_targets", {
   name: text("name").notNull(),
   credentialsEncrypted: text("credentials_encrypted"),
   configJson: jsonb("config_json").default({}),
+  
+  // Status
+  isActive: boolean("is_active").default(true),
+  
+  // Health check fields
+  lastHealthCheckAt: timestamp("last_health_check_at"),
+  lastHealthStatus: text("last_health_status").$type<TargetHealthStatus>().default("unknown"),
+  lastHealthMessage: text("last_health_message"),
+  
+  // Default publishing settings
+  defaultPostStatus: text("default_post_status").default("publish"),
+  defaultPostType: text("default_post_type").default("posts"),
+  
   createdAt: timestamp("created_at").defaultNow(),
-});
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_publishing_targets_workspace").on(table.workspaceId),
+  index("idx_publishing_targets_active").on(table.isActive),
+]);
 
-export const insertPublishingTargetSchema = createInsertSchema(publishingTargets).omit({ id: true, createdAt: true });
+export const insertPublishingTargetSchema = createInsertSchema(publishingTargets).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true,
+  lastHealthCheckAt: true,
+  lastHealthStatus: true,
+  lastHealthMessage: true,
+});
 export type InsertPublishingTarget = z.infer<typeof insertPublishingTargetSchema>;
 export type PublishingTarget = typeof publishingTargets.$inferSelect;
 
@@ -881,7 +909,39 @@ export const insertDraftSchema = createInsertSchema(drafts).omit({ id: true, cre
 export type InsertDraft = z.infer<typeof insertDraftSchema>;
 export type Draft = typeof drafts.$inferSelect;
 
-// Topics (evolved from automations - user-facing content configurations)
+// Automation modes for topics/pipelines
+export const automationModes = ["auto", "manual", "approval_required"] as const;
+export type AutomationMode = typeof automationModes[number];
+
+// Source modes for topic source selection
+export const sourceModes = ["all", "whitelist"] as const;
+export type SourceMode = typeof sourceModes[number];
+
+// Quiet hours configuration interface
+export interface QuietHoursConfig {
+  start: string;  // HH:MM format
+  end: string;    // HH:MM format
+  timezone: string;  // e.g., "Asia/Dubai"
+}
+
+// Output settings configuration interface
+export interface OutputSettings {
+  tone?: string;
+  style?: string;
+  length?: "short" | "medium" | "long";
+  attribution?: boolean;
+  includeSourceLinks?: boolean;
+}
+
+// Policy flags configuration interface
+export interface PolicyFlags {
+  avoidPolitics?: boolean;
+  avoidConflict?: boolean;
+  avoidReligion?: boolean;
+  customBlockedTopics?: string[];
+}
+
+// Topics (evolved from automations - now act as automation pipelines)
 export const topics = pgTable("topics", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
@@ -893,24 +953,62 @@ export const topics = pgTable("topics", {
   region: text("region").notNull().default("global"),
   countries: text("countries").array().default([]),
   filters: jsonb("filters").default({}),
+  
+  // Source selection
+  sourceMode: text("source_mode").$type<SourceMode>().default("all"),
   sourceIds: text("source_ids").array(),
   mediaTierRules: jsonb("media_tier_rules").default({}),
+  
+  // Keywords for matching
+  includeKeywords: text("include_keywords").array().default([]),
+  excludeKeywords: text("exclude_keywords").array().default([]),
+  
+  // Policy flags for content filtering
+  policyFlags: jsonb("policy_flags").default({}),
+  
+  // Automation settings
+  automationMode: text("automation_mode").$type<AutomationMode>().default("auto"),
   schedule: text("schedule"),
+  dailyCap: integer("daily_cap").default(5),
+  minSpacingMinutes: integer("min_spacing_minutes").default(120),
+  quietHours: jsonb("quiet_hours"),
+  
+  // Legacy fields (kept for compatibility)
   outputVolumePerDay: integer("output_volume_per_day").default(5),
   reviewMode: text("review_mode").default("manual"),
   autoPublish: text("auto_publish").default("false"),
   autoGenerateVisuals: text("auto_generate_visuals").default("false"),
+  
+  // Publishing configuration
   publishingTargetId: varchar("publishing_target_id", { length: 36 }),
   taxonomyRules: jsonb("taxonomy_rules").default({}),
+  outputSettings: jsonb("output_settings").default({}),
+  
+  // Status
   isLive: text("is_live").default("false"),
   lastRunAt: timestamp("last_run_at"),
   nextRunAt: timestamp("next_run_at"),
+  
+  // Stats (for dashboard display)
+  publishedToday: integer("published_today").default(0),
+  publishedTodayResetAt: timestamp("published_today_reset_at"),
+  
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   index("idx_topics_workspace").on(table.workspaceId),
+  index("idx_topics_is_live").on(table.isLive),
 ]);
 
-export const insertTopicSchema = createInsertSchema(topics).omit({ id: true, createdAt: true, lastRunAt: true, nextRunAt: true });
+export const insertTopicSchema = createInsertSchema(topics).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true,
+  lastRunAt: true, 
+  nextRunAt: true,
+  publishedToday: true,
+  publishedTodayResetAt: true,
+});
 export type InsertTopic = z.infer<typeof insertTopicSchema>;
 export type Topic = typeof topics.$inferSelect;
 
@@ -935,8 +1033,11 @@ export const draftsRelations = relations(drafts, ({ one }) => ({
 
 export const topicsRelations = relations(topics, ({ one, many }) => ({
   workspace: one(workspaces, { fields: [topics.workspaceId], references: [workspaces.id] }),
+  publishingTarget: one(publishingTargets, { fields: [topics.publishingTargetId], references: [publishingTargets.id] }),
   drafts: many(drafts),
   topicSources: many(topicSources),
+  pipelineItems: many(pipelineItems),
+  automationJobRuns: many(automationJobRuns),
 }));
 
 // ============ TOPIC SOURCES (per-topic source enablement) ============
@@ -1112,4 +1213,204 @@ export interface TopicTaxonomyRules {
 export const wpTaxonomyCacheRelations = relations(wpTaxonomyCache, ({ one }) => ({
   workspace: one(workspaces, { fields: [wpTaxonomyCache.workspaceId], references: [workspaces.id] }),
   publishingTarget: one(publishingTargets, { fields: [wpTaxonomyCache.publishingTargetId], references: [publishingTargets.id] }),
+}));
+
+// ============ AUTOMATION PIPELINE ============
+
+// Pipeline item status - 12-state machine for automation workflow
+export const pipelineItemStatuses = [
+  "fetched",      // Story fetched from sources
+  "matched",      // Matched to pipeline rules
+  "deduped",      // Passed deduplication check
+  "ranked",       // Scored and ranked
+  "generated",    // AI content generated
+  "gated",        // Passed quality gate
+  "scheduled",    // Scheduled for publishing
+  "publishing",   // Currently publishing
+  "published",    // Successfully published to target
+  "verified",     // Verified post exists on target
+  "retrying",     // Retrying after failure
+  "quarantined",  // Failed with actionable reason
+  "skipped",      // Skipped due to cap/policy
+] as const;
+export type PipelineItemStatus = typeof pipelineItemStatuses[number];
+
+// Quarantine reasons for pipeline items
+export const quarantineReasons = [
+  "language_mismatch",
+  "policy_block",
+  "invalid_content",
+  "publish_failed",
+  "verify_failed",
+  "taxonomy_missing",
+  "rate_limited",
+  "unknown_error",
+] as const;
+export type QuarantineReason = typeof quarantineReasons[number];
+
+// Skip reasons for pipeline items
+export const skipReasons = [
+  "daily_cap_reached",
+  "quiet_hours",
+  "low_relevance",
+  "duplicate",
+  "no_target",
+  "manual_skip",
+] as const;
+export type SkipReason = typeof skipReasons[number];
+
+// Pipeline Items - tracks each story through the automation pipeline
+export const pipelineItems = pgTable("pipeline_items", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  topicId: varchar("topic_id", { length: 36 }).notNull().references(() => topics.id, { onDelete: "cascade" }),
+  storyId: varchar("story_id", { length: 36 }).notNull().references(() => stories.id, { onDelete: "cascade" }),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  
+  // Status tracking
+  status: text("status").notNull().$type<PipelineItemStatus>().default("fetched"),
+  score: numeric("score", { precision: 8, scale: 4 }),
+  dedupeHash: text("dedupe_hash"),
+  languageDetected: text("language_detected"),
+  
+  // Generated content
+  generatedTitle: text("generated_title"),
+  generatedBody: text("generated_body"),
+  generatedExcerpt: text("generated_excerpt"),
+  generatedTags: jsonb("generated_tags").default([]),
+  generatedCategory: text("generated_category"),
+  
+  // Publishing
+  targetId: varchar("target_id", { length: 36 }).references(() => publishingTargets.id),
+  targetPostId: text("target_post_id"),
+  targetPermalink: text("target_permalink"),
+  targetPostStatus: text("target_post_status"),
+  
+  // Retry and error tracking
+  publishAttempts: integer("publish_attempts").default(0),
+  retryCount: integer("retry_count").default(0),
+  lastErrorCode: text("last_error_code"),
+  lastErrorMessage: text("last_error_message"),
+  lastErrorPayload: jsonb("last_error_payload"),
+  
+  // Quarantine/skip metadata
+  quarantineReason: text("quarantine_reason").$type<QuarantineReason>(),
+  skipReason: text("skip_reason").$type<SkipReason>(),
+  
+  // Scheduling
+  scheduledFor: timestamp("scheduled_for"),
+  publishedAt: timestamp("published_at"),
+  verifiedAt: timestamp("verified_at"),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_pipeline_items_topic").on(table.topicId),
+  index("idx_pipeline_items_story").on(table.storyId),
+  index("idx_pipeline_items_workspace").on(table.workspaceId),
+  index("idx_pipeline_items_status").on(table.status),
+  index("idx_pipeline_items_scheduled").on(table.scheduledFor),
+  unique("pipeline_item_unique").on(table.topicId, table.storyId),
+]);
+
+export const insertPipelineItemSchema = createInsertSchema(pipelineItems).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertPipelineItem = z.infer<typeof insertPipelineItemSchema>;
+export type PipelineItem = typeof pipelineItems.$inferSelect;
+
+// Automation job types
+export const automationJobTypes = [
+  "fetch",
+  "match",
+  "generate",
+  "gate",
+  "schedule",
+  "publish",
+  "verify",
+] as const;
+export type AutomationJobType = typeof automationJobTypes[number];
+
+// Automation job statuses
+export const automationJobStatuses = ["running", "success", "fail", "partial"] as const;
+export type AutomationJobStatus = typeof automationJobStatuses[number];
+
+// Automation Job Runs - tracks execution of pipeline jobs
+export const automationJobRuns = pgTable("automation_job_runs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  topicId: varchar("topic_id", { length: 36 }).references(() => topics.id, { onDelete: "cascade" }),
+  workspaceId: varchar("workspace_id", { length: 36 }).references(() => workspaces.id, { onDelete: "cascade" }),
+  
+  jobType: text("job_type").notNull().$type<AutomationJobType>(),
+  status: text("status").notNull().$type<AutomationJobStatus>().default("running"),
+  
+  startedAt: timestamp("started_at").defaultNow(),
+  endedAt: timestamp("ended_at"),
+  
+  // Counters
+  processedCount: integer("processed_count").default(0),
+  successCount: integer("success_count").default(0),
+  failCount: integer("fail_count").default(0),
+  skippedCount: integer("skipped_count").default(0),
+  quarantinedCount: integer("quarantined_count").default(0),
+  
+  errorSummary: text("error_summary"),
+  logs: jsonb("logs").default([]),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_automation_job_runs_topic").on(table.topicId),
+  index("idx_automation_job_runs_workspace").on(table.workspaceId),
+  index("idx_automation_job_runs_type").on(table.jobType),
+  index("idx_automation_job_runs_status").on(table.status),
+]);
+
+export const insertAutomationJobRunSchema = createInsertSchema(automationJobRuns).omit({ id: true, createdAt: true });
+export type InsertAutomationJobRun = z.infer<typeof insertAutomationJobRunSchema>;
+export type AutomationJobRun = typeof automationJobRuns.$inferSelect;
+
+// Publish attempt result
+export const publishAttemptResults = ["success", "fail"] as const;
+export type PublishAttemptResult = typeof publishAttemptResults[number];
+
+// Publish Attempts - detailed logging of each publish attempt
+export const publishAttempts = pgTable("publish_attempts", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  pipelineItemId: varchar("pipeline_item_id", { length: 36 }).notNull().references(() => pipelineItems.id, { onDelete: "cascade" }),
+  targetId: varchar("target_id", { length: 36 }).notNull().references(() => publishingTargets.id),
+  
+  attemptNumber: integer("attempt_number").notNull().default(1),
+  
+  requestPayload: jsonb("request_payload"),
+  responseStatus: integer("response_status"),
+  responseBody: jsonb("response_body"),
+  
+  result: text("result").notNull().$type<PublishAttemptResult>(),
+  errorMessage: text("error_message"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_publish_attempts_item").on(table.pipelineItemId),
+  index("idx_publish_attempts_target").on(table.targetId),
+]);
+
+export const insertPublishAttemptSchema = createInsertSchema(publishAttempts).omit({ id: true, createdAt: true });
+export type InsertPublishAttempt = z.infer<typeof insertPublishAttemptSchema>;
+export type PublishAttempt = typeof publishAttempts.$inferSelect;
+
+// Pipeline item relations
+export const pipelineItemsRelations = relations(pipelineItems, ({ one, many }) => ({
+  topic: one(topics, { fields: [pipelineItems.topicId], references: [topics.id] }),
+  story: one(stories, { fields: [pipelineItems.storyId], references: [stories.id] }),
+  workspace: one(workspaces, { fields: [pipelineItems.workspaceId], references: [workspaces.id] }),
+  target: one(publishingTargets, { fields: [pipelineItems.targetId], references: [publishingTargets.id] }),
+  publishAttempts: many(publishAttempts),
+}));
+
+export const automationJobRunsRelations = relations(automationJobRuns, ({ one }) => ({
+  topic: one(topics, { fields: [automationJobRuns.topicId], references: [topics.id] }),
+  workspace: one(workspaces, { fields: [automationJobRuns.workspaceId], references: [workspaces.id] }),
+}));
+
+export const publishAttemptsRelations = relations(publishAttempts, ({ one }) => ({
+  pipelineItem: one(pipelineItems, { fields: [publishAttempts.pipelineItemId], references: [pipelineItems.id] }),
+  target: one(publishingTargets, { fields: [publishAttempts.targetId], references: [publishingTargets.id] }),
 }));
