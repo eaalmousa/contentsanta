@@ -63,6 +63,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { PublishingTarget, PublishJob, Asset, AssetVersion, TargetType, WpTaxonomyCache } from "@shared/schema";
+import { PluginDiagnostics } from "@/components/plugin-diagnostics";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDistanceToNow } from "date-fns";
 
@@ -583,6 +584,8 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
                   </div>
                 </div>
               </div>
+              
+              <PluginDiagnostics target={target} />
             </div>
           )}
         </div>

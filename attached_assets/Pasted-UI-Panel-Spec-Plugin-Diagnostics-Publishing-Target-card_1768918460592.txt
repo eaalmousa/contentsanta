@@ -1,0 +1,147 @@
+UI Panel Spec: “Plugin Diagnostics” (Publishing Target card)
+Placement
+
+On Publishing → Connected Targets → WordPress (Plugin) target card, add a collapsible section:
+
+Plugin Diagnostics (Last 20 requests)
+
+Default state: collapsed
+
+Auto-expand if target health is Unhealthy OR last pull failed
+
+What it shows (per log row)
+
+Render a compact list/table with:
+
+Time (relative: “2m ago”, hover shows full timestamp)
+
+Endpoint (/api/wp/pull, /api/wp/report, /api/wp/heartbeat, etc.)
+
+Status (HTTP status code, plus Success/Fail badge)
+
+Reason code (mapped to friendly text)
+
+Response time (ms)
+
+Summary (redacted: never show full secret; show last 4 only)
+
+Optional (admin-only): Client IP + User-Agent (but I recommend you hide these by default)
+
+Reason code mapping (human readable)
+
+AUTH_FAILED → “Authentication failed (signature/timestamp/nonce).”
+
+SITE_NOT_FOUND → “Site ID not recognized.”
+
+SECRET_INVALID → “Secret mismatch.”
+
+JOB_LEASED → “Job already locked by another pull.”
+
+JOB_NONE → “No queued items available.”
+
+REPORT_SUCCESS → “Publishing result received.”
+
+REPORT_FAILED → “Publishing report failed.”
+
+Actions
+
+Refresh button (re-fetch logs)
+
+Copy Debug Bundle button: copies a JSON payload containing:
+
+targetId, siteId (safe), timestamp range, last 20 logs (already redacted), last pull time, health status
+
+Filter dropdown (All / Errors only / Pulls / Reports)
+
+Show details toggle per row (expand to show request/response summaries)
+
+States
+
+Empty state: “No plugin requests logged yet. Trigger a manual pull from WordPress to generate logs.”
+
+Error state: show API error + retry button
+
+Loading skeleton (so it feels snappy)
+
+Security / Access Control (must-have)
+
+This logs endpoint is sensitive. Implement BOTH:
+
+Server-side auth: only allow:
+
+workspace owner/admin, or
+
+the user who owns the publishing target
+
+Redaction enforcement on the server:
+
+Ensure summaries are already redacted before returning
+
+Never return raw secrets
+
+Consider omitting IP/UA unless admin
+
+Also: don’t expose this endpoint publicly without auth.
+
+Backend tweaks (small but important)
+
+Even if logs are stored, make the API response “UI-friendly”:
+
+Support query params:
+
+?limit=20
+
+?type=pull|report|all
+
+?errorsOnly=true|false
+
+Return shape:
+
+logs: []
+
+meta: { lastPullAt, health, siteIdMasked }
+
+Replit prompt (copy/paste)
+
+Use this exactly:
+
+Prompt to Replit
+Implement a “Plugin Diagnostics” UI panel for WordPress (Plugin) publishing targets.
+
+Requirements:
+
+Add a collapsible panel on Publishing → Connected Targets for WordPress (Plugin) targets: “Plugin Diagnostics (Last 20 requests)”.
+
+Collapsed by default; auto-expand if target is Unhealthy or last pull failed.
+
+Fetch logs from GET /api/publishing-targets/:id/plugin-logs (already implemented) and render:
+
+Time (relative), endpoint, HTTP status, reason code, response time ms, redacted summaries.
+
+Add controls:
+
+Refresh
+
+Filter (All / Errors only / Pull / Report)
+
+“Copy Debug Bundle” button that copies a JSON bundle (targetId, siteId safe, health, lastPullAt, logs).
+
+Ensure strict access control:
+
+Only authenticated user who owns the target or workspace admin can access logs.
+
+Server must redact any secrets; never return raw secret; show only last 4 chars.
+
+Hide IP/User-Agent unless admin (optional).
+
+UX states: loading skeleton, empty state, error + retry.
+
+Add reason-code → friendly message mapping in the UI.
+
+Deliverables:
+
+Updated Publishing page UI with diagnostics panel
+
+Any backend adjustments required for filtering/limit
+
+Tests or basic verification notes showing logs appear and copy bundle works

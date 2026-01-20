@@ -420,13 +420,55 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Publishing target not found" });
       }
       
-      if (!target.siteId) {
-        return res.json({ logs: [] });
+      // Verify user has access to the workspace (any workspace member can view diagnostics)
+      const userId = (req.user as any)?.claims?.sub;
+      if (userId && target.workspaceId) {
+        const workspaceUser = await storage.getWorkspaceUser(target.workspaceId, userId);
+        if (!workspaceUser) {
+          return res.status(403).json({ error: "Access denied" });
+        }
       }
       
-      const limit = parseInt(req.query.limit as string) || 20;
-      const logs = await storage.getPluginRequestLogs(target.siteId, limit);
-      res.json({ logs });
+      // Parse query params
+      const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+      const type = req.query.type as string | undefined; // "pull" | "report" | "all"
+      const errorsOnly = req.query.errorsOnly === "true";
+      
+      if (!target.siteId) {
+        return res.json({ 
+          logs: [],
+          meta: {
+            lastPullAt: target.lastPullAt,
+            health: target.lastHealthStatus || "unknown",
+            siteIdMasked: null,
+          }
+        });
+      }
+      
+      // Mask siteId: show first 8 chars + last 4
+      const siteIdMasked = target.siteId.length > 12 
+        ? `${target.siteId.slice(0, 8)}...${target.siteId.slice(-4)}`
+        : target.siteId;
+      
+      let logs = await storage.getPluginRequestLogs(target.siteId, limit);
+      
+      // Apply filters
+      if (type && type !== "all") {
+        logs = logs.filter(log => log.endpoint === type);
+      }
+      if (errorsOnly) {
+        logs = logs.filter(log => log.httpStatus >= 400);
+      }
+      
+      res.json({ 
+        logs,
+        meta: {
+          lastPullAt: target.lastPullAt,
+          health: target.lastHealthStatus || "unknown",
+          siteIdMasked,
+          targetName: target.name,
+        }
+      });
     } catch (error) {
       console.error("Error fetching plugin logs:", error);
       res.status(500).json({ error: "Failed to fetch plugin logs" });
