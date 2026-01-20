@@ -857,6 +857,13 @@ export async function registerRoutes(
         });
       }
       const data = insertPublishingTargetSchema.parse(req.body);
+      
+      // For wordpress_pull targets, generate a siteId
+      if (data.type === "wordpress_pull") {
+        const { generateSiteId } = await import("./services/wp-pull-service");
+        (data as any).siteId = generateSiteId();
+      }
+      
       const target = await storage.createPublishingTarget(data);
       res.status(201).json(target);
     } catch (error) {
