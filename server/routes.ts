@@ -1349,7 +1349,7 @@ export async function registerRoutes(
         
         console.log(`[WordPress Test] Result for ${target.name}: success=${result.success}, errorCode=${result.errorCode || 'none'}, latency=${latencyMs}ms`);
         
-        // Return consistent schema with both ok and success fields
+        // Return consistent schema with both ok and success fields, including debug payload
         res.json({
           ok: result.success,
           success: result.success,
@@ -1357,6 +1357,7 @@ export async function registerRoutes(
           error: result.error,
           errorCode: result.errorCode,
           latencyMs,
+          debug: result.debug,
         });
       } else {
         res.json({ 
@@ -1382,17 +1383,34 @@ export async function registerRoutes(
       const target = await storage.getPublishingTarget(req.params.id);
       if (!target) return res.status(404).json({ error: "Target not found" });
       
-      let status: "ok" | "fail" | "unknown" = "fail";
+      let status: "ok" | "fail" | "unknown" | "degraded" = "fail";
       let message = "Unknown target type";
+      let errorCode: string | undefined;
+      let debug: any;
       
       if (target.type === "wordpress") {
         const result = await testWordPressConnection(target);
+        errorCode = result.errorCode;
+        debug = result.debug;
+        
         if (result.success) {
           status = "ok";
           message = `Connected to ${result.siteName || "WordPress"}`;
         } else {
-          status = "fail";
-          message = result.error || "Connection failed";
+          // Grace period logic: if CAPTCHA error and last successful check was within 30 mins, show degraded
+          const isCaptchaError = result.errorCode === "SITEGROUND_CAPTCHA" || result.errorCode === "CLOUDFLARE_BLOCKED";
+          const lastHealthOk = target.lastHealthStatus === "ok";
+          const lastCheckTime = target.lastHealthCheckAt ? new Date(target.lastHealthCheckAt).getTime() : 0;
+          const gracePeriodMs = 30 * 60 * 1000; // 30 minutes
+          const withinGracePeriod = (Date.now() - lastCheckTime) < gracePeriodMs;
+          
+          if (isCaptchaError && lastHealthOk && withinGracePeriod) {
+            status = "degraded";
+            message = `Intermittent CAPTCHA blocking detected. Last successful connection was ${Math.round((Date.now() - lastCheckTime) / 60000)} min ago.`;
+          } else {
+            status = "fail";
+            message = result.error || "Connection failed";
+          }
         }
       } else {
         status = "unknown";
@@ -1400,12 +1418,14 @@ export async function registerRoutes(
       }
       
       try {
-        await storage.updatePublishingTargetHealth(req.params.id, status, message);
+        // Only update to "fail" if not degraded (preserve degraded status)
+        const statusToStore = status === "degraded" ? "fail" : status;
+        await storage.updatePublishingTargetHealth(req.params.id, statusToStore as "ok" | "fail" | "unknown", message);
       } catch (storageError) {
         console.error("Failed to update health status in DB:", storageError);
       }
       
-      res.json({ status, message, checkedAt: new Date().toISOString() });
+      res.json({ status, message, errorCode, debug, checkedAt: new Date().toISOString() });
     } catch (error: any) {
       const errorMessage = error.message || "Health check failed";
       try {
@@ -2357,6 +2377,7 @@ export async function registerRoutes(
         metadataJson: null,
         createdAt: new Date(),
         runId: null,
+        createdBy: null,
       };
       
       const result = await publishToWordPress(target, testVersion, { status: "draft" });

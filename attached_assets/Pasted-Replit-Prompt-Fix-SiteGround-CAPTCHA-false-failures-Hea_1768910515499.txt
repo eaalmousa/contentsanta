@@ -1,0 +1,66 @@
+Replit Prompt — Fix SiteGround CAPTCHA false failures (Health + Test + Draft)
+
+Problem
+WordPress REST API is intermittently returning a SiteGround CAPTCHA HTML page instead of JSON for server-side requests from ContentSanta (Replit). It appears as:
+
+status 202 (sometimes 403/503)
+
+content-type text/html
+
+body contains /.well-known/sgcaptcha/
+
+This causes:
+
+Target flips to Unhealthy even though WP works
+
+Test Connection shows failure even when the next minute it works
+
+Create Test Draft may succeed but UI shows failure (false negative)
+
+Implement
+
+In the WP client (health check + taxonomy sync + post create), detect CAPTCHA responses reliably:
+
+if content-type includes text/html OR body contains sgcaptcha OR redirect location contains /.well-known/sgcaptcha
+
+classify as errorCode: "SITEGROUND_CAPTCHA"
+
+Do NOT treat this like “WordPress not installed / wrong URL”.
+
+Show message: “SiteGround CAPTCHA is blocking server-to-server requests (Replit → WP).”
+
+Add “grace period” health logic:
+
+If last successful check was within the past X minutes (e.g., 30–60), show status as Degraded not Unhealthy
+
+Auto retry with backoff (e.g., 3 retries: 2s, 5s, 12s)
+
+Improve error payload for debugging:
+Return to frontend:
+
+status, contentType, finalUrl, first200
+
+and extract probable IP from the sgcaptcha redirect if present (e.g., query param ip=)
+
+Fix Create Test Draft success detection:
+
+Treat 200/201 with JSON containing id as success, regardless of any later non-critical parsing
+
+Return { ok:true, postId, link }
+
+UI must show success toast if ok:true
+
+In UI toast:
+
+If SITEGROUND_CAPTCHA, show actionable guidance:
+“Whitelist this server IP in SiteGround or disable bot protection for /wp-json. Consider enabling Cloudflare proxy (orange cloud).”
+
+Include a “Copy Debug” button that copies the debug object.
+
+Acceptance
+
+Health check never mislabels CAPTCHA HTML as “WP not installed”
+
+“Create Test Draft” never shows failure if WP returned a created post id
+
+Status shows Degraded during intermittent CAPTCHA instead of flipping constantly

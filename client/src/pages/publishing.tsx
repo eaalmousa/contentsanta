@@ -20,6 +20,8 @@ import {
   ChevronDown,
   Search,
   AlertCircle,
+  Copy,
+  AlertTriangle,
 } from "lucide-react";
 import { SiWordpress, SiMedium, SiLinkedin, SiFacebook } from "react-icons/si";
 import { Card, CardContent } from "@/components/ui/card";
@@ -74,6 +76,16 @@ const platformOptions: { value: TargetType; label: string; icon: React.ElementTy
   { value: "custom", label: "Custom Webhook", icon: Globe, color: "text-muted-foreground" },
 ];
 
+function getCaptchaGuidance(errorCode?: string): string | null {
+  if (errorCode === "SITEGROUND_CAPTCHA") {
+    return "Whitelist this server IP in SiteGround or disable bot protection for /wp-json. Consider enabling Cloudflare proxy (orange cloud).";
+  }
+  if (errorCode === "CLOUDFLARE_BLOCKED") {
+    return "Whitelist the server IP in Cloudflare's security settings or create a bypass rule for /wp-json endpoints.";
+  }
+  return null;
+}
+
 const targetSchema = z.object({
   name: z.string().min(1, "Name is required"),
   type: z.string().min(1, "Platform is required"),
@@ -122,10 +134,34 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
           description: `Connected to ${data.siteName || target.name}` 
         });
       } else {
+        const guidance = getCaptchaGuidance(data.errorCode);
+        const debugInfo = data.debug ? JSON.stringify(data.debug, null, 2) : null;
+        
         toast({ 
           title: "Connection failed", 
-          description: data.error || "Could not connect to the target",
-          variant: "destructive" 
+          description: (
+            <div className="flex flex-col gap-2">
+              <span>{data.error || "Could not connect to the target"}</span>
+              {guidance && (
+                <span className="text-xs text-muted-foreground">{guidance}</span>
+              )}
+              {debugInfo && (
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  className="w-fit mt-1"
+                  onClick={() => {
+                    navigator.clipboard.writeText(debugInfo);
+                    toast({ title: "Debug info copied", description: "Paste in support ticket for troubleshooting" });
+                  }}
+                >
+                  <Copy className="w-3 h-3 mr-1" /> Copy Debug
+                </Button>
+              )}
+            </div>
+          ),
+          variant: "destructive",
+          duration: 10000,
         });
       }
     },
@@ -144,7 +180,8 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
       return await res.json();
     },
     onSuccess: (data: any) => {
-      if (data.success) {
+      // If we got a postId, it's a success regardless of other issues
+      if (data.success || data.postId) {
         toast({ 
           title: "Test draft created", 
           description: data.postUrl 
@@ -152,10 +189,34 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
             : "A test draft has been created in your WordPress"
         });
       } else {
+        const guidance = getCaptchaGuidance(data.errorCode);
+        const debugInfo = data.debug ? JSON.stringify(data.debug, null, 2) : null;
+        
         toast({ 
           title: "Failed to create test draft", 
-          description: data.error || data.message || "Could not create test post",
-          variant: "destructive" 
+          description: (
+            <div className="flex flex-col gap-2">
+              <span>{data.error || data.message || "Could not create test post"}</span>
+              {guidance && (
+                <span className="text-xs text-muted-foreground">{guidance}</span>
+              )}
+              {debugInfo && (
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  className="w-fit mt-1"
+                  onClick={() => {
+                    navigator.clipboard.writeText(debugInfo);
+                    toast({ title: "Debug info copied", description: "Paste in support ticket for troubleshooting" });
+                  }}
+                >
+                  <Copy className="w-3 h-3 mr-1" /> Copy Debug
+                </Button>
+              )}
+            </div>
+          ),
+          variant: "destructive",
+          duration: 10000,
         });
       }
     },
@@ -196,6 +257,18 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
   });
 
   const getHealthBadge = () => {
+    // Check if the last health check returned "degraded" (transient CAPTCHA state)
+    const healthCheckData = healthCheckMutation.data;
+    if (healthCheckData?.status === "degraded") {
+      return (
+        <Badge variant="outline" className="border-yellow-500 text-yellow-600 dark:text-yellow-400">
+          <AlertTriangle className="w-3 h-3 mr-1" />
+          Degraded
+        </Badge>
+      );
+    }
+    
+    // Fall back to stored status
     const status = target.lastHealthStatus;
     if (!status || status === "unknown") {
       return <Badge variant="outline" className="text-muted-foreground">Unknown</Badge>;

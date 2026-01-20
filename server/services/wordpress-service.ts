@@ -498,9 +498,121 @@ export async function publishToWordPress(
   }
 }
 
+export interface WordPressTestResult {
+  success: boolean;
+  siteName?: string;
+  error?: string;
+  errorCode?: string;
+  debug?: {
+    status?: number;
+    contentType?: string;
+    finalUrl?: string;
+    first200?: string;
+    detectedIp?: string;
+    retryCount?: number;
+  };
+}
+
+function extractSiteGroundIp(text: string): string | undefined {
+  // Try to extract IP from sgcaptcha redirect URL
+  const ipMatch = text.match(/ip=([0-9.]+)/i);
+  if (ipMatch) return ipMatch[1];
+  
+  // Try to extract from redirect location
+  const locationMatch = text.match(/\.well-known\/sgcaptcha\/[^"'\s]*ip=([0-9.]+)/i);
+  if (locationMatch) return locationMatch[1];
+  
+  return undefined;
+}
+
+interface HtmlDetectionResult {
+  isHtml: boolean;
+  isCaptcha: boolean;
+  type?: "siteground" | "cloudflare" | "generic_captcha" | "html_response";
+  detectedIp?: string;
+}
+
+function detectHtmlResponse(responseText: string, contentType: string, status: number): HtmlDetectionResult {
+  const isHtml = contentType.includes("text/html") || /<html|<!doctype/i.test(responseText);
+  if (!isHtml) return { isHtml: false, isCaptcha: false };
+  
+  // SiteGround CAPTCHA detection - only specific CAPTCHA markers, NOT generic "siteground" branding
+  // These are unequivocal challenge markers from SG's bot protection system
+  const isSiteGroundCaptcha = /sgcaptcha|\.well-known\/sgcaptcha|window\.sg_captcha|__sg_captcha|sg-captcha-form|sg_captcha_token/i.test(responseText);
+  if (isSiteGroundCaptcha) {
+    return {
+      isHtml: true,
+      isCaptcha: true,
+      type: "siteground",
+      detectedIp: extractSiteGroundIp(responseText),
+    };
+  }
+  
+  // Cloudflare detection - challenge page markers (not just cf-ray header mention)
+  // cf-ray alone isn't enough - we need challenge-specific markers
+  const isCloudflareChallenge = /cf-challenge|cf-turnstile|just a moment.*cloudflare|attention required.*cloudflare|checking your browser|please wait.*checking/i.test(responseText);
+  if (isCloudflareChallenge) {
+    return { isHtml: true, isCaptcha: true, type: "cloudflare" };
+  }
+  
+  // Generic bot protection / CAPTCHA detection - explicit CAPTCHA form markers
+  const isGenericCaptcha = /g-recaptcha|h-captcha|hcaptcha-form|captcha-form|verify you are human|prove you.*human|bot detection challenge/i.test(responseText);
+  if (isGenericCaptcha) {
+    return { isHtml: true, isCaptcha: true, type: "generic_captcha" };
+  }
+  
+  // Generic CAPTCHA-like blocking (specific status codes that indicate blocking)
+  if (status === 202 || status === 403 || status === 503 || status === 429) {
+    return { isHtml: true, isCaptcha: true, type: "generic_captcha" };
+  }
+  
+  // Generic HTML response (e.g., login page, non-REST endpoint) - this is NOT a CAPTCHA but should fail
+  return { isHtml: true, isCaptcha: false, type: "html_response" };
+}
+
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries: number = 3,
+  backoffMs: number[] = [2000, 5000, 12000]
+): Promise<{ response: Response; retryCount: number }> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      const contentType = response.headers.get("content-type") || "";
+      const clonedResponse = response.clone();
+      const text = await clonedResponse.text();
+      
+      // Check if this is a CAPTCHA response that we should retry
+      const htmlResult = detectHtmlResponse(text, contentType, response.status);
+      
+      // Only retry for CAPTCHA responses (not generic HTML)
+      if (htmlResult.isCaptcha && attempt < maxRetries) {
+        const delay = backoffMs[attempt] || backoffMs[backoffMs.length - 1];
+        console.log(`[WordPress] CAPTCHA detected (${htmlResult.type}), retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      return { response, retryCount: attempt };
+    } catch (error: any) {
+      lastError = error;
+      if (attempt < maxRetries) {
+        const delay = backoffMs[attempt] || backoffMs[backoffMs.length - 1];
+        console.log(`[WordPress] Connection error, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  throw lastError || new Error("Max retries exceeded");
+}
+
 export async function testWordPressConnection(
   target: PublishingTarget
-): Promise<{ success: boolean; siteName?: string; error?: string; errorCode?: string }> {
+): Promise<WordPressTestResult> {
   const credentials = parseCredentials(target);
   
   if (!credentials) {
@@ -521,7 +633,7 @@ export async function testWordPressConnection(
       `${credentials.username}:${credentials.applicationPassword}`
     ).toString("base64");
     
-    const response = await fetch(apiUrl, {
+    const { response, retryCount } = await fetchWithRetry(apiUrl, {
       headers: {
         Authorization: `Basic ${auth}`,
         "Accept": "application/json",
@@ -531,64 +643,91 @@ export async function testWordPressConnection(
     
     const contentType = response.headers.get("content-type") || "";
     const responseText = await response.text();
+    const status = response.status;
     
-    // Check for HTML response (indicates blocking, CAPTCHA, or wrong URL)
-    const isHtml = /<html|<!doctype/i.test(responseText);
-    const isCloudflare = /cloudflare|cf-ray|just a moment|attention required/i.test(responseText);
-    const isSiteGroundCaptcha = /sgcaptcha|siteground/i.test(responseText);
+    // Build debug payload
+    const debug: WordPressTestResult["debug"] = {
+      status,
+      contentType,
+      finalUrl: apiUrl,
+      first200: responseText.slice(0, 200),
+      retryCount,
+    };
     
-    if (isHtml && !contentType.includes("application/json")) {
-      console.log(`[WordPress] Received HTML instead of JSON - possible blocking`);
+    // Check for HTML/CAPTCHA/blocking responses
+    const htmlResult = detectHtmlResponse(responseText, contentType, status);
+    
+    if (htmlResult.isHtml) {
+      debug.detectedIp = htmlResult.detectedIp;
       
-      if (isCloudflare) {
+      if (htmlResult.type === "cloudflare") {
         return {
           success: false,
-          error: "Cloudflare is blocking the request. You may need to whitelist the server IP or adjust Cloudflare settings.",
+          error: "Cloudflare is blocking server-to-server requests. Whitelist the server IP in Cloudflare's security settings or enable Cloudflare proxy (orange cloud).",
           errorCode: "CLOUDFLARE_BLOCKED",
+          debug,
         };
       }
-      if (isSiteGroundCaptcha) {
+      
+      if (htmlResult.type === "siteground") {
         return {
           success: false,
-          error: "SiteGround CAPTCHA is blocking the request. Whitelist the server IP in SiteGround's security settings.",
+          error: `SiteGround CAPTCHA is blocking server-to-server requests (Replit → WP).${htmlResult.detectedIp ? ` Detected IP: ${htmlResult.detectedIp}` : ""} Whitelist this server IP in SiteGround or disable bot protection for /wp-json. Consider enabling Cloudflare proxy (orange cloud).`,
           errorCode: "SITEGROUND_CAPTCHA",
+          debug,
         };
       }
+      
+      if (htmlResult.type === "generic_captcha") {
+        return {
+          success: false,
+          error: "Server is blocking requests with a CAPTCHA or security challenge. Check your hosting provider's security settings.",
+          errorCode: "GENERIC_CAPTCHA",
+          debug,
+        };
+      }
+      
+      // Generic HTML response (not a CAPTCHA, but still wrong)
       return {
         success: false,
         error: `WordPress REST API not found at ${credentials.siteUrl}. The site returned HTML instead of JSON. Check if WordPress is installed in a subdirectory (e.g., /blog or /wp).`,
         errorCode: "HTML_RESPONSE",
+        debug,
       };
     }
     
     if (!response.ok) {
-      console.log(`[WordPress] Auth failed: ${response.status} - ${responseText.slice(0, 200)}`);
+      console.log(`[WordPress] Auth failed: ${status} - ${responseText.slice(0, 200)}`);
       
-      if (response.status === 401) {
+      if (status === 401) {
         return {
           success: false,
           error: "Authentication failed. Check your username and application password. Make sure the application password was generated in WordPress under Users > Profile > Application Passwords.",
           errorCode: "AUTH_FAILED",
+          debug,
         };
       }
-      if (response.status === 403) {
+      if (status === 403) {
         return {
           success: false,
           error: "Access forbidden. Your user may not have REST API access. Check WordPress user permissions.",
           errorCode: "ACCESS_FORBIDDEN",
+          debug,
         };
       }
-      if (response.status === 404) {
+      if (status === 404) {
         return {
           success: false,
           error: "WordPress REST API not found. Make sure your Site URL is correct and REST API is enabled.",
           errorCode: "API_NOT_FOUND",
+          debug,
         };
       }
       return {
         success: false,
-        error: `WordPress API error: ${response.status}. ${responseText.slice(0, 100)}`,
+        error: `WordPress API error: ${status}. ${responseText.slice(0, 100)}`,
         errorCode: "API_ERROR",
+        debug,
       };
     }
     
@@ -609,6 +748,7 @@ export async function testWordPressConnection(
         return {
           success: true,
           siteName: siteInfo.name,
+          debug,
         };
       }
     } catch (siteError) {
@@ -619,6 +759,7 @@ export async function testWordPressConnection(
     return {
       success: true,
       siteName: credentials.siteUrl,
+      debug,
     };
   } catch (error: any) {
     console.error(`[WordPress] Connection error:`, error);
