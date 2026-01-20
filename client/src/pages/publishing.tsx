@@ -112,7 +112,8 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
 
   const testConnectionMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", `/api/publishing-targets/${target.id}/test`);
+      const res = await apiRequest("POST", `/api/publishing-targets/${target.id}/test`);
+      return await res.json();
     },
     onSuccess: (data: any) => {
       if (data.success) {
@@ -128,9 +129,10 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
         });
       }
     },
-    onError: () => {
+    onError: (error: any) => {
       toast({ 
         title: "Connection test failed", 
+        description: error?.message || "Could not connect",
         variant: "destructive" 
       });
     },
@@ -138,25 +140,29 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
 
   const testDraftMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", `/api/publishing-targets/${target.id}/test-post`);
+      const res = await apiRequest("POST", `/api/publishing-targets/${target.id}/test-post`);
+      return await res.json();
     },
     onSuccess: (data: any) => {
       if (data.success) {
         toast({ 
           title: "Test draft created", 
-          description: "A test draft has been created in your WordPress"
+          description: data.postUrl 
+            ? `Draft created: ${data.postId}` 
+            : "A test draft has been created in your WordPress"
         });
       } else {
         toast({ 
           title: "Failed to create test draft", 
-          description: data.error || "Could not create test post",
+          description: data.error || data.message || "Could not create test post",
           variant: "destructive" 
         });
       }
     },
-    onError: () => {
+    onError: (error: any) => {
       toast({ 
         title: "Test draft failed", 
+        description: error?.message || "Could not create test post",
         variant: "destructive" 
       });
     },

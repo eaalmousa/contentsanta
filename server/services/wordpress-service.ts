@@ -500,7 +500,7 @@ export async function publishToWordPress(
 
 export async function testWordPressConnection(
   target: PublishingTarget
-): Promise<{ success: boolean; siteName?: string; error?: string }> {
+): Promise<{ success: boolean; siteName?: string; error?: string; errorCode?: string }> {
   const credentials = parseCredentials(target);
   
   if (!credentials) {
@@ -508,6 +508,7 @@ export async function testWordPressConnection(
     return {
       success: false,
       error: `Missing credentials. Please ensure Site URL, Username, and Application Password are all provided. (Fields found: ${config ? Object.keys(config).join(', ') : 'none'})`,
+      errorCode: "MISSING_CREDENTIALS",
     };
   }
   
@@ -523,44 +524,101 @@ export async function testWordPressConnection(
     const response = await fetch(apiUrl, {
       headers: {
         Authorization: `Basic ${auth}`,
+        "Accept": "application/json",
+        "User-Agent": "ContentSanta/1.0",
       },
     });
     
+    const contentType = response.headers.get("content-type") || "";
+    const responseText = await response.text();
+    
+    // Check for HTML response (indicates blocking, CAPTCHA, or wrong URL)
+    const isHtml = /<html|<!doctype/i.test(responseText);
+    const isCloudflare = /cloudflare|cf-ray|just a moment|attention required/i.test(responseText);
+    const isSiteGroundCaptcha = /sgcaptcha|siteground/i.test(responseText);
+    
+    if (isHtml && !contentType.includes("application/json")) {
+      console.log(`[WordPress] Received HTML instead of JSON - possible blocking`);
+      
+      if (isCloudflare) {
+        return {
+          success: false,
+          error: "Cloudflare is blocking the request. You may need to whitelist the server IP or adjust Cloudflare settings.",
+          errorCode: "CLOUDFLARE_BLOCKED",
+        };
+      }
+      if (isSiteGroundCaptcha) {
+        return {
+          success: false,
+          error: "SiteGround CAPTCHA is blocking the request. Whitelist the server IP in SiteGround's security settings.",
+          errorCode: "SITEGROUND_CAPTCHA",
+        };
+      }
+      return {
+        success: false,
+        error: `WordPress REST API not found at ${credentials.siteUrl}. The site returned HTML instead of JSON. Check if WordPress is installed in a subdirectory (e.g., /blog or /wp).`,
+        errorCode: "HTML_RESPONSE",
+      };
+    }
+    
     if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      console.log(`[WordPress] Auth failed: ${response.status} - ${errorText}`);
+      console.log(`[WordPress] Auth failed: ${response.status} - ${responseText.slice(0, 200)}`);
       
       if (response.status === 401) {
         return {
           success: false,
           error: "Authentication failed. Check your username and application password. Make sure the application password was generated in WordPress under Users > Profile > Application Passwords.",
+          errorCode: "AUTH_FAILED",
         };
       }
       if (response.status === 403) {
         return {
           success: false,
           error: "Access forbidden. Your user may not have REST API access. Check WordPress user permissions.",
+          errorCode: "ACCESS_FORBIDDEN",
         };
       }
       if (response.status === 404) {
         return {
           success: false,
           error: "WordPress REST API not found. Make sure your Site URL is correct and REST API is enabled.",
+          errorCode: "API_NOT_FOUND",
         };
       }
       return {
         success: false,
-        error: `WordPress API error: ${response.status}. ${errorText.slice(0, 100)}`,
+        error: `WordPress API error: ${response.status}. ${responseText.slice(0, 100)}`,
+        errorCode: "API_ERROR",
       };
     }
     
-    const siteResponse = await fetch(`${credentials.siteUrl}/wp-json`);
-    const siteInfo = await siteResponse.json();
+    // Try to get site info
+    try {
+      const siteResponse = await fetch(`${credentials.siteUrl}/wp-json`, {
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "ContentSanta/1.0",
+        },
+      });
+      const siteText = await siteResponse.text();
+      
+      // Check if site info response is JSON
+      if (siteResponse.ok && siteResponse.headers.get("content-type")?.includes("application/json")) {
+        const siteInfo = JSON.parse(siteText);
+        console.log(`[WordPress] Connection successful to: ${siteInfo.name}`);
+        return {
+          success: true,
+          siteName: siteInfo.name,
+        };
+      }
+    } catch (siteError) {
+      // Site info fetch failed, but auth succeeded - still report success
+      console.log(`[WordPress] Site info fetch failed but auth succeeded`);
+    }
     
-    console.log(`[WordPress] Connection successful to: ${siteInfo.name}`);
     return {
       success: true,
-      siteName: siteInfo.name,
+      siteName: credentials.siteUrl,
     };
   } catch (error: any) {
     console.error(`[WordPress] Connection error:`, error);
@@ -568,11 +626,20 @@ export async function testWordPressConnection(
       return {
         success: false,
         error: `Cannot reach ${credentials.siteUrl}. Check that the URL is correct and the site is accessible.`,
+        errorCode: "DNS_ERROR",
+      };
+    }
+    if (error.code === 'ECONNREFUSED') {
+      return {
+        success: false,
+        error: `Connection refused to ${credentials.siteUrl}. The server may be down or blocking connections.`,
+        errorCode: "CONNECTION_REFUSED",
       };
     }
     return {
       success: false,
       error: `Connection error: ${error.message}`,
+      errorCode: "CONNECTION_ERROR",
     };
   }
 }

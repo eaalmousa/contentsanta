@@ -1329,18 +1329,50 @@ export async function registerRoutes(
   // ============ WORDPRESS TESTING ============
 
   app.post("/api/publishing-targets/:id/test", isAuthenticated, async (req: Request, res: Response) => {
+    const startTime = Date.now();
     try {
       const target = await storage.getPublishingTarget(req.params.id);
-      if (!target) return res.status(404).json({ error: "Target not found" });
+      if (!target) {
+        return res.status(404).json({ 
+          ok: false, 
+          success: false, 
+          error: "Target not found",
+          errorCode: "TARGET_NOT_FOUND"
+        });
+      }
+      
+      console.log(`[WordPress Test] Testing target: ${target.id}, name: ${target.name}`);
       
       if (target.type === "wordpress") {
         const result = await testWordPressConnection(target);
-        res.json(result);
+        const latencyMs = Date.now() - startTime;
+        
+        console.log(`[WordPress Test] Result for ${target.name}: success=${result.success}, latency=${latencyMs}ms`);
+        
+        // Return consistent schema with both ok and success fields
+        res.json({
+          ok: result.success,
+          success: result.success,
+          siteName: result.siteName,
+          error: result.error,
+          latencyMs,
+        });
       } else {
-        res.json({ success: false, error: "Only WordPress testing is supported" });
+        res.json({ 
+          ok: false, 
+          success: false, 
+          error: "Only WordPress testing is supported",
+          errorCode: "UNSUPPORTED_TYPE"
+        });
       }
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to test connection" });
+      console.error(`[WordPress Test] Error:`, error.message);
+      res.status(500).json({ 
+        ok: false, 
+        success: false, 
+        error: error.message || "Failed to test connection",
+        errorCode: "INTERNAL_ERROR"
+      });
     }
   });
 
@@ -2284,37 +2316,31 @@ export async function registerRoutes(
 
   // ==================== PUBLISHING TEST ====================
   
-  app.post("/api/publishing-targets/:id/test", isAuthenticated, async (req: Request, res: Response) => {
-    try {
-      const target = await storage.getPublishingTarget(req.params.id);
-      if (!target) {
-        return res.status(404).json({ error: "Publishing target not found" });
-      }
-      
-      if (target.type !== "wordpress") {
-        return res.status(400).json({ error: "Only WordPress connections can be tested" });
-      }
-      
-      const result = await testWordPressConnection(
-        target.configJson as any
-      );
-      
-      res.json(result);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to test connection" });
-    }
-  });
+  // Note: /api/publishing-targets/:id/test is defined earlier in the routes
 
   app.post("/api/publishing-targets/:id/test-post", isAuthenticated, async (req: Request, res: Response) => {
+    const startTime = Date.now();
     try {
       const target = await storage.getPublishingTarget(req.params.id);
       if (!target) {
-        return res.status(404).json({ error: "Publishing target not found" });
+        return res.status(404).json({ 
+          ok: false, 
+          success: false, 
+          error: "Publishing target not found",
+          errorCode: "TARGET_NOT_FOUND"
+        });
       }
       
       if (target.type !== "wordpress") {
-        return res.status(400).json({ error: "Only WordPress connections can be tested" });
+        return res.status(400).json({ 
+          ok: false, 
+          success: false, 
+          error: "Only WordPress connections can be tested",
+          errorCode: "UNSUPPORTED_TYPE"
+        });
       }
+      
+      console.log(`[WordPress Test Post] Creating test draft for target: ${target.id}, name: ${target.name}`);
       
       // Create a mock AssetVersion for test publishing
       const testVersion = {
@@ -2333,17 +2359,27 @@ export async function registerRoutes(
       };
       
       const result = await publishToWordPress(target, testVersion, { status: "draft" });
+      const latencyMs = Date.now() - startTime;
       
+      console.log(`[WordPress Test Post] Result for ${target.name}: success=${result.success}, postId=${result.postId}, latency=${latencyMs}ms`);
+      
+      // Return consistent schema with both ok and success fields
       res.json({
+        ok: result.success,
         success: result.success,
         message: result.success ? "Test draft created successfully" : result.error,
         postId: result.postId,
         postUrl: result.postUrl,
+        error: result.error,
+        latencyMs,
       });
     } catch (error: any) {
+      console.error(`[WordPress Test Post] Error:`, error.message);
       res.status(500).json({ 
+        ok: false,
         success: false,
-        error: error.message || "Failed to create test post" 
+        error: error.message || "Failed to create test post",
+        errorCode: "INTERNAL_ERROR"
       });
     }
   });

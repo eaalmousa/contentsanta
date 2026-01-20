@@ -1,0 +1,124 @@
+Goal: Fix false “Connection failed” + false “Test draft failed” in ContentSanta when WordPress actions actually succeed.
+
+Context
+
+WordPress REST API endpoints are reachable and returning JSON (200, application/json) via the server-side probe:
+
+/wp-json/wp/v2
+
+/wp-json/wp/v2/categories?per_page=5
+
+/wp-json/wp/v2/posts?per_page=1
+
+However:
+
+Clicking Test Connection shows a toast: “Connection failed — Could not connect to the target” even though the API is reachable.
+
+Clicking Create Test Draft creates a draft in WordPress, but ContentSanta still shows an error toast.
+
+This indicates a UI/backend mismatch (success response not interpreted correctly), CORS/browser fetch issue, or incorrect handling of 2xx statuses / JSON parsing.
+
+Tasks
+A) Reproduce + Inspect
+
+Reproduce both actions in the UI:
+
+Publishing → Target → Test Connection
+
+Publishing → Target → Create Test Draft
+
+In Chrome DevTools → Network:
+
+Identify the exact API calls ContentSanta makes (frontend → backend).
+
+Capture:
+
+request URL, method, headers, response status, response body.
+
+B) Fix “Test Connection” Logic
+
+Ensure Test Connection is executed server-side only (backend route), not by the browser directly hitting WordPress.
+
+If the frontend currently calls WordPress directly, replace with a backend endpoint like:
+
+POST /api/publishing/targets/:id/test
+
+In backend test handler:
+
+Call WordPress endpoint: GET {baseUrl}/wp-json/wp/v2
+
+Treat any 2xx as success (>=200 && <300)
+
+If response is HTML or contains sgcaptcha or text/html, return a structured error:
+
+{ ok:false, code:"WP_BLOCKED", message:"Blocked by SiteGround CAPTCHA for /wp-json/*" }
+
+Return a consistent response schema to the frontend:
+
+success: { ok:true, status, contentType, wpVersion?, latencyMs }
+
+failure: { ok:false, status, contentType, errorCode, message, debug: { finalUrl, first200 } }
+
+C) Fix “Create Test Draft” Success Detection
+
+Ensure draft creation is done server-side:
+
+POST {baseUrl}/wp-json/wp/v2/posts
+
+Treat 200 and 201 as success.
+
+Don’t blindly JSON.parse if body might be empty or non-JSON:
+
+If content-type includes application/json, parse JSON.
+
+Otherwise read text and return an error with the first 200 chars.
+
+Confirm success based on the created post ID:
+
+If response JSON contains id, success.
+
+Optionally follow up with:
+
+GET /wp-json/wp/v2/posts/{id} to confirm it exists.
+
+Return consistent response to frontend:
+
+{ ok:true, postId, link, status:"draft" }
+
+On failure: { ok:false, status, message, debug }
+
+D) Fix Frontend Toasts / UI State
+
+Make frontend display success whenever backend returns { ok:true }.
+
+On failure, display backend message (not generic “Could not connect”).
+
+Add a “Details” expandable section (optional) showing:
+
+status, contentType, finalUrl, first200 (for debugging)
+
+E) Add Logging (minimal but useful)
+
+Log per request:
+
+targetId, url, endpoint, status, contentType, ok, errorCode
+
+Ensure sensitive data (application passwords) are never logged.
+
+Acceptance Criteria
+
+Clicking Test Connection:
+
+Shows “Connected / Healthy” when the backend returns 2xx from WP.
+
+Shows a precise message when blocked (sgcaptcha / HTML / 202).
+
+Clicking Create Test Draft:
+
+Shows success toast and displays postId (and link if available).
+
+Never shows failure if WordPress returned 200/201 and a post ID.
+
+No direct browser-to-WordPress REST calls that can fail via CORS.
+
+Consistent response schema (ok:true/false) across endpoints.
