@@ -214,6 +214,38 @@ export async function registerRoutes(
   await setupAuth(app);
   registerAuthRoutes(app);
   
+  // Debug: WordPress probe for diagnosing API issues
+  app.get("/api/debug/wp-probe", async (req: Request, res: Response) => {
+    const url = req.query.url;
+    if (!url) return res.status(400).json({ error: "Missing ?url=" });
+
+    try {
+      const r = await fetch(String(url), {
+        method: "GET",
+        headers: {
+          "accept": "application/json",
+          "user-agent": "ContentSantaProbe/1.0",
+        },
+        redirect: "follow",
+      });
+
+      const contentType = r.headers.get("content-type");
+      const text = await r.text();
+
+      res.json({
+        requestedUrl: url,
+        finalUrl: r.url,
+        status: r.status,
+        contentType,
+        first200: text.slice(0, 200).replace(/\s+/g, " "),
+        isHtml: /<html|<!doctype/i.test(text),
+        isCloudflare: /cloudflare|cf-ray|just a moment|attention required/i.test(text),
+      });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+  
   // Stats (public for dashboard)
   app.get("/api/stats", async (req: Request, res: Response) => {
     try {
