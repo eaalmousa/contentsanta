@@ -3037,19 +3037,24 @@ export async function registerRoutes(
   
   // Create pipeline auth middleware that accepts both user session and automation key
   const pipelineAuthMiddleware = createAutomationAuthMiddleware(async (req: Request) => {
-    const topicId = req.params.topicId;
-    if (!topicId) return null;
-    
-    const topic = await storage.getTopic(topicId);
-    if (!topic) return null;
-    
-    const workspace = await storage.getWorkspace(topic.workspaceId);
-    if (!workspace) return null;
-    
-    return {
-      id: workspace.id,
-      automationKeyHash: (workspace as any).automationKeyHash || null,
-    };
+    try {
+      const topicId = req.params.topicId;
+      if (!topicId) return null;
+      
+      const topic = await storage.getTopic(topicId);
+      if (!topic) return null;
+      
+      const workspace = await storage.getWorkspace(topic.workspaceId);
+      if (!workspace) return null;
+      
+      return {
+        id: workspace.id,
+        automationKeyHash: (workspace as any).automationKeyHash || null,
+      };
+    } catch (error) {
+      console.error("[Pipeline Auth] Error resolving workspace:", error);
+      return null;
+    }
   });
   
   app.get("/api/topics/:topicId/pipeline-items", isAuthenticated, async (req: Request, res: Response) => {
