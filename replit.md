@@ -113,6 +113,36 @@ The automation pipeline transforms Content Santa from manual workflow to automat
 - `automation_job_runs`: Job execution logging with FK to topics, workspaces
 - `publish_attempts`: Detailed publish attempt logging with FK to pipeline_items, publishing_targets
 
+**Pipeline API Routes** (server/routes.ts):
+- `GET /api/topics/:topicId/pipeline-items` - List pipeline items for a topic (optional ?status= filter)
+- `POST /api/topics/:topicId/run-pipeline` - Manually trigger full pipeline run for a topic
+- `POST /api/pipeline-items/:itemId/retry` - Reset quarantined/retrying item to appropriate earlier status
+- `GET /api/topics/:topicId/job-runs` - Get job execution history for a topic
+- `GET /api/pipeline-items/:itemId/publish-attempts` - Get publish attempts for a pipeline item
+- `GET /api/quarantine?workspaceId=` - View all quarantined items across workspace topics
+- `POST /api/trigger-pipelines` - Manually trigger all automated pipelines globally
+
+**Scheduler Jobs** (server/services/scheduler.ts):
+- RSS Fetch: every 30 minutes
+- Automations: every 15 minutes
+- Topic Discovery: every 20 minutes
+- Pipeline Automation: every 10 minutes (runs for all topics with automationMode="auto")
+
+**Pipeline Jobs Service** (server/services/pipeline-jobs-service.ts):
+- `runFetchJob`: Pulls stories from topic_stories, creates pipeline_items with status=fetched
+- `runMatchAndRankJob`: Keyword filtering, deduplication by hash, relevance scoring
+- `runGenerateJob`: AI content generation using processWorkflowWithAI
+- `runQualityGateJob`: Language detection, requireEnglish policy check
+- `runScheduleJob`: Daily cap enforcement, spacing rules, quiet hours
+- `runPublishJob`: WordPress publishing with exponential backoff retry
+- `runVerifyJob`: Confirms published posts exist on WordPress
+- `runRetryJob`: Processes items in "retrying" status after cooldown
+
+**Retry Logic**:
+- Exponential backoff intervals: 1min, 5min, 20min, 60min, 360min
+- Max 5 retries before quarantine
+- Error codes: GENERATION_FAILED, PUBLISH_FAILED, VERIFY_FAILED, CONTENT_TOO_SHORT, etc.
+
 ### Recent Changes (December 2025)
 - Migrated from in-memory storage to PostgreSQL with 13 tables
 - Implemented Replit Auth with OpenID Connect
