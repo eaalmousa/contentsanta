@@ -83,6 +83,36 @@ Preferred communication style: Simple, everyday language.
 - **Featured Image**: Sets `featured_media` on posts automatically
 - **Image Usages**: Tracks where images are published via `image_usages` table
 
+### Automation Pipeline v1.0 (January 2026)
+The automation pipeline transforms Content Santa from manual workflow to automation-first:
+
+**Pipeline Items (12-state machine)**:
+- Status flow: fetched → matched → deduped → ranked → generated → gated → scheduled → publishing → published → verified
+- Failure states: retrying, quarantined, skipped
+- Each item tracks a story through a specific topic/pipeline
+
+**Automation Job Runs**:
+- Job types: fetch, match, generate, gate, schedule, publish, verify
+- Tracks execution statistics (processed, success, fail, skip, quarantine counts)
+- Logs stored per job run
+
+**Topics Enhanced (Pipeline Mode)**:
+- `automationMode`: manual | semi | auto
+- `sourceMode`: all | selected | keywords
+- Keyword filtering: includeKeywords, excludeKeywords
+- Policy flags: requireHumanGate, requireEnglish, allowDuplicates
+- Rate limiting: dailyCap, minSpacingMinutes, quietHours
+- Publishing counters: publishedToday, publishedTodayDate
+
+**Publishing Targets Enhanced**:
+- Health check fields: isActive, lastHealthCheckAt, lastHealthStatus, lastHealthMessage
+- Default publishing settings (status, author, taxonomy rules)
+
+**Schema Tables Added**:
+- `pipeline_items`: 12-state tracking with FK to topics, stories, workspaces, publishing_targets
+- `automation_job_runs`: Job execution logging with FK to topics, workspaces
+- `publish_attempts`: Detailed publish attempt logging with FK to pipeline_items, publishing_targets
+
 ### Recent Changes (December 2025)
 - Migrated from in-memory storage to PostgreSQL with 13 tables
 - Implemented Replit Auth with OpenID Connect
