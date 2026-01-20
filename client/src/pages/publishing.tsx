@@ -166,6 +166,40 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
   const isWordPress = target.type === "wordpress";
   const isTesting = testConnectionMutation.isPending || testDraftMutation.isPending;
 
+  const healthCheckMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/publishing-targets/${target.id}/health-check`);
+      return await res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
+      if (data.status === "ok") {
+        toast({ title: "Connection healthy", description: data.message || "Target is reachable" });
+      } else {
+        toast({ 
+          title: "Connection issue", 
+          description: data.message || "Could not connect to target",
+          variant: "destructive" 
+        });
+      }
+    },
+    onError: (error: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
+      toast({ title: "Health check failed", description: error?.message || "Connection failed", variant: "destructive" });
+    },
+  });
+
+  const getHealthBadge = () => {
+    const status = target.lastHealthStatus;
+    if (!status || status === "unknown") {
+      return <Badge variant="outline" className="text-muted-foreground">Unknown</Badge>;
+    }
+    if (status === "ok") {
+      return <Badge variant="default" className="bg-green-600">Healthy</Badge>;
+    }
+    return <Badge variant="destructive">Unhealthy</Badge>;
+  };
+
   return (
     <Card data-testid={`card-target-${target.id}`}>
       <CardContent className="p-6">
@@ -185,7 +219,12 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Badge variant="default">Active</Badge>
+              {target.isActive ? (
+                <Badge variant="default">Active</Badge>
+              ) : (
+                <Badge variant="outline">Inactive</Badge>
+              )}
+              {getHealthBadge()}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" data-testid={`button-target-menu-${target.id}`}>
@@ -209,9 +248,32 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
             </div>
           </div>
           
+          {target.lastHealthCheckAt && (
+            <div className="text-xs text-muted-foreground pt-2 border-t flex items-center gap-2">
+              <span>Last check: {formatDistanceToNow(new Date(target.lastHealthCheckAt), { addSuffix: true })}</span>
+              {target.lastHealthMessage && target.lastHealthStatus !== "ok" && (
+                <span className="text-destructive">- {target.lastHealthMessage}</span>
+              )}
+            </div>
+          )}
+          
           {isWordPress && (
             <>
-              <div className="flex items-center gap-2 pt-2 border-t">
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => healthCheckMutation.mutate()}
+                  disabled={isTesting || healthCheckMutation.isPending}
+                  data-testid={`button-health-check-${target.id}`}
+                >
+                  {healthCheckMutation.isPending ? (
+                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 h-3 w-3" />
+                  )}
+                  Health Check
+                </Button>
                 <Button 
                   size="sm" 
                   variant="outline"

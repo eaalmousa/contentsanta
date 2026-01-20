@@ -1312,6 +1312,46 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/publishing-targets/:id/health-check", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) return res.status(404).json({ error: "Target not found" });
+      
+      let status: "ok" | "fail" | "unknown" = "fail";
+      let message = "Unknown target type";
+      
+      if (target.type === "wordpress") {
+        const result = await testWordPressConnection(target);
+        if (result.success) {
+          status = "ok";
+          message = `Connected to ${result.siteName || "WordPress"}`;
+        } else {
+          status = "fail";
+          message = result.error || "Connection failed";
+        }
+      } else {
+        status = "unknown";
+        message = "Health check not supported for this target type";
+      }
+      
+      try {
+        await storage.updatePublishingTargetHealth(req.params.id, status, message);
+      } catch (storageError) {
+        console.error("Failed to update health status in DB:", storageError);
+      }
+      
+      res.json({ status, message, checkedAt: new Date().toISOString() });
+    } catch (error: any) {
+      const errorMessage = error.message || "Health check failed";
+      try {
+        await storage.updatePublishingTargetHealth(req.params.id, "fail", errorMessage);
+      } catch (storageError) {
+        console.error("Failed to update health status in DB:", storageError);
+      }
+      res.status(500).json({ status: "fail", message: errorMessage });
+    }
+  });
+
   // Export endpoint
   app.get("/api/export/:assetVersionId", async (req: Request, res: Response) => {
     try {
