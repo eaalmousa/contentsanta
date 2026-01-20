@@ -13,6 +13,7 @@ import {
   publishingTargets, type PublishingTarget, type InsertPublishingTarget,
   publishJobs, type PublishJob, type InsertPublishJob,
   wpPullJobs, type WpPullJob, type InsertWpPullJob, type WpPullJobStatus,
+  wpPluginRequestLogs, type WpPluginRequestLog, type InsertWpPluginRequestLog,
   usageLedger, type UsageLedger, type InsertUsageLedger,
   sources, type Source, type InsertSource,
   sourceItems, type SourceItem, type InsertSourceItem,
@@ -149,6 +150,11 @@ export interface IStorage {
   updateWpPullJob(id: string, data: Partial<WpPullJob>): Promise<WpPullJob | undefined>;
   leaseNextWpPullJob(siteId: string, leaseToken: string, leaseMinutes: number): Promise<WpPullJob | null>;
   releaseExpiredWpPullJobLeases(): Promise<number>;
+  
+  // WordPress Plugin Request Logs
+  createPluginRequestLog(data: InsertWpPluginRequestLog): Promise<WpPluginRequestLog>;
+  getPluginRequestLogs(siteId: string, limit?: number): Promise<WpPluginRequestLog[]>;
+  pruneOldPluginRequestLogs(siteId: string, keepCount: number): Promise<number>;
   
   // Usage Ledger
   getUsageLedger(workspaceId: string): Promise<UsageLedger[]>;
@@ -749,6 +755,42 @@ export class DatabaseStorage implements IStorage {
         sql`${wpPullJobs.leaseExpiresAt} < ${now}`
       ))
       .returning();
+    return result.length;
+  }
+
+  // WordPress Plugin Request Logs
+  async createPluginRequestLog(data: InsertWpPluginRequestLog): Promise<WpPluginRequestLog> {
+    const [log] = await db.insert(wpPluginRequestLogs).values(data).returning();
+    return log;
+  }
+
+  async getPluginRequestLogs(siteId: string, limit: number = 20): Promise<WpPluginRequestLog[]> {
+    return await db.select().from(wpPluginRequestLogs)
+      .where(eq(wpPluginRequestLogs.siteId, siteId))
+      .orderBy(desc(wpPluginRequestLogs.createdAt))
+      .limit(limit);
+  }
+
+  async pruneOldPluginRequestLogs(siteId: string, keepCount: number = 20): Promise<number> {
+    // Get IDs to keep (most recent N)
+    const toKeep = await db.select({ id: wpPluginRequestLogs.id })
+      .from(wpPluginRequestLogs)
+      .where(eq(wpPluginRequestLogs.siteId, siteId))
+      .orderBy(desc(wpPluginRequestLogs.createdAt))
+      .limit(keepCount);
+    
+    if (toKeep.length === 0) return 0;
+    
+    const keepIds = toKeep.map(r => r.id);
+    
+    // Delete all others for this siteId
+    const result = await db.delete(wpPluginRequestLogs)
+      .where(and(
+        eq(wpPluginRequestLogs.siteId, siteId),
+        sql`${wpPluginRequestLogs.id} NOT IN (${sql.join(keepIds.map(id => sql`${id}`), sql`, `)})`
+      ))
+      .returning();
+    
     return result.length;
   }
 

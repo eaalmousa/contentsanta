@@ -523,16 +523,65 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
                 )}
               </div>
               
-              <div className="bg-muted/50 rounded-lg p-4 space-y-2">
-                <div className="text-sm font-medium">Plugin Setup Instructions</div>
-                <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-                  <li>Install the "Content Santa Connector" plugin in WordPress</li>
-                  <li>Go to Settings → Content Santa Connector</li>
-                  <li>Enter the Base URL: <code className="px-1 bg-muted rounded">{window.location.origin}</code></li>
-                  <li>Enter the Site ID: <code className="px-1 bg-muted rounded">{target.siteId}</code></li>
-                  <li>Enter the Secret Key from above</li>
-                  <li>Save and test the connection</li>
-                </ol>
+              <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium">2-Minute Setup Checklist</div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const settings = `Base URL: ${window.location.origin}\nSite ID: ${target.siteId}\nSecret Key: ${target.secretLast4 ? `(ends in ...${target.secretLast4})` : "(generate above)"}`;
+                      navigator.clipboard.writeText(settings);
+                      toast({ title: "Settings copied!", description: "Paste into your WordPress plugin settings" });
+                    }}
+                  >
+                    <Copy className="h-3 w-3 mr-1" />
+                    Copy All
+                  </Button>
+                </div>
+                
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2 text-sm">
+                    <CheckCircle className="h-4 w-4 mt-0.5 text-green-600 flex-shrink-0" />
+                    <span>Install the "Content Santa Connector" plugin in WordPress</span>
+                  </div>
+                  <div className="flex items-start gap-2 text-sm">
+                    <CheckCircle className="h-4 w-4 mt-0.5 text-green-600 flex-shrink-0" />
+                    <span>Go to Settings → Content Santa Connector</span>
+                  </div>
+                  <div className="flex items-start gap-2 text-sm">
+                    <div className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <span className="text-muted-foreground">Base URL:</span>
+                      <div className="flex items-center gap-1 mt-1">
+                        <code className="px-2 py-1 bg-muted rounded text-xs flex-1 overflow-hidden">{window.location.origin}</code>
+                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => { navigator.clipboard.writeText(window.location.origin); toast({ title: "Base URL copied" }); }}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2 text-sm">
+                    <div className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <span className="text-muted-foreground">Site ID:</span>
+                      <div className="flex items-center gap-1 mt-1">
+                        <code className="px-2 py-1 bg-muted rounded text-xs flex-1 overflow-hidden">{target.siteId}</code>
+                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => { navigator.clipboard.writeText(target.siteId!); toast({ title: "Site ID copied" }); }}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2 text-sm">
+                    <CheckCircle className="h-4 w-4 mt-0.5 text-green-600 flex-shrink-0" />
+                    <span>Enter the Secret Key from above and click "Save Changes"</span>
+                  </div>
+                  <div className="flex items-start gap-2 text-sm">
+                    <CheckCircle className="h-4 w-4 mt-0.5 text-green-600 flex-shrink-0" />
+                    <span>Click "Run Now (Manual Pull)" to test the connection</span>
+                  </div>
+                </div>
               </div>
             </div>
           )}

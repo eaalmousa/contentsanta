@@ -252,14 +252,33 @@ export async function registerRoutes(
   
   // Pull next job (called by WordPress plugin)
   app.get("/api/wp/pull", async (req: Request, res: Response) => {
+    const startTime = Date.now();
     const { authenticateWpPullRequest, pullNextJob } = await import("./services/wp-pull-service");
     
     const siteId = req.query.siteId as string | undefined;
     const secret = req.headers["x-contentsanta-secret"] as string | undefined;
+    const secretLast4 = secret ? secret.slice(-4) : "none";
     
     const auth = await authenticateWpPullRequest(siteId, secret);
     if (!auth.ok) {
       console.log(`[WP Pull] Auth failed for siteId=${siteId}: ${auth.error}`);
+      // Log failed auth attempt
+      if (siteId) {
+        await storage.createPluginRequestLog({
+          siteId,
+          targetId: auth.target?.id || null,
+          endpoint: "pull",
+          method: "GET",
+          ipAddress: req.ip || req.headers["x-forwarded-for"]?.toString() || null,
+          userAgent: req.headers["user-agent"] || null,
+          reason: auth.errorCode === "INVALID_SECRET" ? "SECRET_INVALID" : 
+                  auth.errorCode === "INVALID_SITE_ID" ? "SITE_NOT_FOUND" : "AUTH_FAILED",
+          httpStatus: 401,
+          responseMs: Date.now() - startTime,
+          requestSummary: `siteId=${siteId}, secret=****${secretLast4}`,
+          responseSummary: `error=${auth.error}`,
+        });
+      }
       return res.status(401).json({ ok: false, error: auth.error, errorCode: auth.errorCode });
     }
     
@@ -276,6 +295,24 @@ export async function registerRoutes(
     
     const result = await pullNextJob(siteId!);
     
+    // Log successful pull
+    await storage.createPluginRequestLog({
+      siteId: siteId!,
+      targetId: auth.target?.id || null,
+      endpoint: "pull",
+      method: "GET",
+      ipAddress: req.ip || req.headers["x-forwarded-for"]?.toString() || null,
+      userAgent: req.headers["user-agent"] || null,
+      reason: result.job ? "JOB_LEASED" : "JOB_NONE",
+      httpStatus: result.job ? 200 : 204,
+      responseMs: Date.now() - startTime,
+      requestSummary: `siteId=${siteId}, secret=****${secretLast4}`,
+      responseSummary: result.job ? `jobId=${result.job.jobId}` : "no jobs available",
+    });
+    
+    // Prune old logs (keep last 20)
+    await storage.pruneOldPluginRequestLogs(siteId!, 20);
+    
     if (!result.job) {
       return res.status(204).send();
     }
@@ -286,14 +323,32 @@ export async function registerRoutes(
   
   // Report job result (called by WordPress plugin after publishing)
   app.post("/api/wp/report", async (req: Request, res: Response) => {
+    const startTime = Date.now();
     const { authenticateWpPullRequest, reportJobResult } = await import("./services/wp-pull-service");
     
     const { siteId, jobId, leaseToken, ok, wpPostId, wpUrl, error } = req.body;
     const secret = req.headers["x-contentsanta-secret"] as string | undefined;
+    const secretLast4 = secret ? secret.slice(-4) : "none";
     
     const auth = await authenticateWpPullRequest(siteId, secret);
     if (!auth.ok) {
       console.log(`[WP Report] Auth failed for siteId=${siteId}: ${auth.error}`);
+      // Log failed auth attempt
+      if (siteId) {
+        await storage.createPluginRequestLog({
+          siteId,
+          targetId: auth.target?.id || null,
+          endpoint: "report",
+          method: "POST",
+          ipAddress: req.ip || req.headers["x-forwarded-for"]?.toString() || null,
+          userAgent: req.headers["user-agent"] || null,
+          reason: "AUTH_FAILED",
+          httpStatus: 401,
+          responseMs: Date.now() - startTime,
+          requestSummary: `siteId=${siteId}, jobId=${jobId}, secret=****${secretLast4}`,
+          responseSummary: `error=${auth.error}`,
+        });
+      }
       return res.status(401).json({ ok: false, error: auth.error, errorCode: auth.errorCode });
     }
     
@@ -301,8 +356,37 @@ export async function registerRoutes(
     
     if (!result.ok) {
       console.log(`[WP Report] Failed for jobId=${jobId}: ${result.error}`);
+      // Log failed report
+      await storage.createPluginRequestLog({
+        siteId,
+        targetId: auth.target?.id || null,
+        endpoint: "report",
+        method: "POST",
+        ipAddress: req.ip || req.headers["x-forwarded-for"]?.toString() || null,
+        userAgent: req.headers["user-agent"] || null,
+        reason: "REPORT_FAILED",
+        httpStatus: 400,
+        responseMs: Date.now() - startTime,
+        requestSummary: `siteId=${siteId}, jobId=${jobId}, ok=${ok}`,
+        responseSummary: `error=${result.error}`,
+      });
       return res.status(400).json({ ok: false, error: result.error, errorCode: result.errorCode });
     }
+    
+    // Log successful report
+    await storage.createPluginRequestLog({
+      siteId,
+      targetId: auth.target?.id || null,
+      endpoint: "report",
+      method: "POST",
+      ipAddress: req.ip || req.headers["x-forwarded-for"]?.toString() || null,
+      userAgent: req.headers["user-agent"] || null,
+      reason: ok ? "REPORT_SUCCESS" : "REPORT_FAILED",
+      httpStatus: 200,
+      responseMs: Date.now() - startTime,
+      requestSummary: `siteId=${siteId}, jobId=${jobId}, ok=${ok}`,
+      responseSummary: ok ? `wpPostId=${wpPostId}, wpUrl=${wpUrl}` : `error=${error}`,
+    });
     
     console.log(`[WP Report] Job ${jobId} reported as ${ok ? "published" : "failed"}`);
     res.json({ ok: true });
@@ -326,6 +410,27 @@ export async function registerRoutes(
     }
     
     res.json({ ok: true, ...status });
+  });
+  
+  // Get plugin request logs for debugging (authenticated - for UI)
+  app.get("/api/publishing-targets/:id/plugin-logs", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) {
+        return res.status(404).json({ error: "Publishing target not found" });
+      }
+      
+      if (!target.siteId) {
+        return res.json({ logs: [] });
+      }
+      
+      const limit = parseInt(req.query.limit as string) || 20;
+      const logs = await storage.getPluginRequestLogs(target.siteId, limit);
+      res.json({ logs });
+    } catch (error) {
+      console.error("Error fetching plugin logs:", error);
+      res.status(500).json({ error: "Failed to fetch plugin logs" });
+    }
   });
   
   // Stats (public for dashboard)

@@ -398,6 +398,48 @@ export const insertWpPullJobSchema = createInsertSchema(wpPullJobs).omit({
 export type InsertWpPullJob = z.infer<typeof insertWpPullJobSchema>;
 export type WpPullJob = typeof wpPullJobs.$inferSelect;
 
+// Plugin request log reason codes
+export const pluginRequestReasons = [
+  "AUTH_SUCCESS", "AUTH_FAILED", "SITE_NOT_FOUND", "SECRET_INVALID", 
+  "RATE_LIMIT", "REPLAY_DETECTED", "SERVER_ERROR", "JOB_LEASED", 
+  "JOB_NONE", "REPORT_SUCCESS", "REPORT_FAILED", "HEARTBEAT"
+] as const;
+export type PluginRequestReason = typeof pluginRequestReasons[number];
+
+// WordPress Plugin Request Logs (for debugging - keeps last 20 per site)
+export const wpPluginRequestLogs = pgTable("wp_plugin_request_logs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  siteId: varchar("site_id", { length: 64 }).notNull(),
+  targetId: varchar("target_id", { length: 36 }),
+  
+  // Request details
+  endpoint: text("endpoint").notNull(), // "pull", "report", "handshake", "heartbeat"
+  method: text("method").notNull(), // GET, POST
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  
+  // Result
+  reason: text("reason").notNull().$type<PluginRequestReason>(),
+  httpStatus: integer("http_status").notNull(),
+  responseMs: integer("response_ms"),
+  
+  // Payload summary (redacted secrets)
+  requestSummary: text("request_summary"), // e.g., "siteId=cs_site_XXX, secret=****x41M"
+  responseSummary: text("response_summary"), // e.g., "jobId=abc123" or "error=Invalid secret"
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_wp_plugin_logs_site_id").on(table.siteId),
+  index("idx_wp_plugin_logs_created").on(table.createdAt),
+]);
+
+export const insertWpPluginRequestLogSchema = createInsertSchema(wpPluginRequestLogs).omit({ 
+  id: true, 
+  createdAt: true,
+});
+export type InsertWpPluginRequestLog = z.infer<typeof insertWpPluginRequestLogSchema>;
+export type WpPluginRequestLog = typeof wpPluginRequestLogs.$inferSelect;
+
 // Publish Jobs
 export const publishJobs = pgTable("publish_jobs", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),

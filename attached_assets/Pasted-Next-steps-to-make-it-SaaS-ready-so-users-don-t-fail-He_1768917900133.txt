@@ -1,0 +1,109 @@
+Next steps to make it “SaaS-ready” (so users don’t fail)
+
+Here’s the exact hardening list to give Replit (and to guide productization):
+
+1) Onboarding UX (reduce support tickets)
+
+In ContentSanta “Add Target → WordPress (Plugin)”, show:
+
+Download plugin (ZIP)
+
+Base URL + Site ID + Secret with one-click copy
+
+A “2-minute setup” checklist inside the UI
+
+Add a Connection Test that validates:
+
+site_id exists
+
+secret matches
+
+last_pull updates
+
+returns a human-readable error if not
+
+2) Reliability: stop relying on WP-Cron alone
+
+WP-Cron only runs when the site gets visitors. For quiet sites, pulls may pause.
+
+Best practice:
+
+In the plugin:
+
+schedule WP-Cron as default (works out of the box)
+
+but show a warning if no pulls for X minutes
+
+Provide a “Recommended Hosting Cron” option:
+
+SiteGround cron hitting wp-cron.php every 5 minutes
+
+optionally disable WP-Cron via DISABLE_WP_CRON when real cron is enabled
+
+3) Security model (make it safe for paying customers)
+
+Use HMAC signature (or equivalent) per request:
+
+timestamp + nonce + body signed with secret
+
+reject replay (nonce store) and reject stale timestamps
+
+Secret rotation already exists — keep it and add:
+
+“Rotate secret” invalidates the old one immediately
+
+Rate limit per site:
+
+e.g., max X pulls per hour, max Y content items per pull
+
+4) Debuggability (so support is fast)
+
+Plugin “Logs” page:
+
+last 20 pulls + status + error text
+
+ContentSanta side:
+
+store last 20 requests per site (redacted) with reason codes:
+
+AUTH_FAILED, SITE_NOT_FOUND, RATE_LIMIT, SERVER_ERROR
+
+5) Content publishing workflow (the real product value)
+
+Make the pull do something tangible:
+
+Fetch “Ready to Publish” items
+
+Create WP draft + set category/tag + featured image (if available)
+
+Return results to ContentSanta so the UI shows:
+
+✅ Published / Draft created (with WP post ID + link)
+
+❌ Failed (with exact reason)
+
+What to tell Replit right now (copy/paste prompt)
+
+Use this as your Replit instruction so they implement everything needed for the plugin model cleanly:
+
+Prompt to Replit:
+
+Implement and finalize the WordPress Plugin Connector (pull model) as the default commercial path.
+
+Ensure ContentSanta exposes these endpoints (authenticated by site_id + secret, HMAC with timestamp/nonce):
+
+POST /api/wp/plugin/handshake (validate credentials, return site settings + server time)
+
+POST /api/wp/plugin/pull (return queue of items to publish + taxonomy mapping + media URLs)
+
+POST /api/wp/plugin/report (WP reports back results: created post IDs, status, errors)
+
+POST /api/wp/plugin/heartbeat (updates last_pull, health status)
+
+Add rate limiting per site and replay protection (nonce + timestamp window).
+
+Add UI improvements: copy buttons, “How to install” steps, and a clear “Last pull / Last error” panel.
+
+Add a support-grade debug view storing last 20 plugin requests and responses (redacted secrets).
+
+Ensure “Test Connection” and “Create Test Draft” show success if WP confirms creation (don’t false-fail).
