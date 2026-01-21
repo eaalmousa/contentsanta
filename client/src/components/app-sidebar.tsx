@@ -1,6 +1,5 @@
 import { Link, useLocation } from "wouter";
 import {
-  Edit3,
   Gift,
   Send,
   Target,
@@ -24,7 +23,6 @@ import {
 
 // Core navigation - MVP focus
 const mainNavItems = [
-  { title: "Smart Editor", url: "/", icon: Edit3 },
   { title: "Topics", url: "/topics", icon: Target },
   { title: "Pipeline", url: "/pipeline", icon: Workflow },
   { title: "Analytics", url: "/analytics", icon: BarChart3 },
