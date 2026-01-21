@@ -54,7 +54,7 @@ async function testPublishFlow() {
     .where(eq(pipelineItems.id, item.id));
   console.log("   Done.");
 
-  console.log("\n3. Creating WP Pull Job...");
+  console.log("\n3. Creating WP Pull Job (status=queued, with pipelineItemId)...");
   const [job] = await db.insert(wpPullJobs).values({
     targetId: target[0].id,
     siteId: target[0].siteId!,
@@ -70,7 +70,7 @@ async function testPublishFlow() {
     sourceUrl: null,
     featuredImageUrl: null,
     metadataJson: {},
-    status: "pending",
+    status: "queued",
   }).returning();
 
   console.log(`   Created job: ${job.id}`);

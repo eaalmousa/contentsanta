@@ -7,10 +7,12 @@ import type {
   InsertPipelineItem,
   InsertAutomationJobRun,
   InsertPublishAttempt,
+  InsertWpPullJob,
   PipelineItemStatus,
   AutomationJobType,
   AutomationJobStatus,
   WorkflowType,
+  PublishingTarget,
 } from "@shared/schema";
 import crypto from "crypto";
 
@@ -629,56 +631,90 @@ export async function runPublishJob(topic: Topic): Promise<JobResult> {
       });
 
       try {
-        const assetVersion = {
-          id: item.id,
-          assetId: item.id,
-          title: item.generatedTitle || "Untitled",
-          body: item.generatedBody || "",
-          versionNo: 1,
-          workflowType: "seo_blog" as const,
-          createdAt: new Date(),
-          language: topic.language || "en",
-          channel: null,
-          format: null,
-          metadataJson: null,
-          createdBy: null,
-          runId: null,
-        };
-
-        const publishResult = await publishToWordPress(target, assetVersion, {
-          status: "publish",
-        });
-
-        if (publishResult.success && publishResult.postId) {
-          await storage.updatePipelineItem(item.id, {
-            status: "published" as PipelineItemStatus,
-            targetPostId: publishResult.postId,
-            targetPermalink: publishResult.postUrl,
-            publishedAt: new Date(),
-          });
-
-          await storage.createPublishAttempt({
+        if (target.type === "wordpress_pull") {
+          if (!target.siteId) {
+            throw new Error("WordPress Pull target missing siteId");
+          }
+          
+          const slug = (item.generatedTitle || "post")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .slice(0, 50);
+          
+          const wpJob: InsertWpPullJob = {
+            targetId: target.id,
+            siteId: target.siteId,
+            storyId: item.storyId,
             pipelineItemId: item.id,
-            targetId: item.targetId,
-            attemptNumber: (item.publishAttempts || 0) + 1,
-            requestPayload: {
-              title: item.generatedTitle,
-              content: item.generatedBody,
-              excerpt: item.generatedExcerpt,
-            },
-            responseStatus: 201,
-            responseBody: { postId: publishResult.postId, postUrl: publishResult.postUrl },
-            result: "success",
-          });
-
-          await storage.updateTopic(topic.id, {
-            publishedToday: (topic.publishedToday || 0) + 1,
-            publishedTodayResetAt: new Date(),
-          });
-
+            title: item.generatedTitle || "Untitled",
+            contentHtml: item.generatedBody || "<p>Content pending</p>",
+            postStatus: target.defaultPostStatus || "draft",
+            categories: item.generatedCategory ? [item.generatedCategory] : [topic.name],
+            tags: (item.generatedTags as string[] | null) || [],
+            excerpt: item.generatedExcerpt || "",
+            slug,
+            sourceUrl: null,
+            featuredImageUrl: null,
+            metadataJson: {},
+            status: "queued",
+          };
+          
+          await storage.createWpPullJob(wpJob);
+          
+          console.log(`[PublishJob:${topic.id}] Created WP pull job for item ${item.id}`);
           result.success++;
         } else {
-          throw new Error(publishResult.error || "WordPress publish failed");
+          const assetVersion = {
+            id: item.id,
+            assetId: item.id,
+            title: item.generatedTitle || "Untitled",
+            body: item.generatedBody || "",
+            versionNo: 1,
+            workflowType: "seo_blog" as const,
+            createdAt: new Date(),
+            language: topic.language || "en",
+            channel: null,
+            format: null,
+            metadataJson: null,
+            createdBy: null,
+            runId: null,
+          };
+
+          const publishResult = await publishToWordPress(target, assetVersion, {
+            status: "publish",
+          });
+
+          if (publishResult.success && publishResult.postId) {
+            await storage.updatePipelineItem(item.id, {
+              status: "published" as PipelineItemStatus,
+              targetPostId: publishResult.postId,
+              targetPermalink: publishResult.postUrl,
+              publishedAt: new Date(),
+            });
+
+            await storage.createPublishAttempt({
+              pipelineItemId: item.id,
+              targetId: item.targetId,
+              attemptNumber: (item.publishAttempts || 0) + 1,
+              requestPayload: {
+                title: item.generatedTitle,
+                content: item.generatedBody,
+                excerpt: item.generatedExcerpt,
+              },
+              responseStatus: 201,
+              responseBody: { postId: publishResult.postId, postUrl: publishResult.postUrl },
+              result: "success",
+            });
+
+            await storage.updateTopic(topic.id, {
+              publishedToday: (topic.publishedToday || 0) + 1,
+              publishedTodayResetAt: new Date(),
+            });
+
+            result.success++;
+          } else {
+            throw new Error(publishResult.error || "WordPress publish failed");
+          }
         }
       } catch (error: any) {
         const retryCount = (item.retryCount || 0) + 1;

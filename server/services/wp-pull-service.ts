@@ -159,12 +159,24 @@ export async function reportJobResult(data: ReportRequest): Promise<ReportResult
     });
     
     if (job.pipelineItemId) {
+      const pipelineItem = await storage.getPipelineItem(job.pipelineItemId);
+      
       await storage.updatePipelineItem(job.pipelineItemId, {
         status: "published",
         targetPostId: wpPostId?.toString(),
         targetPermalink: wpUrl,
         publishedAt: now,
       });
+      
+      if (pipelineItem?.topicId) {
+        const topic = await storage.getTopic(pipelineItem.topicId);
+        if (topic) {
+          await storage.updateTopic(topic.id, {
+            publishedToday: (topic.publishedToday || 0) + 1,
+            publishedTodayResetAt: now,
+          });
+        }
+      }
     }
     
     await storage.updatePublishingTargetBySiteId(siteId, {
