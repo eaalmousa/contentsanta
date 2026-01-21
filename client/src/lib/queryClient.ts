@@ -42,13 +42,16 @@ function buildUrl(queryKey: readonly unknown[]): string {
     throw new Error("Invalid queryKey: first element must be a string URL");
   }
   
-  // Second element: only objects become query params
-  // Primitive values (strings, numbers) are cache keys only, NOT URL parts
-  const params = queryKey[1];
+  if (queryKey.length === 1) {
+    return base;
+  }
   
-  if (params && typeof params === "object" && !Array.isArray(params)) {
+  const second = queryKey[1];
+  
+  // If second element is an object → query params only, ignore rest
+  if (second && typeof second === "object" && !Array.isArray(second)) {
     const qs = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) {
+    for (const [key, value] of Object.entries(second)) {
       if (value !== undefined && value !== null && value !== "") {
         qs.set(key, String(value));
       }
@@ -57,7 +60,20 @@ function buildUrl(queryKey: readonly unknown[]): string {
     return queryString ? `${base}?${queryString}` : base;
   }
   
-  // IMPORTANT: do NOT append primitive strings to the path - they are cache keys only
+  // Check if we have path segments after a potential ID
+  // Pattern: ["/api/resource", id, "subresource"] → /api/resource/id/subresource
+  // vs Pattern: ["/api/resource", workspaceId] → /api/resource (workspaceId is cache key only)
+  // Heuristic: if there are 3+ elements and the 3rd is a short lowercase string, it's a path segment
+  if (queryKey.length >= 3) {
+    const third = queryKey[2];
+    if (typeof third === "string" && /^[a-z][a-z-]*$/.test(third)) {
+      // This looks like a sub-resource path like "sources", "taxonomy", "stories"
+      const pathParts = queryKey.slice(1).filter(k => typeof k === "string");
+      return `${base}/${pathParts.join("/")}`;
+    }
+  }
+  
+  // Default: primitive second element is a cache key only, not a URL part
   return base;
 }
 
