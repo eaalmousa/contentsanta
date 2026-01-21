@@ -689,7 +689,7 @@ function TopicSettingsDialog({
                     ))}
                   </SelectContent>
                 </Select>
-                {wordPressTargets.length === 0 ? (
+                {targets && wordPressTargets.length === 0 && !targetsLoading ? (
                   <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="text-edit-no-targets-warning">
                     No targets found in this workspace. Create one in Publishing first.
                   </p>
@@ -2233,7 +2233,7 @@ export default function TopicsPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                {createDialogWordPressTargets.length === 0 && !isTargetsLoading ? (
+                {createDialogTargets && createDialogWordPressTargets.length === 0 && !isTargetsLoading ? (
                   <p className="text-xs text-amber-600 dark:text-amber-400 mt-1" data-testid="text-no-targets-warning">
                     No targets found in this workspace. Create one in Publishing first.
                   </p>

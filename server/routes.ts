@@ -1025,14 +1025,16 @@ export async function registerRoutes(
         });
       }
 
-      // Get all targets created by this user (regardless of workspace assignment)
-      const allTargets = await storage.getAllPublishingTargets();
-      const targetsCreatedByUser = allTargets.filter(t => t.createdByUserId === userId);
-      const targetsInActiveWorkspace = allTargets.filter(t => t.workspaceId === workspace.id);
+      // Get targets using tenant-scoped queries (no full-table scan)
+      const [targetsCreatedByUser, targetsInActiveWorkspace] = await Promise.all([
+        storage.getPublishingTargetsByCreatorId(userId),
+        storage.getPublishingTargets(workspace.id),
+      ]);
       
-      // Identify orphan targets: created by user but not in current workspace
+      // Identify truly orphan targets: created by user but have null/empty workspaceId
+      // Targets assigned to other workspaces are NOT orphans (user may have multiple workspaces)
       const orphanTargets = targetsCreatedByUser.filter(t => 
-        !t.workspaceId || t.workspaceId !== workspace.id
+        !t.workspaceId || t.workspaceId.trim() === ""
       );
 
       res.json({
@@ -1050,7 +1052,7 @@ export async function registerRoutes(
           type: t.type,
           workspaceId: t.workspaceId,
           createdByUserId: t.createdByUserId,
-          isOrphan: !t.workspaceId || t.workspaceId !== workspace.id,
+          isOrphan: !t.workspaceId || t.workspaceId.trim() === "",
         })),
         targetsInActiveWorkspace: targetsInActiveWorkspace.map(t => ({
           id: t.id,
@@ -1082,11 +1084,27 @@ export async function registerRoutes(
         });
       }
 
-      // Get all targets created by this user
-      const allTargets = await storage.getAllPublishingTargets();
-      const orphanTargets = allTargets.filter(t => 
-        t.createdByUserId === userId && (!t.workspaceId || t.workspaceId !== workspace.id)
+      // Get targets created by this user using scoped query
+      const targetsCreatedByUser = await storage.getPublishingTargetsByCreatorId(userId);
+      
+      // Only consider truly orphan targets: those with null/empty workspaceId
+      // Skip targets already assigned to another workspace (user may have multiple workspaces)
+      const orphanTargets = targetsCreatedByUser.filter(t => 
+        !t.workspaceId || t.workspaceId.trim() === ""
       );
+
+      // Short-circuit if no orphans found
+      if (orphanTargets.length === 0) {
+        console.log(`[Debug] No orphan targets found for user ${userId}`);
+        return res.json({
+          success: true,
+          adoptedCount: 0,
+          adoptedTargetIds: [],
+          targetWorkspaceId: workspace.id,
+          targetWorkspaceName: workspace.name,
+          message: "No orphan targets found to adopt",
+        });
+      }
 
       // Update each orphan to belong to the active workspace
       const adopted: string[] = [];

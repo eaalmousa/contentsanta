@@ -132,6 +132,7 @@ export interface IStorage {
   // Publishing Targets
   getPublishingTargets(workspaceId: string): Promise<PublishingTarget[]>;
   getPublishingTargetsByWorkspaceIds(workspaceIds: string[]): Promise<PublishingTarget[]>;
+  getPublishingTargetsByCreatorId(userId: string): Promise<PublishingTarget[]>;
   getAllPublishingTargets(): Promise<PublishingTarget[]>;
   getPublishingTarget(id: string): Promise<PublishingTarget | undefined>;
   createPublishingTarget(data: InsertPublishingTarget): Promise<PublishingTarget>;
@@ -669,6 +670,10 @@ export class DatabaseStorage implements IStorage {
   async getPublishingTargetsByWorkspaceIds(workspaceIds: string[]): Promise<PublishingTarget[]> {
     if (workspaceIds.length === 0) return [];
     return await db.select().from(publishingTargets).where(inArray(publishingTargets.workspaceId, workspaceIds));
+  }
+  
+  async getPublishingTargetsByCreatorId(userId: string): Promise<PublishingTarget[]> {
+    return await db.select().from(publishingTargets).where(eq(publishingTargets.createdByUserId, userId));
   }
   
   async getAllPublishingTargets(): Promise<PublishingTarget[]> {
