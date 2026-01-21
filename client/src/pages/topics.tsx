@@ -191,6 +191,7 @@ function TopicSettingsDialog({
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("sources");
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const [publishingTargetId, setPublishingTargetId] = useState<string | null>(topic.publishingTargetId || null);
   const [tagSearch, setTagSearch] = useState("");
   const [sourceSearch, setSourceSearch] = useState("");
   
@@ -281,8 +282,9 @@ function TopicSettingsDialog({
   );
   
   const { data: targets } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
-    queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
+    queryKey: ["/api/publishing-targets", { workspaceId: topic.workspaceId }],
+    queryFn: () => fetch(`/api/publishing-targets?workspaceId=${topic.workspaceId}`).then(r => r.json()),
+    enabled: open,
   });
   
   const wordPressTargets = useMemo(() => 
@@ -331,7 +333,8 @@ function TopicSettingsDialog({
         timezone,
         publishTimes,
         articlesPerRun,
-        runIntervalMinutes
+        runIntervalMinutes,
+        publishingTargetId
       });
     },
     onSuccess: () => {
@@ -650,6 +653,37 @@ function TopicSettingsDialog({
           
           <TabsContent value="general" className="space-y-4 pt-4">
             <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Publishing Target</Label>
+                <Select 
+                  value={publishingTargetId || ""} 
+                  onValueChange={(value) => setPublishingTargetId(value || null)}
+                >
+                  <SelectTrigger data-testid="select-publishing-target">
+                    <SelectValue placeholder="Select a publishing target..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">None</SelectItem>
+                    {wordPressTargets.map((target) => (
+                      <SelectItem key={target.id} value={target.id}>
+                        {target.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Choose which WordPress site this topic publishes to
+                </p>
+                {publishingTargetId && wordPressTargets.find(t => t.id === publishingTargetId) && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Globe className="h-3 w-3" />
+                    <span>{wordPressTargets.find(t => t.id === publishingTargetId)?.wpSiteUrl}</span>
+                  </div>
+                )}
+              </div>
+              
+              <Separator />
+              
               <div className="space-y-2">
                 <Label>Default Content Language</Label>
                 <Select 
