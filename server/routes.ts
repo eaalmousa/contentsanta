@@ -2094,7 +2094,14 @@ export async function registerRoutes(
   
   app.get("/api/topics", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      // Resolve workspace from authenticated user
+      const userId = (req.user as any)?.claims?.sub;
+      const workspaceId = req.query.workspaceId as string || await resolveWorkspaceId(userId);
+      
+      if (!workspaceId) {
+        return res.json([]); // No workspace = no topics
+      }
+      
       const topics = await storage.getTopics(workspaceId);
       
       const topicsWithSources = await Promise.all(
