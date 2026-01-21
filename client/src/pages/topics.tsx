@@ -228,16 +228,16 @@ function TopicSettingsDialog({
     setPublishTimes(publishTimes.filter(t => t !== time));
   };
   
-  // Fetch topic sources
+  // Fetch topic sources (gate on isAuthenticated to avoid 401s)
   const topicSourcesQuery = useQuery<TopicSourceWithDetails[]>({
     queryKey: [`/api/topics/${topic.id}/sources`],
-    enabled: open,
+    enabled: open && isAuthenticated,
   });
   
   // Fetch all available sources
   const allSourcesQuery = useQuery<any[]>({
     queryKey: ["/api/sources"],
-    enabled: open,
+    enabled: open && isAuthenticated,
   });
   
   const toggleSourceMutation = useMutation({
@@ -299,7 +299,7 @@ function TopicSettingsDialog({
     lastSync: { categories: string | null; tags: string | null } 
   }>({
     queryKey: ["/api/publishing-targets", publishingTargetId, "taxonomy"],
-    enabled: !!publishingTargetId,
+    enabled: open && isAuthenticated && !!publishingTargetId,
   });
   
   const syncCategoriesMutation = useMutation({
