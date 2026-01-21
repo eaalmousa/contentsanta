@@ -518,8 +518,7 @@ export default function SmartEditorPage() {
   const { data: topicStories, isLoading: topicStoriesLoading } = useQuery<StoryWithProvenance[]>({
     queryKey: ["/api/topics", selectedTopicId, "stories"],
     queryFn: async () => {
-      const res = await fetch(`/api/topics/${selectedTopicId}/stories`);
-      if (!res.ok) throw new Error("Failed to fetch topic stories");
+      const res = await apiRequest("GET", `/api/topics/${selectedTopicId}/stories`);
       return res.json();
     },
     enabled: selectedTopicId !== "all",
@@ -587,9 +586,10 @@ export default function SmartEditorPage() {
       const response = await apiRequest("POST", `/api/topics/${topicId}/run-discovery`, {});
       return await response.json();
     },
-    onSuccess: () => {
+    onSuccess: (_, topicId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
       queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/topics", topicId, "stories"] });
     },
     onError: (error: any) => {
       toast({
@@ -621,6 +621,7 @@ export default function SmartEditorPage() {
     
     queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
     queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
+    liveTopics.forEach(t => queryClient.invalidateQueries({ queryKey: ["/api/topics", t.id, "stories"] }));
     toast({ title: "Discovery completed", description: `Found ${totalMatched} total matching stories` });
   };
 
