@@ -69,7 +69,10 @@ function LandingPage() {
           <div className="flex items-center gap-4">
             <ThemeToggle />
             <a href="/api/login">
-              <Button data-testid="button-login">Sign In</Button>
+              <Button variant="ghost" data-testid="button-login">Sign In</Button>
+            </a>
+            <a href="/api/login">
+              <Button data-testid="button-register">Register</Button>
             </a>
           </div>
         </div>
