@@ -287,7 +287,7 @@ function TopicSettingsDialog({
   });
   
   const wordPressTargets = useMemo(() => 
-    (targets ?? []).filter(t => t.type === "wordpress"), 
+    (targets ?? []).filter(t => t.type === "wordpress" || t.type === "wordpress_pull"), 
     [targets]
   );
   
