@@ -2784,13 +2784,105 @@ export async function registerRoutes(
   // Seed official GCC sources
   app.post("/api/sources/seed-official", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const { workspaceId = "demo-workspace" } = req.body;
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+      
+      // Resolve workspace from session
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(404).json({ error: "No workspace found for user" });
+      }
+      
       const { seedOfficialSources } = await import("./seeds/official-sources");
-      const result = await seedOfficialSources(workspaceId);
-      res.json({ success: true, ...result });
+      const result = await seedOfficialSources(workspace.id);
+      res.json({ success: true, ...result, workspaceId: workspace.id });
     } catch (error: any) {
       console.error("[API] seed-official error:", error);
       res.status(500).json({ error: error.message || "Failed to seed official sources" });
+    }
+  });
+
+  // Migrate/adopt sources from another workspace user owns to current workspace
+  app.post("/api/sources/adopt-from-workspace", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+      
+      // Resolve target workspace from session
+      const targetWorkspace = await resolveWorkspace(userId);
+      if (!targetWorkspace) {
+        return res.status(404).json({ error: "No workspace found for user" });
+      }
+      
+      const { sourceWorkspaceId } = req.body;
+      if (!sourceWorkspaceId) {
+        return res.status(400).json({ error: "sourceWorkspaceId is required" });
+      }
+      
+      if (sourceWorkspaceId === targetWorkspace.id) {
+        return res.status(400).json({ error: "Cannot adopt from same workspace" });
+      }
+      
+      // SECURITY: Verify user is a member of the source workspace (must be owner/admin)
+      const membership = await storage.getWorkspaceUser(sourceWorkspaceId, userId);
+      if (!membership || !["owner", "admin"].includes(membership.role)) {
+        return res.status(403).json({ error: "Access denied: You must be an owner or admin of the source workspace to adopt its sources" });
+      }
+      
+      console.log(`[API] Adopting sources from ${sourceWorkspaceId} to ${targetWorkspace.id} (authorized as ${membership.role})`);
+      
+      // Get sources from source workspace
+      const sourceSources = await storage.getSources(sourceWorkspaceId);
+      if (!sourceSources || sourceSources.length === 0) {
+        return res.json({ success: true, adopted: 0, skipped: 0, message: "No sources found in source workspace" });
+      }
+      
+      // Get existing sources in target workspace to avoid duplicates
+      const existingSources = await storage.getSources(targetWorkspace.id);
+      const existingUrls = new Set(existingSources.map(s => s.feedUrl || s.url).filter(Boolean));
+      
+      let adopted = 0;
+      let skipped = 0;
+      
+      for (const source of sourceSources) {
+        const sourceUrl = source.feedUrl || source.url;
+        if (sourceUrl && existingUrls.has(sourceUrl)) {
+          skipped++;
+          continue;
+        }
+        
+        // Create a copy of the source in target workspace
+        await storage.createSource({
+          name: source.name,
+          url: source.url || "",
+          feedUrl: source.feedUrl || source.url || "",
+          type: source.type || "rss",
+          language: source.language,
+          country: source.country,
+          region: source.region,
+          tier: source.tier || 2,
+          isOfficial: source.isOfficial || false,
+          isActive: source.isActive ?? true,
+          workspaceId: targetWorkspace.id,
+        });
+        adopted++;
+      }
+      
+      console.log(`[API] Adopted ${adopted} sources, skipped ${skipped} duplicates`);
+      res.json({ 
+        success: true, 
+        adopted, 
+        skipped, 
+        targetWorkspaceId: targetWorkspace.id,
+        sourceWorkspaceId 
+      });
+    } catch (error: any) {
+      console.error("[API] adopt-from-workspace error:", error);
+      res.status(500).json({ error: error.message || "Failed to adopt sources" });
     }
   });
 

@@ -3,15 +3,6 @@ import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspaceContext } from "@/hooks/use-workspace-context";
-
-// Helper to normalize various API response shapes to arrays
-function normalizeList<T>(data: any): T[] {
-  if (Array.isArray(data)) return data;
-  if (data && Array.isArray(data.sources)) return data.sources;
-  if (data && Array.isArray(data.items)) return data.items;
-  if (data && Array.isArray(data.data)) return data.data;
-  return [];
-}
 import { 
   Plus,
   Power,
@@ -85,6 +76,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { formatDistanceToNow } from "date-fns";
+
+// Helper to normalize various API response shapes to arrays
+function normalizeList<T>(data: any): T[] {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.sources)) return data.sources;
+  if (data && Array.isArray(data.items)) return data.items;
+  if (data && Array.isArray(data.data)) return data.data;
+  return [];
+}
 
 const contentIntentConfig: Record<ContentIntent, { label: string; icon: any; color: string }> = {
   news_monitoring: { label: "News", icon: Globe, color: "bg-blue-500" },
