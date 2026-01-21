@@ -1,0 +1,91 @@
+Invalid response from Replit driver
+SELECT
+  id,
+  slug,
+  name
+FROM
+  workspaces
+LIMIT
+  5;
+
+UPDATE topics
+SET
+  workspace_id = 'test-ws-1'
+WHERE
+  workspace_id = 'demo-workspace';
+
+UPDATE stories
+SET
+  workspace_id = 'test-ws-1'
+WHERE
+  workspace_id = 'demo-workspace';
+
+UPDATE pipeline_items
+SET
+  workspace_id = 'test-ws-1'
+WHERE
+  workspace_id = 'demo-workspace';
+
+UPDATE drafts
+SET
+  workspace_id = 'test-ws-1'
+WHERE
+  workspace_id = 'demo-workspace';
+
+UPDATE automation_job_runs
+SET
+  workspace_id = 'test-ws-1'
+WHERE
+  workspace_id = 'demo-workspace';
+
+SELECT
+  'topics' as table_name,
+  COUNT(*) as count
+FROM
+  topics
+WHERE
+  workspace_id = 'demo-workspace'
+UNION ALL
+SELECT
+  'stories',
+  COUNT(*)
+FROM
+  stories
+WHERE
+  workspace_id = 'demo-workspace'
+UNION ALL
+SELECT
+  'pipeline_items',
+  COUNT(*)
+FROM
+  pipeline_items
+WHERE
+  workspace_id = 'demo-workspace'
+UNION ALL
+SELECT
+  'drafts',
+  COUNT(*)
+FROM
+  drafts
+WHERE
+  workspace_id = 'demo-workspace'
+UNION ALL
+SELECT
+  'automation_job_runs',
+  COUNT(*)
+FROM
+  automation_job_runs
+WHERE
+  workspace_id = 'demo-workspace';
+{
+  "sql": "SELECT id, slug, name FROM workspaces LIMIT 5;\n\nUPDATE topics SET workspace_id = 'test-ws-1' WHERE workspace_id = 'demo-workspace';\n\nUPDATE stories SET workspace_id = 'test-ws-1' WHERE workspace_id = 'demo-workspace';\n\nUPDATE pipeline_items SET workspace_id = 'test-ws-1' WHERE workspace_id = 'demo-workspace';\n\nUPDATE drafts SET workspace_id = 'test-ws-1' WHERE workspace_id = 'demo-workspace';\n\nUPDATE automation_job_runs SET workspace_id = 'test-ws-1' WHERE workspace_id = 'demo-workspace';\n\nSELECT 'topics' as table_name, COUNT(*) as count FROM topics WHERE workspace_id = 'demo-workspace'\nUNION ALL\nSELECT 'stories', COUNT(*) FROM stories WHERE workspace_id = 'demo-workspace'\nUNION ALL\nSELECT 'pipeline_items', COUNT(*) FROM pipeline_items WHERE workspace_id = 'demo-workspace'\nUNION ALL\nSELECT 'drafts', COUNT(*) FROM drafts WHERE workspace_id = 'demo-workspace'\nUNION ALL\nSELECT 'automation_job_runs', COUNT(*) FROM automation_job_runs WHERE workspace_id = 'demo-workspace';"
+}
+[
+  "[Object]",
+  "[Object]",
+  "[Object]",
+  "[Object]",
+  "[Object]",
+  "[Object]",
+  "[Object]"
+]
