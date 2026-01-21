@@ -1675,6 +1675,7 @@ export default function TopicsPage() {
   // Use unified workspace context for all workspace-scoped operations
   const { 
     activeWorkspaceId, 
+    activeWorkspaceName,
     counts: workspaceCounts, 
     recentTargets,
     isLoading: isContextLoading 
@@ -2045,6 +2046,13 @@ export default function TopicsPage() {
               }
             </DialogDescription>
           </DialogHeader>
+          
+          {/* Workspace info line */}
+          {activeWorkspaceName && (
+            <div className="text-xs text-muted-foreground bg-muted/30 px-3 py-1.5 rounded-md mb-2">
+              Workspace: <span className="font-medium text-foreground">{activeWorkspaceName}</span>
+            </div>
+          )}
           
           {process.env.NODE_ENV === "development" && (
             <div className="text-xs font-mono bg-muted/50 p-2 rounded mb-2 text-muted-foreground">

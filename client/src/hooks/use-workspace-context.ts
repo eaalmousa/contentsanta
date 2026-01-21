@@ -36,9 +36,15 @@ export function useWorkspaceContext() {
     refetchOnWindowFocus: true,
   });
   
+  // Find active workspace name from memberships
+  const activeWorkspace = query.data?.memberships?.find(
+    m => m.workspaceId === query.data?.activeWorkspaceId
+  );
+  
   return {
     ...query,
     activeWorkspaceId: query.data?.activeWorkspaceId,
+    activeWorkspaceName: activeWorkspace?.name,
     memberships: query.data?.memberships || [],
     counts: query.data?.counts,
     recentTargets: query.data?.recentTargets || [],

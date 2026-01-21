@@ -1,0 +1,99 @@
+You are working on Content Santa (Replit). Implement workspace-safe topic creation and publishing targets. The app currently suffers from legacy “demo-workspace” / slug-based workspace IDs, causing publishing targets not to appear in Create Topic modal.
+
+GOAL
+Make workspace resolution consistent and automatic for the logged-in user, migrate legacy workspace IDs safely, and ensure the Create Topic “Publishing Target” dropdown correctly lists targets in the user’s workspace.
+
+REQUIREMENTS / TASKS
+
+1) Create endpoint for user context
+Create GET /api/user/context
+Returns JSON:
+{
+  user: { id, email? },
+  workspace: { id, name, slug? },
+  membership: { role },
+  counts: { topics, targets, sources },
+  legacy: {
+    topicsWithInvalidWorkspaceId: number,
+    targetsWithInvalidWorkspaceId: number,
+    invalidWorkspaceIdSamples: string[]
+  }
+}
+- Must read user id consistently from req.user.claims.sub (NOT req.user.id).
+- Must return 401 if not authenticated.
+- Must resolve “current workspace” deterministically (see #2).
+- Keep response safe (no secrets).
+
+2) Create tool for workspace data (backend helper)
+Create a single source of truth helper:
+resolveWorkspaceForRequest(req) -> { workspaceId, workspace, membership }
+Rules:
+- If user has memberships, pick the first workspace (or “default” workspace if you already have a flag).
+- If user has no workspace, auto-create one:
+  - name: “My Workspace”
+  - slug: based on user id or email (unique)
+  - create membership role = “owner”
+Return workspaceId always as UUID (DB primary key), NEVER slug.
+
+3) Update create topic to use workspace
+Wherever the topic is created/updated (POST /api/topics and PUT /api/topics/:id):
+- Do not accept workspaceId from client.
+- Use resolveWorkspaceForRequest(req).workspaceId.
+- Ensure topic.workspace_id is UUID and correct.
+- Validate publishingTargetId belongs to same workspace (if provided) or reject with 400.
+
+4) Show workspace details in modal (frontend)
+In Create Topic modal:
+- Fetch /api/user/context once (React Query).
+- Show a small “Account”/“Workspace” info line:
+  “Workspace: <name>”
+- Use the resolved workspace to load publishing targets (but do not pass workspaceId; backend should infer).
+
+5) Set workspace ID for publishing
+Ensure publishing targets are always workspace-scoped:
+- GET /api/publishing-targets returns only targets for the resolved workspace.
+- POST /api/publishing-targets creates targets under resolved workspace.
+- Never use “demo-workspace” anywhere.
+- Ensure the WordPress (Plugin) target is returned properly.
+
+6) Create tool to fix old workspace IDs (migration endpoint)
+Create POST /api/debug/fix-legacy-workspace-ids (authenticated; restrict to owner role OR allow any member if no roles exist yet, but do not expose publicly).
+Behavior:
+- Find topics where workspace_id is not a valid UUID OR equals "demo-workspace" OR matches a slug string pattern.
+- Same for publishing targets.
+- Migrate them to the user’s resolved workspaceId ONLY IF:
+  - They were created by the same user (if such a field exists), OR
+  - There is only one workspace in the DB (safe single-tenant dev), OR
+  - Add a conservative “dryRun=true” mode first.
+Return a report:
+{
+  migrated: { topics: n, targets: n },
+  skipped: { topics: n, targets: n },
+  details: { ... }
+}
+
+Also create GET /api/debug/legacy-report that lists counts + a few IDs (no secrets).
+
+7) Check publishing options work correctly (acceptance tests)
+After implementation:
+- A logged-in user with a connected WordPress (Plugin) target must see it in Create Topic > Publishing Target dropdown.
+- Creating a topic with that target must persist publishingTargetId.
+- Topic list shows target association (if UI supports).
+- No 401 spam due to early queries; gate queries until auth context is loaded.
+- Remove/replace any remaining hardcoded “demo-workspace” usage.
+
+8) Start application
+Restart workflow, ensure no TypeScript errors, run through the above flow in browser.
+
+IMPLEMENTATION NOTES
+- Use UUID workspace primary keys consistently (workspace.id).
+- Do not rely on “slug” as FK anywhere.
+- Centralize userId extraction to one helper.
+- Add meaningful 400 errors when workspace/topic/target mismatch happens (include hint fields).
+- Keep debug endpoints behind authentication and clearly marked as debug.
+
+DELIVERABLES
+- Code changes across backend routes + storage layer + frontend modal.
+- Confirm with a short checklist: endpoints working, migration tool working, dropdown populated, topic creation successful.
+
+Proceed now.

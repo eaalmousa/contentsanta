@@ -240,12 +240,16 @@ export async function registerRoutes(
         return res.status(401).json({ error: "Not authenticated" });
       }
       
-      // Get all user's workspace memberships
+      // Ensure user has at least one workspace (auto-create if needed)
+      await authStorage.ensureUserHasWorkspace(userId);
+      
+      // Get all user's workspace memberships (refreshed after potential auto-creation)
       const memberships = await storage.getUserWorkspaceMemberships(userId);
       if (!memberships || memberships.length === 0) {
-        return res.status(404).json({ 
-          error: "No workspace memberships found",
-          errorCode: "NO_WORKSPACE"
+        // This should not happen after ensureUserHasWorkspace, but guard against edge cases
+        return res.status(500).json({ 
+          error: "Failed to create workspace membership",
+          errorCode: "WORKSPACE_CREATION_FAILED"
         });
       }
       
@@ -298,6 +302,161 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[API] Error getting user context:", error);
       return res.status(500).json({ error: "Failed to get user context" });
+    }
+  });
+  
+  // GET /api/user/context - Full user context with workspace details and legacy report
+  app.get("/api/user/context", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      
+      // Ensure user has at least one workspace (auto-create if needed)
+      const workspace = await authStorage.ensureUserHasWorkspace(userId);
+      
+      // Refresh memberships after potential auto-creation
+      const memberships = await storage.getUserWorkspaceMemberships(userId);
+      if (!memberships || memberships.length === 0) {
+        // This should not happen after ensureUserHasWorkspace, but guard against edge cases
+        return res.status(500).json({ 
+          error: "Failed to create workspace membership",
+          errorCode: "WORKSPACE_CREATION_FAILED"
+        });
+      }
+      
+      const activeMembership = memberships.find((m: { workspaceId: string }) => m.workspaceId === workspace.id);
+      
+      // Get counts for active workspace
+      const [topics, targets, sources] = await Promise.all([
+        storage.getTopics(workspace.id),
+        storage.getPublishingTargets(workspace.id),
+        storage.getSources(workspace.id),
+      ]);
+      
+      // Check for legacy workspace IDs - fetch by both UUID and slug to catch legacy records
+      // Build list of all possible workspace identifiers (UUIDs + slugs)
+      const workspacesData = await Promise.all(
+        memberships.map(async (m: { workspaceId: string }) => storage.getWorkspace(m.workspaceId))
+      );
+      const uuids = memberships.map((m: { workspaceId: string }) => m.workspaceId);
+      const slugs = workspacesData.filter(Boolean).map(w => w!.slug).filter((s): s is string => !!s);
+      const allWorkspaceIdentifiers = [...uuids, ...slugs];
+      
+      // Guard: ensure we have at least the active workspace UUID
+      if (allWorkspaceIdentifiers.length === 0 && workspace?.id) {
+        allWorkspaceIdentifiers.push(workspace.id);
+      }
+      
+      // Fetch topics/targets matching any of these identifiers (catches legacy slug-based records)
+      const [userTopics, userTargets] = await Promise.all([
+        storage.getTopicsByWorkspaceIds(allWorkspaceIdentifiers),
+        storage.getPublishingTargetsByWorkspaceIds(allWorkspaceIdentifiers),
+      ]);
+      
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const legacyTopics = userTopics.filter(t => !uuidPattern.test(t.workspaceId || ""));
+      const legacyTargets = userTargets.filter(t => !uuidPattern.test(t.workspaceId || ""));
+      const invalidSamples = [
+        ...legacyTopics.slice(0, 3).map(t => `topic:${t.id}:${t.workspaceId}`),
+        ...legacyTargets.slice(0, 3).map(t => `target:${t.id}:${t.workspaceId}`),
+      ];
+      
+      res.json({
+        user: {
+          id: userId,
+        },
+        workspace: {
+          id: workspace.id,
+          name: workspace.name,
+          slug: workspace.slug,
+        },
+        membership: {
+          role: activeMembership?.role || "unknown",
+        },
+        counts: {
+          topics: topics.length,
+          targets: targets.length,
+          sources: sources.length,
+        },
+        legacy: {
+          topicsWithInvalidWorkspaceId: legacyTopics.length,
+          targetsWithInvalidWorkspaceId: legacyTargets.length,
+          invalidWorkspaceIdSamples: invalidSamples,
+        },
+      });
+    } catch (error) {
+      console.error("[API] Error getting user context:", error);
+      return res.status(500).json({ error: "Failed to get user context" });
+    }
+  });
+  
+  // GET /api/debug/legacy-report - Report on legacy workspace IDs (no secrets)
+  app.get("/api/debug/legacy-report", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(404).json({ error: "No workspace found" });
+      }
+      
+      // Fetch records by both UUID and slug to catch legacy records (tenant-safe)
+      const memberships = await storage.getUserWorkspaceMemberships(userId);
+      const workspacesData = await Promise.all(
+        (memberships || []).map(async (m: { workspaceId: string }) => storage.getWorkspace(m.workspaceId))
+      );
+      const uuids = (memberships || []).map((m: { workspaceId: string }) => m.workspaceId);
+      const slugs = workspacesData.filter(Boolean).map(w => w!.slug).filter((s): s is string => !!s);
+      const allWorkspaceIdentifiers = [...uuids, ...slugs];
+      
+      // Guard: ensure we have at least the active workspace UUID
+      if (allWorkspaceIdentifiers.length === 0 && workspace?.id) {
+        allWorkspaceIdentifiers.push(workspace.id);
+      }
+      
+      const [userTopics, userTargets] = await Promise.all([
+        storage.getTopicsByWorkspaceIds(allWorkspaceIdentifiers),
+        storage.getPublishingTargetsByWorkspaceIds(allWorkspaceIdentifiers),
+      ]);
+      
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const legacyTopics = userTopics.filter(t => !uuidPattern.test(t.workspaceId || ""));
+      const legacyTargets = userTargets.filter(t => !uuidPattern.test(t.workspaceId || ""));
+      
+      res.json({
+        currentWorkspace: {
+          id: workspace.id,
+          name: workspace.name,
+        },
+        legacyTopics: {
+          count: legacyTopics.length,
+          samples: legacyTopics.slice(0, 10).map(t => ({
+            id: t.id,
+            name: t.name,
+            currentWorkspaceId: t.workspaceId,
+          })),
+        },
+        legacyTargets: {
+          count: legacyTargets.length,
+          samples: legacyTargets.slice(0, 10).map(t => ({
+            id: t.id,
+            name: t.name,
+            currentWorkspaceId: t.workspaceId,
+          })),
+        },
+        summary: {
+          totalLegacy: legacyTopics.length + legacyTargets.length,
+          migrationRequired: legacyTopics.length > 0 || legacyTargets.length > 0,
+        },
+      });
+    } catch (error) {
+      console.error("[API] Error generating legacy report:", error);
+      return res.status(500).json({ error: "Failed to generate legacy report" });
     }
   });
   
@@ -2354,6 +2513,27 @@ export async function registerRoutes(
           errorCode: "VALIDATION_FAILED",
           errorDetails: validation.error.errors
         });
+      }
+      
+      // Validate publishingTargetId belongs to same workspace (if provided)
+      if (validation.data.publishingTargetId) {
+        const target = await storage.getPublishingTarget(validation.data.publishingTargetId);
+        if (!target) {
+          console.log(`[topics:create] requestId=${requestId} publishingTargetId=${validation.data.publishingTargetId} not found`);
+          return res.status(400).json({
+            error: "Publishing target not found",
+            errorCode: "TARGET_NOT_FOUND",
+            hint: "The selected publishing target does not exist"
+          });
+        }
+        if (target.workspaceId !== serverWorkspaceId) {
+          console.log(`[topics:create] requestId=${requestId} publishingTargetId=${validation.data.publishingTargetId} workspace mismatch: target=${target.workspaceId} vs user=${serverWorkspaceId}`);
+          return res.status(400).json({
+            error: "Publishing target belongs to different workspace",
+            errorCode: "TARGET_WORKSPACE_MISMATCH",
+            hint: "You can only use publishing targets from your current workspace"
+          });
+        }
       }
       
       console.log(`[topics:create] requestId=${requestId} inserting: name=${validation.data.name} region=${validation.data.region} countries=${JSON.stringify(validation.data.countries)}`);

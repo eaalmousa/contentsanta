@@ -131,6 +131,7 @@ export interface IStorage {
   
   // Publishing Targets
   getPublishingTargets(workspaceId: string): Promise<PublishingTarget[]>;
+  getPublishingTargetsByWorkspaceIds(workspaceIds: string[]): Promise<PublishingTarget[]>;
   getAllPublishingTargets(): Promise<PublishingTarget[]>;
   getPublishingTarget(id: string): Promise<PublishingTarget | undefined>;
   createPublishingTarget(data: InsertPublishingTarget): Promise<PublishingTarget>;
@@ -259,6 +260,7 @@ export interface IStorage {
   
   // Topics
   getTopics(workspaceId: string): Promise<Topic[]>;
+  getTopicsByWorkspaceIds(workspaceIds: string[]): Promise<Topic[]>;
   getAllTopics(): Promise<Topic[]>;
   getTopic(id: string): Promise<Topic | undefined>;
   createTopic(data: InsertTopic): Promise<Topic>;
@@ -662,6 +664,11 @@ export class DatabaseStorage implements IStorage {
   // Publishing Targets
   async getPublishingTargets(workspaceId: string): Promise<PublishingTarget[]> {
     return await db.select().from(publishingTargets).where(eq(publishingTargets.workspaceId, workspaceId));
+  }
+  
+  async getPublishingTargetsByWorkspaceIds(workspaceIds: string[]): Promise<PublishingTarget[]> {
+    if (workspaceIds.length === 0) return [];
+    return await db.select().from(publishingTargets).where(inArray(publishingTargets.workspaceId, workspaceIds));
   }
   
   async getAllPublishingTargets(): Promise<PublishingTarget[]> {
@@ -1271,6 +1278,13 @@ export class DatabaseStorage implements IStorage {
   async getTopics(workspaceId: string): Promise<Topic[]> {
     return await db.select().from(topics)
       .where(eq(topics.workspaceId, workspaceId))
+      .orderBy(desc(topics.createdAt));
+  }
+
+  async getTopicsByWorkspaceIds(workspaceIds: string[]): Promise<Topic[]> {
+    if (workspaceIds.length === 0) return [];
+    return await db.select().from(topics)
+      .where(inArray(topics.workspaceId, workspaceIds))
       .orderBy(desc(topics.createdAt));
   }
 
