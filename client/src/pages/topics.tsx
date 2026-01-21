@@ -655,14 +655,14 @@ function TopicSettingsDialog({
               <div className="space-y-2">
                 <Label>Publishing Target</Label>
                 <Select 
-                  value={publishingTargetId || ""} 
-                  onValueChange={(value) => setPublishingTargetId(value || null)}
+                  value={publishingTargetId || "none"} 
+                  onValueChange={(value) => setPublishingTargetId(value === "none" ? null : value)}
                 >
                   <SelectTrigger data-testid="select-publishing-target">
                     <SelectValue placeholder="Select a publishing target..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
                     {wordPressTargets.map((target) => (
                       <SelectItem key={target.id} value={target.id}>
                         {target.name}
