@@ -1722,6 +1722,11 @@ export default function TopicsPage() {
   }), [activeWorkspaceId, isContextLoading, workspaceCounts, createDialogTargets, createDialogWordPressTargets, isTargetsLoading]);
 
   const fetchRecommendedSources = async (options?: { broaden?: boolean; retryCount?: number }) => {
+    console.log("[fetchRecommendedSources] Called with:", { 
+      userWorkspaceId, 
+      region: newTopic.region, 
+      query: newTopic.query?.substring(0, 30) 
+    });
     setIsLoadingSources(true);
     const broaden = options?.broaden ?? false;
     const retryCount = options?.retryCount ?? 0;

@@ -2794,10 +2794,21 @@ export async function registerRoutes(
     }
   });
 
-  // Topic Source Recommendations
-  app.post("/api/topics/recommend-sources", isAuthenticated, async (req: Request, res: Response) => {
+  // Topic Source Recommendations - DEBUG logging before auth
+  app.post("/api/topics/recommend-sources", (req: Request, res: Response, next) => {
+    console.log("[recommend-sources] PRE-AUTH:", { 
+      isAuthenticated: req.isAuthenticated?.(), 
+      hasUser: !!req.user,
+      hasSessionID: !!req.sessionID,
+      cookies: Object.keys(req.cookies || {}),
+      workspaceId: req.body?.workspaceId,
+    });
+    next();
+  }, isAuthenticated, async (req: Request, res: Response) => {
     try {
       const { topicQuery, contentType, region, countries, language, workspaceId = "demo-workspace" } = req.body;
+      
+      console.log("[recommend-sources] Request received:", { workspaceId, region, topicQuery: topicQuery?.substring(0, 30) });
       
       if (!region) {
         return res.status(400).json({ error: "region is required" });
@@ -2813,6 +2824,8 @@ export async function registerRoutes(
         language,
         workspaceId,
       });
+      
+      console.log("[recommend-sources] Found", result.sources.length, "sources for workspace", workspaceId);
       
       const { defaultEnabled } = result;
       
