@@ -118,15 +118,27 @@ The automation pipeline transforms Content Santa from manual workflow to automat
 - `POST /api/topics/:topicId/run-pipeline` - Manually trigger full pipeline run for a topic
 - `POST /api/pipeline-items/:itemId/retry` - Reset quarantined/retrying item to appropriate earlier status
 - `GET /api/topics/:topicId/job-runs` - Get job execution history for a topic
+- `GET /api/topics/:topicId/automation-activity` - Aggregated automation stats (drafts created, pending, published, quarantined)
 - `GET /api/pipeline-items/:itemId/publish-attempts` - Get publish attempts for a pipeline item
 - `GET /api/quarantine?workspaceId=` - View all quarantined items across workspace topics
 - `POST /api/trigger-pipelines` - Manually trigger all automated pipelines globally
+
+**Automation Mode Behavior**:
+- `manual`: No automated processing, manual control only
+- `semi`: Pipeline runs through fetch → match → generate → gate, then STOPS for human review. Drafts created with status "pending"
+- `auto`: Full pipeline runs through publish and verify. Drafts created with status "approved"
+
+**Smart Editor Integration**:
+- Drafts are auto-created after AI generation (not at fetch stage)
+- Each draft linked to pipeline item via `pipelineItemId` column
+- Drafts marked with `automationSource: "pipeline"` for tracking
+- Semi-mode drafts appear in Smart Editor for human approval before publishing
 
 **Scheduler Jobs** (server/services/scheduler.ts):
 - RSS Fetch: every 30 minutes
 - Automations: every 15 minutes
 - Topic Discovery: every 20 minutes
-- Pipeline Automation: every 10 minutes (runs for all topics with automationMode="auto")
+- Pipeline Automation: every 10 minutes (runs for all topics with automationMode="auto" or "semi")
 
 **Pipeline Jobs Service** (server/services/pipeline-jobs-service.ts):
 - `runFetchJob`: Pulls stories from topic_stories, creates pipeline_items with status=fetched

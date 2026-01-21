@@ -249,6 +249,7 @@ export interface IStorage {
   // Drafts
   getDrafts(workspaceId: string, status?: DraftStatus, topicId?: string): Promise<Draft[]>;
   getDraft(id: string): Promise<Draft | undefined>;
+  getDraftByPipelineItemId(pipelineItemId: string): Promise<Draft | undefined>;
   createDraft(data: InsertDraft): Promise<Draft>;
   updateDraft(id: string, data: Partial<Draft>): Promise<Draft | undefined>;
   deleteDraft(id: string): Promise<void>;
@@ -1206,6 +1207,11 @@ export class DatabaseStorage implements IStorage {
 
   async getDraft(id: string): Promise<Draft | undefined> {
     const [draft] = await db.select().from(drafts).where(eq(drafts.id, id));
+    return draft;
+  }
+
+  async getDraftByPipelineItemId(pipelineItemId: string): Promise<Draft | undefined> {
+    const [draft] = await db.select().from(drafts).where(eq(drafts.pipelineItemId, pipelineItemId));
     return draft;
   }
 

@@ -1023,6 +1023,7 @@ export const drafts = pgTable("drafts", {
   topicId: varchar("topic_id", { length: 36 }),
   storyId: varchar("story_id", { length: 36 }),
   sourceItemId: varchar("source_item_id", { length: 36 }),
+  pipelineItemId: varchar("pipeline_item_id", { length: 36 }),
   title: text("title").notNull(),
   angle: text("angle"),
   body: text("body"),
@@ -1031,6 +1032,7 @@ export const drafts = pgTable("drafts", {
   reviewNotes: text("review_notes"),
   assetId: varchar("asset_id", { length: 36 }),
   featuredImageId: varchar("featured_image_id", { length: 36 }),
+  automationSource: text("automation_source"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -1038,6 +1040,7 @@ export const drafts = pgTable("drafts", {
   index("idx_drafts_topic").on(table.topicId),
   index("idx_drafts_story").on(table.storyId),
   index("idx_drafts_status").on(table.status),
+  index("idx_drafts_pipeline_item").on(table.pipelineItemId),
 ]);
 
 export const insertDraftSchema = createInsertSchema(drafts).omit({ id: true, createdAt: true, updatedAt: true });

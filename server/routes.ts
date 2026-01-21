@@ -3172,6 +3172,79 @@ export async function registerRoutes(
     }
   });
   
+  app.get("/api/topics/:topicId/automation-activity", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { topicId } = req.params;
+      
+      const topic = await storage.getTopic(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+      
+      const jobRuns = await storage.getAutomationJobRuns(topicId);
+      const recentRuns = jobRuns.slice(0, 100);
+      
+      const lastRun = recentRuns.length > 0 ? recentRuns[0] : null;
+      
+      const generateRuns = recentRuns.filter(r => r.jobType === "generate" && r.status === "completed");
+      const totalGenerated = generateRuns.reduce((sum, r) => sum + (r.successCount || 0), 0);
+      
+      const publishRuns = recentRuns.filter(r => r.jobType === "publish" && r.status === "completed");
+      const totalPublished = publishRuns.reduce((sum, r) => sum + (r.successCount || 0), 0);
+      
+      const gateRuns = recentRuns.filter(r => r.jobType === "gate" && r.status === "completed");
+      const totalQuarantined = gateRuns.reduce((sum, r) => sum + (r.quarantinedCount || 0), 0);
+      
+      const drafts = await storage.getDrafts(topic.workspaceId, undefined, topicId);
+      const pipelineDrafts = drafts.filter(d => d.pipelineItemId !== null);
+      const pendingDrafts = pipelineDrafts.filter(d => d.status === "pending");
+      const approvedDrafts = pipelineDrafts.filter(d => d.status === "approved");
+      const publishedDrafts = pipelineDrafts.filter(d => d.status === "published");
+      
+      const pipelineItems = await storage.getPipelineItems(topicId);
+      const currentQuarantined = pipelineItems.filter(i => i.status === "quarantined").length;
+      const awaitingGate = pipelineItems.filter(i => i.status === "gated").length;
+      const awaitingSchedule = pipelineItems.filter(i => i.status === "scheduled").length;
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayPublishRuns = publishRuns.filter(r => r.startedAt && new Date(r.startedAt) >= today);
+      const todayPublished = todayPublishRuns.reduce((sum, r) => sum + (r.successCount || 0), 0);
+      
+      res.json({
+        automationMode: topic.automationMode,
+        lastRunAt: lastRun?.startedAt || null,
+        lastRunStatus: lastRun?.status || null,
+        stats: {
+          totalGenerated,
+          totalPublished,
+          totalQuarantined,
+          draftsCreated: pipelineDrafts.length,
+          draftsPendingReview: pendingDrafts.length,
+          draftsApproved: approvedDrafts.length,
+          draftsPublished: publishedDrafts.length,
+          currentQuarantined,
+          awaitingGate,
+          awaitingSchedule,
+          todayPublished,
+        },
+        recentRuns: recentRuns.slice(0, 10).map(r => ({
+          id: r.id,
+          jobType: r.jobType,
+          status: r.status,
+          startedAt: r.startedAt,
+          endedAt: r.endedAt,
+          processed: r.processedCount,
+          success: r.successCount,
+          failed: r.failCount,
+          quarantined: r.quarantinedCount,
+        })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch automation activity" });
+    }
+  });
+  
   app.get("/api/pipeline-items/:itemId/publish-attempts", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const { itemId } = req.params;

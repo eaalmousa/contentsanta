@@ -361,6 +361,30 @@ export async function runGenerateJob(topic: Topic): Promise<JobResult> {
               generatedTags: [],
               generatedCategory: topic.name,
             });
+            
+            const existingDraft = await storage.getDraftByPipelineItemId(item.id);
+            if (!existingDraft) {
+              const storyItems = await storage.getStoryItems(story.id);
+              const sources = storyItems.slice(0, 5).map((si: any) => ({
+                name: si.sourceName || "Unknown Source",
+                url: si.sourceUrl || "",
+              }));
+              
+              await storage.createDraft({
+                workspaceId: topic.workspaceId,
+                topicId: topic.id,
+                storyId: story.id,
+                pipelineItemId: item.id,
+                title: latestVersion.title,
+                angle: story.excerpt || undefined,
+                body: latestVersion.body,
+                provenance: sources,
+                status: topic.automationMode === "auto" ? "approved" : "pending",
+                automationSource: "pipeline",
+              });
+              console.log(`[GenerateJob:${topic.id}] Created draft for pipeline item ${item.id}`);
+            }
+            
             result.success++;
           } else {
             throw new Error("Generated content missing title or body");
@@ -855,8 +879,9 @@ export async function runFullPipelineForTopic(topic: Topic): Promise<{
   topicId: string;
   topicName: string;
   results: { [key: string]: JobResult };
+  stoppedAtGate?: boolean;
 }> {
-  console.log(`[Pipeline:${topic.id}] Starting full pipeline run for: ${topic.name}`);
+  console.log(`[Pipeline:${topic.id}] Starting full pipeline run for: ${topic.name} (mode: ${topic.automationMode})`);
 
   const results: { [key: string]: JobResult } = {};
 
@@ -865,6 +890,17 @@ export async function runFullPipelineForTopic(topic: Topic): Promise<{
   results.match = await runMatchAndRankJob(topic);
   results.generate = await runGenerateJob(topic);
   results.gate = await runQualityGateJob(topic);
+  
+  if (topic.automationMode === "semi") {
+    console.log(`[Pipeline:${topic.id}] Semi-auto mode - stopping at gate for human review`);
+    return {
+      topicId: topic.id,
+      topicName: topic.name,
+      results,
+      stoppedAtGate: true,
+    };
+  }
+  
   results.schedule = await runScheduleJob(topic);
   results.publish = await runPublishJob(topic);
   results.verify = await runVerifyJob(topic);
@@ -875,24 +911,25 @@ export async function runFullPipelineForTopic(topic: Topic): Promise<{
     topicId: topic.id,
     topicName: topic.name,
     results,
+    stoppedAtGate: false,
   };
 }
 
 export async function runAllLivePipelines(): Promise<
-  Array<{ topicId: string; topicName: string; results: { [key: string]: JobResult } }>
+  Array<{ topicId: string; topicName: string; results: { [key: string]: JobResult }; stoppedAtGate?: boolean }>
 > {
   const liveTopics = await storage.getLiveTopics();
   const automatedTopics = liveTopics.filter(
-    (t) => t.automationMode === "auto"
+    (t) => t.automationMode === "auto" || t.automationMode === "semi"
   );
 
-  console.log(`[Pipeline] Running ${automatedTopics.length} automated pipelines`);
+  console.log(`[Pipeline] Running ${automatedTopics.length} automated/semi-auto pipelines`);
 
   const allResults = [];
 
   for (const topic of automatedTopics) {
-    if (!topic.publishingTargetId) {
-      console.log(`[Pipeline] Skipping ${topic.name} - no publishing target`);
+    if (topic.automationMode === "auto" && !topic.publishingTargetId) {
+      console.log(`[Pipeline] Skipping ${topic.name} - auto mode requires publishing target`);
       continue;
     }
 
