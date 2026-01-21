@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { storage } from "./storage";
-import { setupAuth, registerAuthRoutes, isAuthenticated, authStorage, createAutomationAuthMiddleware } from "./replit_integrations/auth";
+import { setupAuth, registerAuthRoutes, isAuthenticated, authStorage, createAutomationAuthMiddleware, resolveWorkspaceId, resolveWorkspace } from "./replit_integrations/auth";
 import { processWorkflowWithAI } from "./ai-workflow";
 import { 
   insertInputSchema, 
@@ -562,6 +562,143 @@ export async function registerRoutes(
       res.status(201).json(workspaceUser);
     } catch (error) {
       res.status(500).json({ error: "Failed to add user to workspace" });
+    }
+  });
+
+  // Debug context endpoint - verify workspace resolution
+  app.get("/api/debug/context", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      const email = (req.user as any)?.claims?.email;
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      // Get user's workspaces
+      const userWorkspaces = await storage.getUserWorkspaces(userId);
+      
+      // Resolve default workspace
+      const resolvedWorkspace = await resolveWorkspace(userId);
+      
+      // Get ALL topics from database to find legacy "demo-workspace" slug references
+      const LEGACY_SLUG = "demo-workspace";
+      const allTopics = await storage.getAllTopics();
+      
+      // Find topics with the legacy slug (these need to be fixed)
+      const legacySlugTopics = allTopics.filter(t => t.workspaceId === LEGACY_SLUG);
+      
+      // Find topics that belong to user's workspaces
+      const userTopics = allTopics.filter(t => 
+        userWorkspaces.some(w => w.id === t.workspaceId)
+      );
+
+      res.json({
+        userId,
+        email,
+        workspaces: userWorkspaces.map(w => ({
+          id: w.id,
+          slug: w.slug,
+          name: w.name,
+        })),
+        resolvedWorkspace: resolvedWorkspace ? {
+          id: resolvedWorkspace.id,
+          slug: resolvedWorkspace.slug,
+          name: resolvedWorkspace.name,
+          source: "getUserDefaultWorkspace",
+        } : null,
+        isMember: userWorkspaces.length > 0,
+        diagnostics: {
+          totalTopicsInDb: allTopics.length,
+          userTopicsCount: userTopics.length,
+          legacySlugTopicsCount: legacySlugTopics.length,
+          legacySlugTopics: legacySlugTopics.map(t => ({
+            id: t.id,
+            name: t.name,
+            workspaceId: t.workspaceId,
+          })),
+          legacySlug: LEGACY_SLUG,
+          actionRequired: legacySlugTopics.length > 0 
+            ? "Call POST /api/debug/fix-topics to migrate legacy topics" 
+            : null,
+        }
+      });
+    } catch (error: any) {
+      console.error("[Debug] Error in context endpoint:", error);
+      res.status(500).json({ error: error?.message || "Failed to get debug context" });
+    }
+  });
+
+  // Ensure workspace for existing user (can be called to fix workspace issues)
+  app.post("/api/debug/ensure-workspace", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      const email = (req.user as any)?.claims?.email;
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      // Ensure user has a workspace
+      const workspace = await authStorage.ensureUserHasWorkspace(userId, email);
+      
+      res.json({
+        success: true,
+        workspace: {
+          id: workspace.id,
+          slug: workspace.slug,
+          name: workspace.name,
+        },
+        message: "Workspace ensured for user",
+      });
+    } catch (error: any) {
+      console.error("[Debug] Error ensuring workspace:", error);
+      res.status(500).json({ error: error?.message || "Failed to ensure workspace" });
+    }
+  });
+
+  // Fix topics with the legacy "demo-workspace" slug (security-safe: only fixes known invalid slug)
+  app.post("/api/debug/fix-topics", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      // Get user's default workspace
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(400).json({ 
+          error: "User has no workspace. Call /api/debug/ensure-workspace first." 
+        });
+      }
+
+      // SECURITY: Only fix topics with the exact legacy "demo-workspace" slug
+      // This prevents multi-tenant data corruption
+      const LEGACY_SLUG = "demo-workspace";
+      const topics = await storage.getAllTopics();
+      const legacyTopics = topics.filter(t => t.workspaceId === LEGACY_SLUG);
+      const fixed: string[] = [];
+      
+      for (const topic of legacyTopics) {
+        // Update topic to use user's default workspace
+        await storage.updateTopic(topic.id, { workspaceId: workspace.id });
+        fixed.push(topic.id);
+        console.log(`[Debug] Fixed topic ${topic.id} (${topic.name}): ${LEGACY_SLUG} -> ${workspace.id}`);
+      }
+
+      res.json({
+        success: true,
+        fixedCount: fixed.length,
+        fixedTopicIds: fixed,
+        targetWorkspaceId: workspace.id,
+        targetWorkspaceSlug: workspace.slug,
+        legacySlug: LEGACY_SLUG,
+      });
+    } catch (error: any) {
+      console.error("[Debug] Error fixing topics:", error);
+      res.status(500).json({ error: error?.message || "Failed to fix topics" });
     }
   });
 

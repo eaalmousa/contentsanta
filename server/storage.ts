@@ -256,6 +256,7 @@ export interface IStorage {
   
   // Topics
   getTopics(workspaceId: string): Promise<Topic[]>;
+  getAllTopics(): Promise<Topic[]>;
   getTopic(id: string): Promise<Topic | undefined>;
   createTopic(data: InsertTopic): Promise<Topic>;
   updateTopic(id: string, data: Partial<Topic>): Promise<Topic | undefined>;
@@ -1233,6 +1234,11 @@ export class DatabaseStorage implements IStorage {
   async getTopics(workspaceId: string): Promise<Topic[]> {
     return await db.select().from(topics)
       .where(eq(topics.workspaceId, workspaceId))
+      .orderBy(desc(topics.createdAt));
+  }
+
+  async getAllTopics(): Promise<Topic[]> {
+    return await db.select().from(topics)
       .orderBy(desc(topics.createdAt));
   }
 
