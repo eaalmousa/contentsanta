@@ -420,15 +420,16 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Publishing target not found" });
       }
       
-      // Verify user has access: must be workspace admin/owner OR target creator
+      // Verify user has access: must be a member of the same workspace
       const userId = (req.user as any)?.claims?.sub;
-      if (userId && target.workspaceId) {
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (target.workspaceId) {
         const workspaceUser = await storage.getWorkspaceUser(target.workspaceId, userId);
-        const isAdminOrOwner = workspaceUser && ["owner", "admin"].includes(workspaceUser.role);
-        const isCreator = target.createdByUserId === userId;
-        
-        if (!isAdminOrOwner && !isCreator) {
-          return res.status(403).json({ error: "Access denied" });
+        if (!workspaceUser) {
+          return res.status(403).json({ error: "Access denied - not a workspace member" });
         }
       }
       
@@ -3186,13 +3187,13 @@ export async function registerRoutes(
       
       const lastRun = recentRuns.length > 0 ? recentRuns[0] : null;
       
-      const generateRuns = recentRuns.filter(r => r.jobType === "generate" && r.status === "completed");
+      const generateRuns = recentRuns.filter(r => r.jobType === "generate" && r.status === "success");
       const totalGenerated = generateRuns.reduce((sum, r) => sum + (r.successCount || 0), 0);
       
-      const publishRuns = recentRuns.filter(r => r.jobType === "publish" && r.status === "completed");
+      const publishRuns = recentRuns.filter(r => r.jobType === "publish" && r.status === "success");
       const totalPublished = publishRuns.reduce((sum, r) => sum + (r.successCount || 0), 0);
       
-      const gateRuns = recentRuns.filter(r => r.jobType === "gate" && r.status === "completed");
+      const gateRuns = recentRuns.filter(r => r.jobType === "gate" && r.status === "success");
       const totalQuarantined = gateRuns.reduce((sum, r) => sum + (r.quarantinedCount || 0), 0);
       
       const drafts = await storage.getDrafts(topic.workspaceId, undefined, topicId);

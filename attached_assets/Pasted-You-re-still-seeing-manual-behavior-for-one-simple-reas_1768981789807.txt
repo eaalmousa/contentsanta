@@ -1,0 +1,176 @@
+You’re still seeing “manual” behavior for one simple reason: the automation isn’t actually completing end-to-end right now—it’s getting blocked by backend errors, so the UI falls back to the only thing it can reliably show: Stories + “Create Draft.”
+
+What’s happening (based on the errors you’re seeing)
+1) run-pipeline is failing (500) — so no automation can move
+
+You have:
+
+api/topics/.../run-pipeline → 500
+
+Toast: insert/update on automation_job_runs failing with a workspace foreign key constraint
+
+That means when the system tries to record a pipeline run (automation_job_runs), it’s writing a workspace_id that is missing / null / wrong / not the same workspace you’re in.
+
+Result: pipeline doesn’t execute → no pipeline items progress → no drafts get created → Smart Editor stays “manual.”
+
+2) plugin-logs is 403 — diagnostics panel can’t load
+
+You have:
+
+api/publishing-targets/.../plugin-logs → 403
+
+That’s almost always one of these:
+
+the endpoint is still restricted (access control not aligned with “workspace members can view”), or
+
+the request is missing auth context (cookie/session not sent), so it denies.
+
+3) maxresdefault.jpg is 404 — annoying but not the root cause
+
+That’s just a broken image URL (usually YouTube thumbnail “maxresdefault” not available). It does not block automation.
+
+What the system should do (the logical automated flow)
+
+This is the clean “Full Auto by default + Quarantine” flow you want:
+
+Topic config
+
+Region, language, sources, schedule cadence, daily cap, exclusions, target site.
+
+Scheduled pipeline cycle runs automatically (cron/worker every X minutes)
+
+Fetch new stories from sources
+
+Deduplicate
+
+Score/rank
+
+Create pipeline items
+
+Generate draft automatically
+
+AI transforms story into owned content format
+
+Adds category/tags rules
+
+Adds image plan / featured image selection logic
+
+Produces a “Draft” object (not just a Story card)
+
+Gate decision (automation mode)
+
+Full Auto: auto-approve → enqueue publish job
+
+Semi Auto: create draft but mark “Needs Approval” (human review)
+
+Manual: only show Stories and let user click “Create Draft”
+
+Publish
+
+Push model (REST) or Pull model (Plugin job polling)
+
+Receive success report (permalink, wp_post_id)
+
+Finalize
+
+Update pipeline item → Published
+
+Update “Published Today”
+
+Log everything for diagnostics
+
+On repeated failures → Quarantine
+
+Key point: In Full Auto, the Smart Editor “Stories” screen shouldn’t be the primary UI anymore; it becomes a “monitor” view at most. The primary truth is the Pipeline page + the Drafts queue (if Semi Auto).
+
+Why the layout is not changing / why Replit didn’t “hide” manual
+
+Because you don’t hide manual UI until the automated path is proven healthy.
+
+Right now:
+
+Pipeline run is failing (500)
+
+Diagnostics logs are failing (403)
+
+So even if someone “changed the UI,” you’d be masking the problem, not solving it.
+
+What you actually want is:
+
+Fix the pipeline run + auth/workspace context
+
+Then conditionally hide “Create Draft” when automation mode ≠ Manual
+
+What to tell Replit to fix (the real blockers)
+
+Paste this as-is to Replit (this is the fastest way to get them to stop looping and actually close the bug):
+
+We need a deterministic fix (not UI band-aids). Current state:
+- UI shows Full Auto but still behaves manual.
+- /api/topics/:id/run-pipeline returns 500 with FK error:
+  insert/update on automation_job_runs violates automation_job_runs_workspace_id_workspaces_id_fk
+- /api/publishing-targets/:id/plugin-logs returns 403
+- maxresdefault.jpg 404 is non-blocking.
+
+Goal:
+1) Make pipeline runs succeed end-to-end and create drafts automatically in Full Auto.
+2) Ensure diagnostics endpoints work for workspace members.
+3) Only then hide/disable manual UI controls based on automation mode.
+
+Required fixes:
+
+A) Fix workspace context for pipeline runs
+- Trace how workspace_id is derived inside run-pipeline handler.
+- Ensure workspace_id is ALWAYS present and matches an existing row in workspaces.
+- If workspace_id cannot be resolved from session/user, return 401 with a clear JSON error (do not attempt insert).
+- Add server logs to print: user_id, workspace_id, topic_id, and whether workspace exists before inserting automation_job_runs.
+
+B) Fix auth/session on API calls
+- Investigate why client sees 401 sometimes on run-pipeline and 403 on plugin-logs while user is logged in.
+- Verify cookies are sent (SameSite/secure), and the API uses the same auth middleware consistently.
+- Ensure frontend fetch includes credentials if required.
+
+C) Fix plugin-logs authorization
+- GET /api/publishing-targets/:id/plugin-logs should be accessible to authenticated members of the same workspace as the publishing target.
+- If publishingTargets lacks createdBy, use workspace membership check. Return 401 if not logged in, 403 only if logged-in but not in workspace.
+
+D) Restore automation UX expectations
+- In Full Auto: pipeline must create Draft records automatically (no manual Create Draft).
+- Update Smart Editor UI: if topic.automationMode === 'full', hide/disable “Create Draft” buttons and show status like “Managed by automation.”
+- Ensure pipeline items appear in Pipeline page and Drafts tab populates automatically.
+
+Acceptance tests:
+1) Click Run Pipeline → no 500 → automation_job_runs row created with valid workspace_id.
+2) Pipeline creates pipeline items + drafts automatically for topic in Full Auto.
+3) Plugin polls /api/wp/pull, gets job, reports success → pipeline item becomes Published and Published Today increments.
+4) plugin-logs endpoint returns 200 and shows the last 20 requests (no 403).
+
+Commercialization concern (your instinct is right — and the plugin is the answer)
+
+If you rely on server-to-server WordPress REST publishing, many customers will fail because of:
+
+SiteGround/Cloudflare bot protection
+
+WAF rules
+
+CAPTCHA challenges
+
+IP reputation / rate limiting
+
+locked-down REST endpoints
+
+Your WordPress Pull Plugin Connector is the correct production SaaS approach because:
+
+WordPress pulls from you (less likely to be blocked)
+
+It runs inside WP as a trusted client
+
+It avoids most CAPTCHA/WAF “bot” patterns entirely
+
+So yes—commercialization is realistic, but only if:
+
+Plugin is the default recommended connector
+
+Push model remains “advanced / optional”
+
+You ship excellent diagnostics + “Copy Debug Bundle” + clear onboarding

@@ -604,6 +604,12 @@ export default function SmartEditorPage() {
 
   const hasTopics = topics && topics.length > 0;
   const hasContent = (stories && stories.length > 0) || (drafts && drafts.length > 0);
+  
+  const liveTopics = topics?.filter(t => t.isLive === "true") || [];
+  const automatedTopics = liveTopics.filter(t => t.automationMode === "auto" || t.automationMode === "approval_required");
+  const manualTopics = liveTopics.filter(t => t.automationMode === "manual" || !t.automationMode);
+  const hasAutomation = automatedTopics.length > 0;
+  const automationDrafts = drafts?.filter(d => d.pipelineItemId !== null) || [];
 
   return (
     <div className="container py-6 space-y-6">
@@ -664,9 +670,40 @@ export default function SmartEditorPage() {
                   {topic.isLive === "true" && (
                     <span className="ml-1 w-2 h-2 rounded-full bg-green-500 inline-block" />
                   )}
+                  {topic.automationMode === "auto" && (
+                    <Sparkles className="w-3 h-3 ml-1 text-amber-500" />
+                  )}
+                  {topic.automationMode === "approval_required" && (
+                    <Eye className="w-3 h-3 ml-1 text-blue-500" />
+                  )}
                 </Badge>
               ))}
             </div>
+          )}
+          
+          {hasAutomation && (
+            <Card className="border-amber-500/50 bg-amber-50 dark:bg-amber-900/10 overflow-visible">
+              <CardContent className="py-3 px-4">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Sparkles className="w-5 h-5 text-amber-600" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium">
+                      {automatedTopics.length} topic{automatedTopics.length !== 1 ? 's' : ''} running in automation mode
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Drafts are created automatically. Check the Drafts tab for items awaiting review.
+                      {automationDrafts.length > 0 && ` (${automationDrafts.length} automated drafts)`}
+                    </p>
+                  </div>
+                  <Link href="/pipeline">
+                    <Button size="sm" variant="outline" data-testid="button-view-pipeline">
+                      View Pipeline
+                      <ChevronRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
