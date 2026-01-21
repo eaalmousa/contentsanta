@@ -1,0 +1,43 @@
+We have a workspace-scoping bug causing Publishing Targets dropdown to show “None”.
+Evidence:
+- GET /api/me/context returns activeWorkspaceId = a6fa665e-2f03-416b-bc99-b30ae1531726 and targetsCount=0
+- GET /api/publishing-targets returns [] even after creating a WordPress target
+So publishing targets are either not being created, or created without the correct workspace_id.
+
+Implement the following fixes (must be workspace-safe + SaaS-ready):
+
+1) Single source of truth for userId + workspaceId resolution
+   - Create helper: getAuthUserId(req) using (req.user as any)?.claims?.sub
+   - Create helper: resolveActiveWorkspaceId(req) that:
+     a) ensures user has a workspace (auto-create if missing)
+     b) returns active workspaceId from memberships
+
+2) Fix publishing targets CRUD
+   - POST /api/publishing-targets MUST set:
+       workspace_id = resolveActiveWorkspaceId(req)
+       created_by_user_id = getAuthUserId(req) (add column if missing)
+   - GET /api/publishing-targets MUST return targets for active workspace only.
+   - Return inserted row from POST so frontend can confirm.
+
+3) Add diagnostics endpoints (secured to current user/workspace)
+   - GET /api/debug/targets-audit
+     returns:
+       activeWorkspaceId
+       all targets where created_by_user_id = current userId (even if workspace_id is null or wrong)
+       all targets where workspace_id = activeWorkspaceId
+   - POST /api/debug/adopt-orphan-targets
+     moves any target created_by_user_id = current userId with (workspace_id IS NULL OR workspace_id is legacy slug/demo) into activeWorkspaceId.
+     This is a safe migration for legacy data.
+
+4) Frontend reliability
+   - Only fetch publishing targets after auth confirmed (context loaded).
+   - If /api/publishing-targets returns [], show a helpful inline diagnostic message:
+     “No targets found in this workspace. Create one in Publishing.”
+
+5) Add server logs for target creation
+   - On POST /api/publishing-targets log:
+     userId, resolvedWorkspaceId, insertedTargetId
+   - If resolvedWorkspaceId is missing, return 500 with explicit error.
+
+Goal:
+After creating a target, GET /api/publishing-targets must return it immediately, and Create Topic dropdown must show it.

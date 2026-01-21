@@ -137,15 +137,17 @@ export const authStorage = new AuthStorage();
 /**
  * Resolve workspace ID from authenticated user
  * Returns the user's default workspace UUID (not a slug)
+ * Auto-creates a workspace if the user doesn't have one
  */
 export async function resolveWorkspaceId(userId: string): Promise<string | null> {
-  const workspace = await authStorage.getUserDefaultWorkspace(userId);
+  const workspace = await authStorage.ensureUserHasWorkspace(userId);
   return workspace?.id || null;
 }
 
 /**
  * Resolve workspace with full details from authenticated user
+ * Auto-creates a workspace if the user doesn't have one
  */
 export async function resolveWorkspace(userId: string): Promise<{ id: string; slug: string; name: string } | null> {
-  return authStorage.getUserDefaultWorkspace(userId);
+  return authStorage.ensureUserHasWorkspace(userId);
 }

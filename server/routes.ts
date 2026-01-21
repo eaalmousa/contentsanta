@@ -1009,6 +1009,106 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/debug/targets-audit - Audit publishing targets for current user/workspace
+  app.get("/api/debug/targets-audit", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(500).json({ 
+          error: "Could not resolve workspace",
+          errorCode: "WORKSPACE_RESOLUTION_FAILED"
+        });
+      }
+
+      // Get all targets created by this user (regardless of workspace assignment)
+      const allTargets = await storage.getAllPublishingTargets();
+      const targetsCreatedByUser = allTargets.filter(t => t.createdByUserId === userId);
+      const targetsInActiveWorkspace = allTargets.filter(t => t.workspaceId === workspace.id);
+      
+      // Identify orphan targets: created by user but not in current workspace
+      const orphanTargets = targetsCreatedByUser.filter(t => 
+        !t.workspaceId || t.workspaceId !== workspace.id
+      );
+
+      res.json({
+        userId,
+        activeWorkspaceId: workspace.id,
+        activeWorkspaceName: workspace.name,
+        summary: {
+          totalTargetsCreatedByUser: targetsCreatedByUser.length,
+          targetsInActiveWorkspace: targetsInActiveWorkspace.length,
+          orphanTargets: orphanTargets.length,
+        },
+        targetsCreatedByUser: targetsCreatedByUser.map(t => ({
+          id: t.id,
+          name: t.name,
+          type: t.type,
+          workspaceId: t.workspaceId,
+          createdByUserId: t.createdByUserId,
+          isOrphan: !t.workspaceId || t.workspaceId !== workspace.id,
+        })),
+        targetsInActiveWorkspace: targetsInActiveWorkspace.map(t => ({
+          id: t.id,
+          name: t.name,
+          type: t.type,
+          workspaceId: t.workspaceId,
+          createdByUserId: t.createdByUserId,
+        })),
+      });
+    } catch (error) {
+      console.error("[Debug] Error auditing targets:", error);
+      res.status(500).json({ error: "Failed to audit targets" });
+    }
+  });
+
+  // POST /api/debug/adopt-orphan-targets - Move orphan targets to active workspace
+  app.post("/api/debug/adopt-orphan-targets", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(500).json({ 
+          error: "Could not resolve workspace",
+          errorCode: "WORKSPACE_RESOLUTION_FAILED"
+        });
+      }
+
+      // Get all targets created by this user
+      const allTargets = await storage.getAllPublishingTargets();
+      const orphanTargets = allTargets.filter(t => 
+        t.createdByUserId === userId && (!t.workspaceId || t.workspaceId !== workspace.id)
+      );
+
+      // Update each orphan to belong to the active workspace
+      const adopted: string[] = [];
+      for (const target of orphanTargets) {
+        await storage.updatePublishingTarget(target.id, { workspaceId: workspace.id });
+        adopted.push(target.id);
+        console.log(`[Debug] Adopted orphan target ${target.id} (${target.name}) into workspace ${workspace.id}`);
+      }
+
+      res.json({
+        success: true,
+        adoptedCount: adopted.length,
+        adoptedTargetIds: adopted,
+        targetWorkspaceId: workspace.id,
+        targetWorkspaceName: workspace.name,
+      });
+    } catch (error) {
+      console.error("[Debug] Error adopting orphan targets:", error);
+      res.status(500).json({ error: "Failed to adopt orphan targets" });
+    }
+  });
+
   // Brands
   app.get("/api/brands", async (req: Request, res: Response) => {
     try {
@@ -1484,11 +1584,14 @@ export async function registerRoutes(
       // Always resolve workspace from user session - never accept from client
       const workspace = await resolveWorkspace(userId);
       if (!workspace) {
-        return res.status(404).json({ 
-          error: "No workspace found for user",
-          errorCode: "NO_WORKSPACE"
+        console.error(`[API] POST /api/publishing-targets - FAILED: No workspace for userId=${userId}`);
+        return res.status(500).json({ 
+          error: "Could not resolve workspace for user",
+          errorCode: "WORKSPACE_RESOLUTION_FAILED"
         });
       }
+      
+      console.log(`[API] POST /api/publishing-targets - userId=${userId}, resolvedWorkspaceId=${workspace.id}`);
       
       // Override any client-provided workspaceId with the resolved one
       const data = insertPublishingTargetSchema.parse({
@@ -1506,8 +1609,10 @@ export async function registerRoutes(
       }
       
       const target = await storage.createPublishingTarget(data);
+      console.log(`[API] POST /api/publishing-targets - SUCCESS: created targetId=${target.id}, workspaceId=${target.workspaceId}`);
       res.status(201).json(target);
     } catch (error) {
+      console.error("[API] POST /api/publishing-targets - ERROR:", error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ 
           error: "Invalid data", 

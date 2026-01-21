@@ -689,9 +689,15 @@ function TopicSettingsDialog({
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  Choose which WordPress site this topic publishes to
-                </p>
+                {wordPressTargets.length === 0 ? (
+                  <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="text-edit-no-targets-warning">
+                    No targets found in this workspace. Create one in Publishing first.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Choose which WordPress site this topic publishes to
+                  </p>
+                )}
                 {publishingTargetId && wordPressTargets.find(t => t.id === publishingTargetId) && (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Globe className="h-3 w-3" />
@@ -2227,9 +2233,15 @@ export default function TopicsPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground mt-1">
-                  WordPress site where content will be published
-                </p>
+                {createDialogWordPressTargets.length === 0 && !isTargetsLoading ? (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1" data-testid="text-no-targets-warning">
+                    No targets found in this workspace. Create one in Publishing first.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    WordPress site where content will be published
+                  </p>
+                )}
               </div>
 
               <DialogFooter>
