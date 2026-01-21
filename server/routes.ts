@@ -1592,6 +1592,34 @@ export async function registerRoutes(
     }
   });
 
+  // GET single publishing target by ID - validates workspace membership
+  app.get("/api/publishing-targets/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      const target = await storage.getPublishingTarget(req.params.id);
+      if (!target) {
+        return res.status(404).json({ error: "Publishing target not found" });
+      }
+      
+      // Verify user has access: must be a member of the target's workspace
+      if (target.workspaceId) {
+        const workspaceUser = await storage.getWorkspaceUser(target.workspaceId, userId);
+        if (!workspaceUser) {
+          return res.status(403).json({ error: "Access denied to this publishing target" });
+        }
+      }
+      
+      res.json(target);
+    } catch (error) {
+      console.error("[API] Error fetching publishing target:", error);
+      res.status(500).json({ error: "Failed to fetch publishing target" });
+    }
+  });
+
   app.post("/api/publishing-targets", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const userId = (req.user as any)?.claims?.sub;

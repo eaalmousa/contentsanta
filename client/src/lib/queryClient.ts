@@ -36,30 +36,29 @@ type UnauthorizedBehavior = "returnNull" | "throw";
 
 function buildUrl(queryKey: readonly unknown[]): string {
   // First element is the base URL
-  const baseUrl = queryKey[0] as string;
+  const base = queryKey[0];
   
-  // If there are more elements, check if any are objects (query params)
-  if (queryKey.length === 1) {
-    return baseUrl;
+  if (typeof base !== "string") {
+    throw new Error("Invalid queryKey: first element must be a string URL");
   }
   
-  // Check if second element is an object (query params) or a path segment
-  const secondElement = queryKey[1];
+  // Second element: only objects become query params
+  // Primitive values (strings, numbers) are cache keys only, NOT URL parts
+  const params = queryKey[1];
   
-  if (typeof secondElement === "object" && secondElement !== null) {
-    // It's a query params object
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(secondElement)) {
+  if (params && typeof params === "object" && !Array.isArray(params)) {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== null && value !== "") {
-        params.append(key, String(value));
+        qs.set(key, String(value));
       }
     }
-    const queryString = params.toString();
-    return queryString ? `${baseUrl}?${queryString}` : baseUrl;
+    const queryString = qs.toString();
+    return queryString ? `${base}?${queryString}` : base;
   }
   
-  // It's a path segment (like an ID)
-  return queryKey.filter(k => typeof k === "string").join("/");
+  // IMPORTANT: do NOT append primitive strings to the path - they are cache keys only
+  return base;
 }
 
 export const getQueryFn: <T>(options: {
