@@ -103,14 +103,17 @@ function StatusBadge({ status }: { status: string }) {
 
 function PipelineItemCard({ 
   item, 
-  onRetry 
+  onRetry,
+  onPublishNow 
 }: { 
   item: PipelineItemWithStory;
   onRetry: (id: string) => void;
+  onPublishNow: (id: string) => void;
 }) {
   const [showDetails, setShowDetails] = useState(false);
   
   const canRetry = item.status === "quarantined" || item.status === "retrying";
+  const canPublishNow = item.status === "scheduled";
   
   return (
     <>
@@ -164,6 +167,16 @@ function PipelineItemCard({
           >
             <Eye className="h-4 w-4" />
           </Button>
+          {canPublishNow && (
+            <Button 
+              size="sm" 
+              variant="default"
+              onClick={() => onPublishNow(item.id)}
+              data-testid={`button-publish-now-${item.id}`}
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          )}
           {canRetry && (
             <Button 
               size="sm" 
@@ -581,6 +594,23 @@ export default function Pipeline() {
     },
   });
 
+  const publishNowMutation = useMutation({
+    mutationFn: async (itemId: string) => {
+      const res = await apiRequest("POST", `/api/pipeline-items/${itemId}/publish-now`);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({ 
+        title: data.status === "published" ? "Published!" : "Publishing...", 
+        description: data.message 
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/topics", selectedTopicId, "pipeline-items"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Publish failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   const filteredItems = statusFilter === "all" 
     ? pipelineItems 
     : pipelineItems.filter(item => item.status === statusFilter);
@@ -725,6 +755,7 @@ export default function Pipeline() {
                             key={item.id}
                             item={item}
                             onRetry={(id) => retryItemMutation.mutate(id)}
+                            onPublishNow={(id) => publishNowMutation.mutate(id)}
                           />
                         ))}
                       </div>
@@ -793,6 +824,7 @@ export default function Pipeline() {
                     key={item.id}
                     item={item}
                     onRetry={(id) => retryItemMutation.mutate(id)}
+                    onPublishNow={(id) => publishNowMutation.mutate(id)}
                   />
                 ))}
               </div>

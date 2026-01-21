@@ -3327,6 +3327,46 @@ export async function registerRoutes(
     }
   });
   
+  // Publish a scheduled item immediately
+  app.post("/api/pipeline-items/:itemId/publish-now", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { itemId } = req.params;
+      
+      const item = await storage.getPipelineItem(itemId);
+      if (!item) {
+        return res.status(404).json({ error: "Pipeline item not found" });
+      }
+      
+      if (item.status !== "scheduled") {
+        return res.status(400).json({ error: "Item must be in scheduled status to publish" });
+      }
+      
+      // Update scheduled time to now so the next publish job picks it up immediately
+      await storage.updatePipelineItem(item.id, {
+        scheduledFor: new Date(),
+      });
+      
+      // Trigger the publish job for this topic
+      const topic = await storage.getTopic(item.topicId);
+      if (topic) {
+        const { runPublishJob, runVerifyJob } = await import("./services/pipeline-jobs-service");
+        await runPublishJob(topic);
+        await runVerifyJob(topic);
+      }
+      
+      // Fetch updated item
+      const updatedItem = await storage.getPipelineItem(itemId);
+      
+      res.json({ 
+        success: true, 
+        status: updatedItem?.status,
+        message: updatedItem?.status === "published" ? "Published successfully!" : "Publishing in progress..."
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to publish item" });
+    }
+  });
+  
   app.get("/api/topics/:topicId/job-runs", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const { topicId } = req.params;
