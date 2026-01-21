@@ -18,6 +18,9 @@ import {
   Shield,
   Calendar,
   ExternalLink,
+  Copy,
+  TrendingUp,
+  Activity,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -270,6 +273,234 @@ function JobRunCard({ run }: { run: JobRun }) {
   );
 }
 
+type AutomationActivity = {
+  automationMode: string;
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  stats: {
+    totalGenerated: number;
+    totalPublished: number;
+    totalQuarantined: number;
+    draftsCreated: number;
+    draftsPendingReview: number;
+    draftsApproved: number;
+    draftsPublished: number;
+    currentQuarantined: number;
+    awaitingGate: number;
+    awaitingSchedule: number;
+    todayPublished: number;
+  };
+  recentRuns: Array<{
+    id: string;
+    jobType: string;
+    status: string;
+    startedAt: string;
+    endedAt: string | null;
+    processed: number;
+    success: number;
+    failed: number;
+    quarantined: number;
+  }>;
+};
+
+function AutomationOverviewBanner({ 
+  topics, 
+  quarantinedCount,
+  onTriggerAll,
+  isPending 
+}: { 
+  topics: Topic[];
+  quarantinedCount: number;
+  onTriggerAll: () => void;
+  isPending: boolean;
+}) {
+  const { toast } = useToast();
+  
+  const automatedTopics = topics.filter(t => t.automationMode === "auto" || t.automationMode === "approval_required");
+  
+  const topicIds = automatedTopics.map(t => t.id).sort().join(",");
+  
+  const { data: activitiesMap, isLoading, isError } = useQuery<Record<string, AutomationActivity>>({
+    queryKey: ["/api/automation-overview", topicIds],
+    queryFn: async () => {
+      const results: Record<string, AutomationActivity> = {};
+      const errors: string[] = [];
+      const batchSize = 5;
+      for (let i = 0; i < automatedTopics.length; i += batchSize) {
+        const batch = automatedTopics.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map(async (topic) => {
+            try {
+              const res = await fetch(`/api/topics/${topic.id}/automation-activity`, { credentials: "include" });
+              if (res.ok) {
+                results[topic.id] = await res.json();
+              } else {
+                errors.push(`Failed to fetch activity for topic ${topic.id}: ${res.status}`);
+              }
+            } catch (err: any) {
+              errors.push(`Error fetching topic ${topic.id}: ${err.message}`);
+            }
+          })
+        );
+      }
+      if (errors.length > 0 && Object.keys(results).length === 0) {
+        throw new Error(errors.join("; "));
+      }
+      return results;
+    },
+    enabled: automatedTopics.length > 0,
+    refetchInterval: 60000,
+  });
+
+  const allActivities = Object.values(activitiesMap || {});
+  
+  const todayGenerated = allActivities.reduce((sum, a) => sum + (a.stats?.totalGenerated || 0), 0);
+  const todayPublished = allActivities.reduce((sum, a) => sum + (a.stats?.todayPublished || 0), 0);
+  const totalQuarantined = allActivities.reduce((sum, a) => sum + (a.stats?.currentQuarantined || 0), 0);
+  const pendingReview = allActivities.reduce((sum, a) => sum + (a.stats?.draftsPendingReview || 0), 0);
+  
+  const lastRunTimes = allActivities
+    .filter(a => a.lastRunAt)
+    .map(a => new Date(a.lastRunAt!).getTime());
+  const lastGlobalRun = lastRunTimes.length > 0 ? new Date(Math.max(...lastRunTimes)) : null;
+  
+  const failingTopics = automatedTopics.filter(t => {
+    const activity = activitiesMap?.[t.id];
+    return activity && (activity.stats?.currentQuarantined || 0) > 0;
+  });
+
+  const copyDebugBundle = async () => {
+    const bundle = {
+      timestamp: new Date().toISOString(),
+      automatedTopicsCount: automatedTopics.length,
+      lastGlobalRun: lastGlobalRun?.toISOString() || null,
+      totals: {
+        generated: todayGenerated,
+        published: todayPublished,
+        quarantined: totalQuarantined,
+        pendingReview,
+      },
+      failingTopics: failingTopics.map(t => ({
+        id: t.id,
+        name: t.name,
+        quarantined: activitiesMap?.[t.id]?.stats?.currentQuarantined || 0,
+      })),
+      topicActivities: Object.entries(activitiesMap || {}).map(([id, activity]) => ({
+        topicId: id,
+        topicName: automatedTopics.find(t => t.id === id)?.name,
+        lastRunAt: activity.lastRunAt,
+        lastRunStatus: activity.lastRunStatus,
+        recentJobs: activity.recentRuns?.slice(0, 5),
+      })),
+    };
+    
+    await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
+    toast({ title: "Debug bundle copied", description: "Global pipeline stats copied to clipboard" });
+  };
+
+  if (automatedTopics.length === 0) {
+    return null;
+  }
+
+  return (
+    <Card className="mb-6" data-testid="automation-overview-banner">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Activity className="h-5 w-5" />
+            Automation Overview
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={copyDebugBundle}
+              data-testid="button-copy-global-debug"
+            >
+              <Copy className="h-3 w-3 mr-1" />
+              Copy Debug Bundle
+            </Button>
+            <Button
+              onClick={onTriggerAll}
+              disabled={isPending}
+              data-testid="button-trigger-all-pipelines"
+            >
+              {isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4 mr-2" />
+              )}
+              Run All Pipelines
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+              <div className="p-3 rounded-lg bg-muted/50">
+                <div className="text-2xl font-bold">{automatedTopics.length}</div>
+                <div className="text-xs text-muted-foreground">Active Pipelines</div>
+              </div>
+              <div className="p-3 rounded-lg bg-muted/50">
+                <div className="text-2xl font-bold">{todayGenerated}</div>
+                <div className="text-xs text-muted-foreground">Generated</div>
+              </div>
+              <div className="p-3 rounded-lg bg-muted/50">
+                <div className="text-2xl font-bold text-green-600">{todayPublished}</div>
+                <div className="text-xs text-muted-foreground">Published Today</div>
+              </div>
+              <div className="p-3 rounded-lg bg-muted/50">
+                <div className="text-2xl font-bold text-amber-600">{pendingReview}</div>
+                <div className="text-xs text-muted-foreground">Pending Review</div>
+              </div>
+              <div className="p-3 rounded-lg bg-muted/50">
+                <div className={`text-2xl font-bold ${totalQuarantined > 0 ? "text-destructive" : ""}`}>
+                  {totalQuarantined}
+                </div>
+                <div className="text-xs text-muted-foreground">Quarantined</div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>
+                Last global run: {lastGlobalRun 
+                  ? formatDistanceToNow(lastGlobalRun) + " ago"
+                  : "Never"}
+              </span>
+              <span>Pipeline cycle: every 10 min</span>
+            </div>
+
+            {failingTopics.length > 0 && (
+              <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                  <span className="font-medium text-destructive">Failing Topics ({failingTopics.length})</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {failingTopics.slice(0, 5).map(topic => (
+                    <Badge key={topic.id} variant="destructive" className="text-xs">
+                      {topic.name} ({activitiesMap?.[topic.id]?.stats?.currentQuarantined || 0} quarantined)
+                    </Badge>
+                  ))}
+                  {failingTopics.length > 5 && (
+                    <Badge variant="outline" className="text-xs">+{failingTopics.length - 5} more</Badge>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Pipeline() {
   const { toast } = useToast();
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
@@ -361,19 +592,14 @@ export default function Pipeline() {
             Monitor and manage your automated content pipeline
           </p>
         </div>
-        <Button
-          onClick={() => triggerAllPipelinesMutation.mutate()}
-          disabled={triggerAllPipelinesMutation.isPending}
-          data-testid="button-trigger-all-pipelines"
-        >
-          {triggerAllPipelinesMutation.isPending ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Play className="h-4 w-4 mr-2" />
-          )}
-          Run All Pipelines
-        </Button>
       </div>
+
+      <AutomationOverviewBanner
+        topics={topics}
+        quarantinedCount={quarantinedItems.length}
+        onTriggerAll={() => triggerAllPipelinesMutation.mutate()}
+        isPending={triggerAllPipelinesMutation.isPending}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-1">

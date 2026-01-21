@@ -891,7 +891,7 @@ export async function runFullPipelineForTopic(topic: Topic): Promise<{
   results.generate = await runGenerateJob(topic);
   results.gate = await runQualityGateJob(topic);
   
-  if (topic.automationMode === "semi") {
+  if (topic.automationMode === "approval_required") {
     console.log(`[Pipeline:${topic.id}] Semi-auto mode - stopping at gate for human review`);
     return {
       topicId: topic.id,
@@ -920,7 +920,7 @@ export async function runAllLivePipelines(): Promise<
 > {
   const liveTopics = await storage.getLiveTopics();
   const automatedTopics = liveTopics.filter(
-    (t) => t.automationMode === "auto" || t.automationMode === "semi"
+    (t) => t.automationMode === "auto" || t.automationMode === "approval_required"
   );
 
   console.log(`[Pipeline] Running ${automatedTopics.length} automated/semi-auto pipelines`);

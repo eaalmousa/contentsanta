@@ -26,6 +26,14 @@ import {
   Circle,
   Star,
   AlertCircle,
+  Play,
+  History,
+  Eye,
+  Copy,
+  ExternalLink,
+  Zap,
+  Shield,
+  Pause,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -64,6 +72,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
+import { formatDistanceToNow } from "date-fns";
 
 const contentIntentConfig: Record<ContentIntent, { label: string; icon: any; color: string }> = {
   news_monitoring: { label: "News", icon: Globe, color: "bg-blue-500" },
@@ -962,8 +971,285 @@ function TopicCard({
             </ScrollArea>
           </div>
         )}
+        
+        {topic.automationMode && topic.automationMode !== "manual" && (
+          <AutomationStatusCard 
+            topic={topic} 
+            hasWpPlugin={!!topic.publishingTargetId}
+          />
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+type AutomationActivity = {
+  automationMode: string;
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  stats: {
+    totalGenerated: number;
+    totalPublished: number;
+    totalQuarantined: number;
+    draftsCreated: number;
+    draftsPendingReview: number;
+    draftsApproved: number;
+    draftsPublished: number;
+    currentQuarantined: number;
+    awaitingGate: number;
+    awaitingSchedule: number;
+    todayPublished: number;
+  };
+  recentRuns: Array<{
+    id: string;
+    jobType: string;
+    status: string;
+    startedAt: string;
+    endedAt: string | null;
+    processed: number;
+    success: number;
+    failed: number;
+    quarantined: number;
+  }>;
+};
+
+function AutomationStatusCard({ 
+  topic,
+  hasWpPlugin 
+}: { 
+  topic: Topic;
+  hasWpPlugin: boolean;
+}) {
+  const { toast } = useToast();
+  const [showHistory, setShowHistory] = useState(false);
+  
+  const { data: activity, isLoading, refetch } = useQuery<AutomationActivity>({
+    queryKey: [`/api/topics/${topic.id}/automation-activity`],
+    refetchInterval: topic.automationMode !== "manual" ? 30000 : false,
+  });
+
+  const runPipelineMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/topics/${topic.id}/run-pipeline`);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Pipeline started", description: "Running automation for this topic" });
+      setTimeout(() => refetch(), 2000);
+      queryClient.invalidateQueries({ queryKey: [`/api/topics/${topic.id}/automation-activity`] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Pipeline failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const copyDebugBundle = async () => {
+    const lastError = activity?.recentRuns?.find(r => r.failed > 0);
+    const bundle = {
+      topicId: topic.id,
+      topicName: topic.name,
+      automationMode: topic.automationMode,
+      lastRunId: activity?.recentRuns?.[0]?.id || null,
+      stats: activity?.stats || {},
+      lastError: lastError ? {
+        jobType: lastError.jobType,
+        runId: lastError.id,
+        failedAt: lastError.endedAt,
+      } : null,
+      recentJobs: activity?.recentRuns?.slice(0, 20) || [],
+      timestamp: new Date().toISOString(),
+      hasWpPlugin,
+    };
+    
+    await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
+    toast({ title: "Debug bundle copied", description: "Paste this when reporting issues" });
+  };
+
+  const modeConfig: Record<string, { label: string; color: string; icon: any }> = {
+    auto: { label: "Full Auto", color: "bg-green-500", icon: Zap },
+    approval_required: { label: "Semi-Auto", color: "bg-amber-500", icon: Shield },
+    manual: { label: "Manual", color: "bg-slate-500", icon: Pause },
+  };
+
+  const mode = modeConfig[topic.automationMode || "manual"] || modeConfig.manual;
+  const ModeIcon = mode.icon;
+  
+  const hasErrors = (activity?.stats?.currentQuarantined || 0) > 0;
+  const isHealthy = !hasErrors && activity?.lastRunStatus === "completed";
+  const lastError = activity?.recentRuns?.find(r => r.failed > 0);
+
+  if (topic.automationMode === "manual") {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 pt-4 border-t space-y-3" data-testid={`automation-status-${topic.id}`}>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium flex items-center gap-2">
+          <ModeIcon className="h-4 w-4" />
+          Automation Status
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge className={`${mode.color} text-white`}>
+            {mode.label}
+          </Badge>
+          {isHealthy ? (
+            <Badge variant="outline" className="border-green-500 text-green-600">
+              <CheckCircle2 className="h-3 w-3 mr-1" />
+              Healthy
+            </Badge>
+          ) : hasErrors ? (
+            <Badge variant="destructive">
+              <AlertCircle className="h-3 w-3 mr-1" />
+                Issues
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+              <div className="p-2 rounded-lg bg-muted/50">
+                <div className="text-lg font-semibold">{activity?.stats?.totalGenerated || 0}</div>
+                <div className="text-xs text-muted-foreground">Generated</div>
+              </div>
+              <div className="p-2 rounded-lg bg-muted/50">
+                <div className="text-lg font-semibold">{activity?.stats?.draftsCreated || 0}</div>
+                <div className="text-xs text-muted-foreground">Drafts</div>
+              </div>
+              <div className="p-2 rounded-lg bg-muted/50">
+                <div className="text-lg font-semibold text-green-600">{activity?.stats?.todayPublished || 0}</div>
+                <div className="text-xs text-muted-foreground">Published Today</div>
+              </div>
+              <div className="p-2 rounded-lg bg-muted/50">
+                <div className={`text-lg font-semibold ${(activity?.stats?.currentQuarantined || 0) > 0 ? "text-destructive" : ""}`}>
+                  {activity?.stats?.currentQuarantined || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">Quarantined</div>
+              </div>
+            </div>
+
+            {topic.automationMode === "approval_required" && (activity?.stats?.draftsPendingReview || 0) > 0 && (
+              <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                    {activity?.stats?.draftsPendingReview} drafts awaiting review
+                  </span>
+                  <Link href="/smart-editor">
+                    <Button size="sm" variant="outline" data-testid={`button-review-now-${topic.id}`}>
+                      <Eye className="h-3 w-3 mr-1" />
+                      Review Now
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            )}
+
+            {lastError && (
+              <div className="p-2 rounded-lg bg-destructive/10 text-xs">
+                <span className="font-medium text-destructive">Last error: </span>
+                <span className="text-muted-foreground">
+                  {lastError.jobType} job failed ({lastError.failed} items) 
+                  {lastError.endedAt && ` - ${formatDistanceToNow(new Date(lastError.endedAt))} ago`}
+                </span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                Last run: {activity?.lastRunAt 
+                  ? formatDistanceToNow(new Date(activity.lastRunAt)) + " ago"
+                  : "Never"}
+              </span>
+              <span>Next: ~10 min cycle</span>
+            </div>
+
+            <Separator />
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                size="sm"
+                onClick={() => runPipelineMutation.mutate()}
+                disabled={runPipelineMutation.isPending}
+                data-testid={`button-run-now-${topic.id}`}
+              >
+                {runPipelineMutation.isPending ? (
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                ) : (
+                  <Play className="h-3 w-3 mr-1" />
+                )}
+                Run Now
+              </Button>
+              
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowHistory(!showHistory)}
+                data-testid={`button-job-history-${topic.id}`}
+              >
+                <History className="h-3 w-3 mr-1" />
+                Job History
+              </Button>
+              
+              <Link href="/pipeline">
+                <Button size="sm" variant="ghost" data-testid={`link-quarantine-${topic.id}`}>
+                  <AlertCircle className="h-3 w-3 mr-1" />
+                  Quarantine
+                </Button>
+              </Link>
+              
+              {hasWpPlugin && (
+                <Link href="/settings/publishing">
+                  <Button size="sm" variant="ghost" data-testid={`link-plugin-diagnostics-${topic.id}`}>
+                    <ExternalLink className="h-3 w-3 mr-1" />
+                    Plugin Diagnostics
+                  </Button>
+                </Link>
+              )}
+              
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={copyDebugBundle}
+                data-testid={`button-copy-debug-${topic.id}`}
+              >
+                <Copy className="h-3 w-3 mr-1" />
+                Copy Debug Bundle
+              </Button>
+            </div>
+
+            {showHistory && (
+              <div className="pt-2 space-y-2">
+                <div className="text-xs font-medium">Recent Job Runs</div>
+                <ScrollArea className="h-32">
+                  {activity?.recentRuns?.map((run) => (
+                    <div key={run.id} className="flex items-center gap-2 py-1 text-xs">
+                      <div className={`h-2 w-2 rounded-full ${
+                        run.status === "completed" ? "bg-green-500" : 
+                        run.status === "running" ? "bg-yellow-500 animate-pulse" : "bg-red-500"
+                      }`} />
+                      <Badge variant="outline" className="text-xs capitalize">{run.jobType}</Badge>
+                      <span className="text-muted-foreground">
+                        {run.success} ok, {run.failed} fail
+                      </span>
+                      <span className="text-muted-foreground ml-auto">
+                        {run.startedAt ? formatDistanceToNow(new Date(run.startedAt)) + " ago" : ""}
+                      </span>
+                    </div>
+                  ))}
+                  {(!activity?.recentRuns || activity.recentRuns.length === 0) && (
+                    <p className="text-xs text-muted-foreground py-2">No job runs yet</p>
+                  )}
+                </ScrollArea>
+              </div>
+            )}
+          </>
+        )}
+    </div>
   );
 }
 

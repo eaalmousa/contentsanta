@@ -155,6 +155,23 @@ The automation pipeline transforms Content Santa from manual workflow to automat
 - Max 5 retries before quarantine
 - Error codes: GENERATION_FAILED, PUBLISH_FAILED, VERIFY_FAILED, CONTENT_TOO_SHORT, etc.
 
+**Automation UI Components** (January 2026):
+- `AutomationStatusCard` (client/src/pages/topics.tsx): Embedded in TopicCard for automated topics
+  - Shows mode badge (Full Auto, Semi-Auto), health badge (Healthy/Issues)
+  - Stats grid: Generated, Drafts, Published Today, Quarantined
+  - Review Now button for semi-auto mode with pending drafts
+  - Actions: Run Now, Job History, Quarantine, Plugin Diagnostics, Copy Debug Bundle
+  - Polls every 30s for non-manual topics
+
+- `AutomationOverviewBanner` (client/src/pages/pipeline.tsx): Global automation dashboard
+  - Aggregated stats from all automated topics (batched fetch in groups of 5)
+  - Counts: Active Pipelines, Generated, Published Today, Pending Review, Quarantined
+  - Failing topics list with quarantine counts
+  - Run All Pipelines button, Copy Debug Bundle
+  - Polls every 60s, query key includes topic IDs for proper cache invalidation
+
+- Copy Debug Bundle: Copies JSON with topic IDs, run stats, errors, last 20 job logs, WP plugin status
+
 ### Recent Changes (December 2025)
 - Migrated from in-memory storage to PostgreSQL with 13 tables
 - Implemented Replit Auth with OpenID Connect
