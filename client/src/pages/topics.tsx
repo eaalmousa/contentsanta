@@ -282,7 +282,7 @@ function TopicSettingsDialog({
   
   const { data: targets, isLoading: targetsLoading } = useQuery<PublishingTarget[]>({
     queryKey: ["/api/publishing-targets", { workspaceId: topic.workspaceId }],
-    queryFn: () => fetch(`/api/publishing-targets?workspaceId=${topic.workspaceId}`).then(r => r.json()),
+    queryFn: () => fetch(`/api/publishing-targets?workspaceId=${topic.workspaceId}`, { credentials: "include" }).then(r => r.json()),
     enabled: open && !!topic.workspaceId,
   });
   
@@ -1662,13 +1662,14 @@ export default function TopicsPage() {
   // Fetch user's workspace ID from server (works even when no topics exist)
   const { data: userWorkspaceData } = useQuery<{ workspaceId: string }>({
     queryKey: ["/api/user/workspace"],
+    queryFn: () => fetch("/api/user/workspace", { credentials: "include" }).then(r => r.json()),
   });
   const userWorkspaceId = userWorkspaceData?.workspaceId;
 
   // Fetch publishing targets for create dialog
   const { data: createDialogTargets } = useQuery<PublishingTarget[]>({
     queryKey: ["/api/publishing-targets", { workspaceId: userWorkspaceId }],
-    queryFn: () => fetch(`/api/publishing-targets?workspaceId=${userWorkspaceId}`).then(r => r.json()),
+    queryFn: () => fetch(`/api/publishing-targets?workspaceId=${userWorkspaceId}`, { credentials: "include" }).then(r => r.json()),
     enabled: showCreateDialog && !!userWorkspaceId,
   });
   
