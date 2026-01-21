@@ -170,7 +170,12 @@ export async function runFetchJob(topic: Topic): Promise<JobResult> {
       return result;
     }
 
-    const recentStories = await storage.getStories(topic.workspaceId);
+    // Get stories linked to this topic via topic_stories (from topic discovery)
+    // This includes stories from any workspace that match this topic's keywords
+    const topicStoriesWithStory = await storage.getTopicStories(topic.id);
+    const recentStories = topicStoriesWithStory.map(ts => ts.story);
+    console.log(`[FetchJob:${topic.id}] Found ${recentStories.length} stories linked to topic`);
+    
     const existingItems = await getPipelineItemsByTopic(topic.id);
     const existingItemStoryIds = new Set(existingItems.map((i: PipelineItem) => i.storyId));
 
@@ -932,6 +937,15 @@ export async function runFullPipelineForTopic(topic: Topic): Promise<{
   console.log(`[Pipeline:${topic.id}] Starting full pipeline run for: ${topic.name} (mode: ${topic.automationMode})`);
 
   const results: { [key: string]: JobResult } = {};
+
+  // Run topic discovery first to link stories from enabled sources
+  try {
+    const { runTopicDiscovery } = await import("./topic-run-service");
+    console.log(`[Pipeline:${topic.id}] Running topic discovery to link stories...`);
+    await runTopicDiscovery(topic);
+  } catch (error: any) {
+    console.error(`[Pipeline:${topic.id}] Topic discovery error (continuing):`, error.message);
+  }
 
   results.retry = await runRetryJob(topic);
   results.fetch = await runFetchJob(topic);

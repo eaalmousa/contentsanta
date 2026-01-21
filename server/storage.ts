@@ -238,6 +238,7 @@ export interface IStorage {
   // Stories (clustering)
   getStories(workspaceId: string, dateBucket?: string): Promise<Story[]>;
   getStory(id: string): Promise<Story | undefined>;
+  getStoriesFromSources(sourceIds: string[]): Promise<Story[]>;
   createStory(data: InsertStory): Promise<Story>;
   updateStory(id: string, data: Partial<Story>): Promise<Story | undefined>;
   findStoriesBySimilarity(workspaceId: string, similarityHash: string, dateBucket: string): Promise<Story[]>;
@@ -1158,6 +1159,22 @@ export class DatabaseStorage implements IStorage {
   async getStory(id: string): Promise<Story | undefined> {
     const [story] = await db.select().from(stories).where(eq(stories.id, id));
     return story;
+  }
+
+  async getStoriesFromSources(sourceIds: string[]): Promise<Story[]> {
+    if (sourceIds.length === 0) return [];
+    
+    // Get stories that have source_items from any of the given sources
+    // Story links: story <- story_items <- source_items (source_items has sourceId)
+    const rows = await db.selectDistinct({ story: stories })
+      .from(stories)
+      .innerJoin(storyItems, eq(storyItems.storyId, stories.id))
+      .innerJoin(sourceItems, eq(sourceItems.id, storyItems.sourceItemId))
+      .where(inArray(sourceItems.sourceId, sourceIds))
+      .orderBy(desc(stories.firstSeenAt))
+      .limit(500);
+    
+    return rows.map(r => r.story);
   }
 
   async createStory(data: InsertStory): Promise<Story> {

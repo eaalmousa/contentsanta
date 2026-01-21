@@ -92,11 +92,12 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
       sourceLookup.set(source.id, { tier: source.tier, isOfficial: source.isOfficial });
     }
     
-    // Persist relevance scores for stories in the workspace
-    const workspaceStories = await storage.getStories(topic.workspaceId);
+    // Persist relevance scores for stories from enabled sources (cross-workspace)
+    const sourceStories = await storage.getStoriesFromSources(enabledSourceIds);
+    console.log(`[TopicRun:${requestId}] Found ${sourceStories.length} stories from enabled sources`);
     let storiesLinked = 0;
     
-    for (const story of workspaceStories) {
+    for (const story of sourceStories) {
       const relevance = scoreStoryRelevance(
         { canonicalTitle: story.canonicalTitle, excerpt: story.excerpt },
         { query: topic.query, name: topic.name }
