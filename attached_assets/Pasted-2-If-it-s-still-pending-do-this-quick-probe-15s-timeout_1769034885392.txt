@@ -1,0 +1,151 @@
+2) If it’s still “pending”, do this quick probe (15s timeout)
+
+Paste this:
+
+(async () => {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 15000);
+
+  try {
+    const r = await fetch("/api/debug/seed-sources", {
+      method: "POST",
+      credentials: "include",
+      signal: ctrl.signal,
+    });
+    const body = await r.text();
+    console.log("STATUS:", r.status);
+    console.log("BODY:", body.slice(0, 500));
+  } catch (e) {
+    console.error("FAILED:", e);
+  } finally {
+    clearTimeout(t);
+  }
+})();
+
+
+If it aborts → the server handler is hanging (not responding).
+
+The key thing I need from you right now
+
+Reply with exactly these 3 items from Network:
+
+Status Code
+
+content-type
+
+First line of Response (or say “pending”)
+
+Once I have those, I’ll give you the single correct fix (routing vs missing endpoint vs handler hang) with the exact patch.
+
+{
+    "success": true,
+    "inserted": 0,
+    "skipped": 28,
+    "total": 28,
+    "workspaceId": "a6fa665e-2f03-416b-bc99-b30ae1531726"
+}
+Thought for 28s
+
+Great — that response is the smoking gun:
+
+inserted: 0 + skipped: 28 means your workspace already has 28 sources in the DB (same feedUrls), so the seeder correctly refused to duplicate them.
+
+But your /api/me/context still shows sourcesCount: 0 and the UI shows no sources → your “count” + “list sources” queries are filtering them out.
+
+The real cause (very likely)
+
+Your sources rows store flags like isActive / isOfficial as strings ("true" / "false"), not booleans.
+
+You can see it clearly in the demo-workspace JSON you pasted earlier:
+
+"isActive":"true",
+"isOfficial":"false"
+
+
+If your backend does something like:
+
+where(eq(sources.isActive, true))
+
+
+…it will return 0 rows when the column value is "true" (string).
+Same for counts, recommendations, and “Select Sources”.
+
+So: you DO have sources — your API is just not returning them.
+
+Fix it now (fast “CURE” + safe migration)
+✅ Fix A (immediate, unblock UI in minutes): make filters accept both boolean + string
+
+Wherever you filter by isActive, change it to accept "true" too.
+
+Example (Drizzle):
+
+import { and, eq, sql } from "drizzle-orm";
+
+// instead of eq(sources.isActive, true)
+const isActiveTruthy = sql`(${sources.isActive} = true OR ${sources.isActive} = 'true')`;
+
+const rows = await db
+  .select()
+  .from(sources)
+  .where(and(
+    eq(sources.workspaceId, workspaceId),
+    isActiveTruthy
+  ));
+
+
+Do the same for:
+
+/api/sources list endpoint
+
+/api/me/context sourcesCount query
+
+/api/topics/recommend-sources (if it filters active sources)
+
+any “fetch sources by workspace” query
+
+Also update counts similarly:
+
+const [{ count }] = await db
+  .select({ count: sql<number>`count(*)` })
+  .from(sources)
+  .where(and(
+    eq(sources.workspaceId, workspaceId),
+    sql`(${sources.isActive} = true OR ${sources.isActive} = 'true')`
+  ));
+
+
+After redeploy, your UI should instantly show ~28 sources (or more).
+
+✅ Fix B (proper fix): migrate DB columns to real booleans
+
+Once A unblocks you, do the migration so this never returns.
+
+SQL migration:
+
+ALTER TABLE sources
+  ALTER COLUMN "isActive" TYPE boolean
+  USING (CASE WHEN "isActive"::text IN ('true','t','1','yes') THEN true ELSE false END);
+
+ALTER TABLE sources
+  ALTER COLUMN "isOfficial" TYPE boolean
+  USING (CASE WHEN "isOfficial"::text IN ('true','t','1','yes') THEN true ELSE false END);
+
+ALTER TABLE sources
+  ALTER COLUMN "isActive" SET DEFAULT true;
+
+ALTER TABLE sources
+  ALTER COLUMN "isOfficial" SET DEFAULT false;
+
+
+Then ensure your seeding/inserts use booleans, not strings:
+
+isActive: true,
+isOfficial: false,
+
+Quick confirmation (no guessing)
+
+After applying Fix A, open:
+
+/api/sources (or whatever your list endpoint is)
+
+If it returns your sources, the Create Topic “Select Sources” step will populate immediately.
