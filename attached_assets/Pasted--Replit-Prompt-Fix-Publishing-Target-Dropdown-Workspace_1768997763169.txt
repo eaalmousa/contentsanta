@@ -1,0 +1,89 @@
+✅ Replit Prompt — Fix Publishing Target Dropdown (Workspace-safe)
+
+Goal: Publishing targets must always appear in “Create Topic / Edit Topic” dropdown for the logged-in user’s workspace, even if there are zero topics.
+
+Root cause: workspace resolution is inconsistent and some records may have legacy workspace references (slug like demo-workspace) or null workspace_id. The UI is likely fetching targets using the wrong workspace source (topics) and returns empty.
+
+Implement:
+
+Single source of truth for workspace
+
+Add resolveCurrentWorkspace(req) helper that:
+
+reads user from session/auth
+
+finds workspace via workspace_memberships (or equivalent)
+
+returns { workspaceId, workspaceSlug, role }
+
+Do not derive workspace from topics.
+
+Fix target creation
+
+When creating a publishing target, always set:
+
+workspace_id = resolved workspaceId
+
+Add DB constraint: workspace_id NOT NULL
+
+Fix target listing endpoint
+
+GET /api/publishing-targets must:
+
+resolve workspace via resolveCurrentWorkspace
+
+return all targets where workspace_id = workspaceId
+
+Do not require passing workspaceId from client.
+
+Fix topic creation modal data flow
+
+In Create Topic dialog:
+
+call GET /api/publishing-targets (no params)
+
+populate dropdown with returned targets
+
+Ensure fetch includes credentials/cookies.
+
+Backfill legacy / orphan targets
+
+Migration script:
+
+find targets with workspace_id IS NULL OR workspace_id = 'demo-workspace' (or any non-uuid)
+
+assign them to the resolved workspace for the target’s creator (or current workspace in demo)
+
+Log how many were migrated.
+
+Add a debug endpoint
+
+GET /api/debug/context
+
+returns { userId, workspaceId, workspaceSlug, targetsCount, topicsCount }
+
+This is for troubleshooting only (auth-protected).
+
+Acceptance Criteria:
+
+After creating a WordPress (Plugin) target, Create Topic dropdown shows it immediately.
+
+Works even when there are zero topics.
+
+Deleting topics does not break workspace resolution.
+
+No 401/403 during Create Topic fetches.
+
+Quick sanity checks you can do right now (30 seconds)
+
+Before Replit changes, you can quickly confirm the root cause:
+
+Open browser DevTools → Network
+
+Open Create Topic modal
+
+Look for a request like:
+
+/api/publishing-targets or /api/user/workspace
+
+If you see 401 on workspace or 200 with [] on targets → it’s exactly the workspace-resolution bug.

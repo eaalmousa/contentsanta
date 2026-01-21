@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/use-auth";
 import { 
   Plus,
   Power,
@@ -189,6 +190,7 @@ function TopicSettingsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
+  const { isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState("sources");
   const [publishingTargetId, setPublishingTargetId] = useState<string | null>(topic.publishingTargetId || null);
   const [tagSearch, setTagSearch] = useState("");
@@ -280,16 +282,17 @@ function TopicSettingsDialog({
     s => !topicSourceIds.has(s.id) && s.name.toLowerCase().includes(sourceSearch.toLowerCase())
   );
   
+  // Server auto-resolves workspace from session
   const { data: targets, isLoading: targetsLoading } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets", { workspaceId: topic.workspaceId }],
-    enabled: open && !!topic.workspaceId,
+    queryKey: ["/api/publishing-targets"],
+    enabled: open && isAuthenticated,
   });
   
   const wordPressTargets = useMemo(() => {
     const filtered = (targets ?? []).filter(t => t.type === "wordpress" || t.type === "wordpress_pull");
-    console.log("[EditDialog] targets:", targets, "filtered:", filtered, "workspaceId:", topic.workspaceId);
+    console.log("[EditDialog] targets:", targets, "filtered:", filtered);
     return filtered;
-  }, [targets, topic.workspaceId]);
+  }, [targets]);
   
   const taxonomyQuery = useQuery<{ 
     items: WpTaxonomyCache[]; 
@@ -1651,25 +1654,28 @@ export default function TopicsPage() {
     }
   }, [searchString, setLocation]);
 
+  const { isAuthenticated } = useAuth();
+  
   const { data: topics, isLoading, isError } = useQuery<(Topic & { enabledSourceCount: number })[]>({
     queryKey: ["/api/topics"],
+    enabled: isAuthenticated,
   });
   
   // Safe array even on error or undefined
   const safeTopics = topics ?? [];
   
-  // Fetch user's workspace ID from server (works even when no topics exist)
-  // Falls back to first topic's workspace if API fails
-  const { data: userWorkspaceData } = useQuery<{ workspaceId: string }>({
+  // Fetch user's workspace info from server (works even when no topics exist)
+  const { data: userWorkspaceData } = useQuery<{ workspaceId: string; workspaceSlug?: string }>({
     queryKey: ["/api/user/workspace"],
+    enabled: isAuthenticated,
     retry: false,
   });
   const userWorkspaceId = userWorkspaceData?.workspaceId || safeTopics[0]?.workspaceId;
 
-  // Fetch publishing targets for create dialog
+  // Fetch publishing targets for create dialog - server auto-resolves workspace from session
   const { data: createDialogTargets } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets", { workspaceId: userWorkspaceId }],
-    enabled: showCreateDialog && !!userWorkspaceId,
+    queryKey: ["/api/publishing-targets"],
+    enabled: isAuthenticated && showCreateDialog,
   });
   
   const createDialogWordPressTargets = useMemo(() => 

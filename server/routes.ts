@@ -217,12 +217,15 @@ export async function registerRoutes(
   // Get current user's workspace ID (for API calls that need it)
   app.get("/api/user/workspace", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = (req.user as any)?.claims?.sub;
       if (!userId) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      const workspaceId = await resolveWorkspaceId(userId);
-      return res.json({ workspaceId });
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(404).json({ error: "No workspace found for user" });
+      }
+      return res.json({ workspaceId: workspace.id, workspaceSlug: workspace.slug, workspaceName: workspace.name });
     } catch (error) {
       console.error("[API] Error getting user workspace:", error);
       return res.status(500).json({ error: "Failed to get workspace" });
@@ -608,9 +611,18 @@ export async function registerRoutes(
         userWorkspaces.some(w => w.id === t.workspaceId)
       );
 
+      // Get targets count for user's workspace
+      const targetsCount = resolvedWorkspace 
+        ? (await storage.getPublishingTargets(resolvedWorkspace.id)).length 
+        : 0;
+
       res.json({
         userId,
         email,
+        workspaceId: resolvedWorkspace?.id || null,
+        workspaceSlug: resolvedWorkspace?.slug || null,
+        targetsCount,
+        topicsCount: userTopics.length,
         workspaces: userWorkspaces.map(w => ({
           id: w.id,
           slug: w.slug,
@@ -1145,19 +1157,31 @@ export async function registerRoutes(
     }
   });
 
-  // Publishing Targets
-  app.get("/api/publishing-targets", async (req: Request, res: Response) => {
+  // Publishing Targets - auto-resolves workspace from user session, or accepts workspaceId param
+  app.get("/api/publishing-targets", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const workspaceId = req.query.workspaceId as string;
-      if (!workspaceId) {
-        return res.status(400).json({ 
-          error: "workspaceId query parameter is required",
-          errorCode: "WORKSPACE_REQUIRED"
-        });
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
       }
+      
+      // Prefer query param if provided, otherwise resolve from user session
+      let workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        const resolved = await resolveWorkspace(userId);
+        if (!resolved) {
+          return res.status(404).json({ 
+            error: "No workspace found for user",
+            errorCode: "NO_WORKSPACE"
+          });
+        }
+        workspaceId = resolved.id;
+      }
+      
       const targets = await storage.getPublishingTargets(workspaceId);
       res.json(targets);
     } catch (error) {
+      console.error("[API] Error fetching publishing targets:", error);
       res.status(500).json({ error: "Failed to fetch publishing targets" });
     }
   });
