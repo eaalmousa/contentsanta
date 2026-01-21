@@ -3368,5 +3368,8 @@ export async function registerRoutes(
 </rss>`);
   });
 
+  // Start background scheduler for automated pipeline runs
+  startScheduler();
+
   return httpServer;
 }
