@@ -1591,6 +1591,21 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(pipelineItems.updatedAt));
   }
 
+  async resetScheduledItemsToGated(topicId: string): Promise<number> {
+    const result = await db.update(pipelineItems)
+      .set({ 
+        status: "gated" as PipelineItemStatus, 
+        scheduledFor: null,
+        updatedAt: new Date()
+      })
+      .where(and(
+        eq(pipelineItems.topicId, topicId),
+        eq(pipelineItems.status, "scheduled" as PipelineItemStatus)
+      ))
+      .returning();
+    return result.length;
+  }
+
   // Automation Job Runs
   async getAutomationJobRuns(topicId?: string, jobType?: AutomationJobType): Promise<AutomationJobRun[]> {
     const conditions = [];

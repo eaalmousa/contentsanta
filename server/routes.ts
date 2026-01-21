@@ -2233,7 +2233,29 @@ export async function registerRoutes(
         ...(normalizedCountries !== undefined && { countries: normalizedCountries }),
       };
       
+      // Check if publish schedule changed - need to reschedule existing items
+      const oldPublishTimes = (existingTopic.publishTimes as string[] | null) || [];
+      const newPublishTimes = req.body.publishTimes;
+      const oldTimezone = existingTopic.timezone || "UTC";
+      const newTimezone = req.body.timezone;
+      
+      const scheduleChanged = 
+        (newPublishTimes !== undefined && JSON.stringify(oldPublishTimes) !== JSON.stringify(newPublishTimes)) ||
+        (newTimezone !== undefined && oldTimezone !== newTimezone);
+      
       const topic = await storage.updateTopic(req.params.id, updateData);
+      
+      // If schedule changed, reschedule existing "scheduled" items
+      if (scheduleChanged && topic) {
+        console.log(`[API] Publish schedule changed for topic ${topic.id}, rescheduling items...`);
+        try {
+          await storage.resetScheduledItemsToGated(topic.id);
+          console.log(`[API] Reset scheduled items to gated for topic ${topic.id}`);
+        } catch (err) {
+          console.error(`[API] Failed to reschedule items:`, err);
+        }
+      }
+      
       res.json(topic);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to update topic" });
