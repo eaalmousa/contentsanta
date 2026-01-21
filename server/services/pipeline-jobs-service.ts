@@ -508,6 +508,123 @@ export async function runQualityGateJob(topic: Topic): Promise<JobResult> {
   return result;
 }
 
+function getTimezoneOffsetMs(timezone: string, utcDate: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(utcDate);
+  
+  const getPart = (type: string) => {
+    const part = parts.find(p => p.type === type);
+    return part ? parseInt(part.value, 10) : 0;
+  };
+  
+  const tzYear = getPart("year");
+  const tzMonth = getPart("month");
+  const tzDay = getPart("day");
+  const tzHour = getPart("hour") === 24 ? 0 : getPart("hour");
+  const tzMinute = getPart("minute");
+  const tzSecond = getPart("second");
+  
+  const tzAsUtc = Date.UTC(tzYear, tzMonth - 1, tzDay, tzHour, tzMinute, tzSecond);
+  return tzAsUtc - utcDate.getTime();
+}
+
+function createUtcFromWallClock(
+  year: number,
+  month: number,
+  day: number,
+  hours: number,
+  minutes: number,
+  timezone: string
+): Date {
+  const estimateUtc = Date.UTC(year, month - 1, day, hours, minutes, 0);
+  const offsetMs = getTimezoneOffsetMs(timezone, new Date(estimateUtc));
+  return new Date(estimateUtc - offsetMs);
+}
+
+function getWallClockDate(utcDate: Date, timezone: string): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(utcDate);
+  
+  const getPart = (type: string) => {
+    const part = parts.find(p => p.type === type);
+    return part ? parseInt(part.value, 10) : 0;
+  };
+  
+  return {
+    year: getPart("year"),
+    month: getPart("month"),
+    day: getPart("day"),
+  };
+}
+
+function getNextPublishSlot(
+  publishTimes: string[],
+  timezone: string,
+  articlesPerRun: number,
+  runIntervalMinutes: number,
+  existingScheduledItems: PipelineItem[],
+  now: Date
+): { slotTime: Date; offset: number } | null {
+  if (!publishTimes || publishTimes.length === 0) {
+    return null;
+  }
+
+  const nowWallClock = getWallClockDate(now, timezone);
+  const sortedTimes = [...publishTimes].sort();
+
+  for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+    const baseDate = new Date(Date.UTC(nowWallClock.year, nowWallClock.month - 1, nowWallClock.day));
+    baseDate.setUTCDate(baseDate.getUTCDate() + dayOffset);
+    const year = baseDate.getUTCFullYear();
+    const month = baseDate.getUTCMonth() + 1;
+    const day = baseDate.getUTCDate();
+
+    for (const timeStr of sortedTimes) {
+      const [hours, minutes] = timeStr.split(":").map(Number);
+      
+      try {
+        const slotTimeUtc = createUtcFromWallClock(year, month, day, hours, minutes, timezone);
+        
+        if (slotTimeUtc <= now) {
+          continue;
+        }
+
+        const slotEndUtc = new Date(slotTimeUtc.getTime() + articlesPerRun * runIntervalMinutes * 60 * 1000);
+        const itemsInSlot = existingScheduledItems.filter((item) => {
+          if (!item.scheduledFor) return false;
+          const itemTime = new Date(item.scheduledFor);
+          return itemTime >= slotTimeUtc && itemTime < slotEndUtc;
+        });
+
+        if (itemsInSlot.length < articlesPerRun) {
+          const offset = itemsInSlot.length * runIntervalMinutes * 60 * 1000;
+          return {
+            slotTime: new Date(slotTimeUtc.getTime() + offset),
+            offset: itemsInSlot.length,
+          };
+        }
+      } catch (e) {
+        console.error(`[ScheduleJob] Error parsing time slot:`, e);
+        continue;
+      }
+    }
+  }
+
+  return null;
+}
+
 export async function runScheduleJob(topic: Topic): Promise<JobResult> {
   const jobRunId = await createJobRun(topic.workspaceId, topic.id, "schedule");
   const result: JobResult = {
@@ -527,8 +644,13 @@ export async function runScheduleJob(topic: Topic): Promise<JobResult> {
     const gatedItems = items.filter((i: PipelineItem) => i.status === "gated");
 
     const dailyCap = topic.dailyCap || 5;
-    const minSpacing = topic.minSpacingMinutes || 120;
     const quietHours = topic.quietHours as { start: string; end: string; tz?: string } | null;
+    
+    const timezone = topic.timezone || "UTC";
+    const publishTimes = (topic.publishTimes as string[] | null) || [];
+    const articlesPerRun = Math.min(Math.max(topic.articlesPerRun || 3, 1), 5);
+    const runIntervalMinutes = Math.max(topic.runIntervalMinutes || 5, 2);
+    const minSpacing = topic.minSpacingMinutes || 30;
 
     const resetDate = topic.publishedTodayResetAt
       ? new Date(topic.publishedTodayResetAt).toDateString()
@@ -554,33 +676,82 @@ export async function runScheduleJob(topic: Topic): Promise<JobResult> {
     }
 
     const scheduledItems = items.filter((i: PipelineItem) => i.status === "scheduled");
-    let lastScheduledTime = scheduledItems.length > 0
-      ? Math.max(...scheduledItems.map((i: PipelineItem) => new Date(i.scheduledFor || 0).getTime()))
-      : Date.now();
+    const now = new Date();
 
-    for (const item of gatedItems) {
-      result.processed++;
+    if (publishTimes.length > 0) {
+      console.log(`[ScheduleJob:${topic.id}] Using publish times: ${publishTimes.join(", ")} (${timezone})`);
+      
+      for (const item of gatedItems) {
+        result.processed++;
 
-      if (publishedToday >= dailyCap) {
+        if (publishedToday >= dailyCap) {
+          await storage.updatePipelineItem(item.id, {
+            status: "skipped" as PipelineItemStatus,
+            lastErrorMessage: "DAILY_CAP: Daily publishing limit reached",
+          });
+          result.skipped++;
+          continue;
+        }
+
+        const updatedScheduledItems = await getPipelineItemsByTopic(topic.id);
+        const currentScheduled = updatedScheduledItems.filter((i: PipelineItem) => i.status === "scheduled");
+
+        const slot = getNextPublishSlot(
+          publishTimes,
+          timezone,
+          articlesPerRun,
+          runIntervalMinutes,
+          currentScheduled,
+          now
+        );
+
+        if (!slot) {
+          await storage.updatePipelineItem(item.id, {
+            status: "skipped" as PipelineItemStatus,
+            lastErrorMessage: "NO_SLOT: No available publish slot in next 7 days",
+          });
+          result.skipped++;
+          continue;
+        }
+
         await storage.updatePipelineItem(item.id, {
-          status: "skipped" as PipelineItemStatus,
-          lastErrorMessage: "DAILY_CAP: Daily publishing limit reached",
+          status: "scheduled" as PipelineItemStatus,
+          scheduledFor: slot.slotTime,
+          targetId: topic.publishingTargetId,
         });
-        result.skipped++;
-        continue;
+
+        publishedToday++;
+        result.success++;
       }
+    } else {
+      let lastScheduledTime = scheduledItems.length > 0
+        ? Math.max(...scheduledItems.map((i: PipelineItem) => new Date(i.scheduledFor || 0).getTime()))
+        : Date.now();
 
-      const nextSlot = new Date(lastScheduledTime + minSpacing * 60 * 1000);
+      for (const item of gatedItems) {
+        result.processed++;
 
-      await storage.updatePipelineItem(item.id, {
-        status: "scheduled" as PipelineItemStatus,
-        scheduledFor: nextSlot,
-        targetId: topic.publishingTargetId,
-      });
+        if (publishedToday >= dailyCap) {
+          await storage.updatePipelineItem(item.id, {
+            status: "skipped" as PipelineItemStatus,
+            lastErrorMessage: "DAILY_CAP: Daily publishing limit reached",
+          });
+          result.skipped++;
+          continue;
+        }
 
-      lastScheduledTime = nextSlot.getTime();
-      publishedToday++;
-      result.success++;
+        const nextSlot = new Date(lastScheduledTime + minSpacing * 60 * 1000);
+
+        await storage.updatePipelineItem(item.id, {
+          status: "scheduled" as PipelineItemStatus,
+          scheduledFor: nextSlot,
+          targetId: topic.publishingTargetId,
+        });
+
+        lastScheduledTime = nextSlot.getTime();
+        publishedToday++;
+        result.success++;
+      }
     }
 
     console.log(`[ScheduleJob:${topic.id}] Scheduled ${result.success} items`);

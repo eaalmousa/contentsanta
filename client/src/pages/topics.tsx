@@ -197,6 +197,35 @@ function TopicSettingsDialog({
   const currentRules = topic.taxonomyRules as TopicTaxonomyRules || {};
   const [rules, setRules] = useState<TopicTaxonomyRules>(currentRules);
   
+  const [timezone, setTimezone] = useState(topic.timezone || "UTC");
+  const [publishTimes, setPublishTimes] = useState<string[]>((topic.publishTimes as string[] | null) || []);
+  const [articlesPerRun, setArticlesPerRun] = useState(topic.articlesPerRun || 3);
+  const [runIntervalMinutes, setRunIntervalMinutes] = useState(topic.runIntervalMinutes || 5);
+  const [newPublishTime, setNewPublishTime] = useState("14:30");
+  
+  const commonTimezones = [
+    { value: "Asia/Dubai", label: "Dubai (GMT+4)" },
+    { value: "Asia/Riyadh", label: "Riyadh (GMT+3)" },
+    { value: "Asia/Qatar", label: "Qatar (GMT+3)" },
+    { value: "Asia/Kuwait", label: "Kuwait (GMT+3)" },
+    { value: "Asia/Bahrain", label: "Bahrain (GMT+3)" },
+    { value: "Africa/Cairo", label: "Cairo (GMT+2)" },
+    { value: "Europe/London", label: "London (GMT)" },
+    { value: "America/New_York", label: "New York (GMT-5)" },
+    { value: "America/Los_Angeles", label: "Los Angeles (GMT-8)" },
+    { value: "UTC", label: "UTC" },
+  ];
+  
+  const addPublishTime = () => {
+    if (newPublishTime && !publishTimes.includes(newPublishTime)) {
+      setPublishTimes([...publishTimes, newPublishTime].sort());
+    }
+  };
+  
+  const removePublishTime = (time: string) => {
+    setPublishTimes(publishTimes.filter(t => t !== time));
+  };
+  
   // Fetch topic sources
   const topicSourcesQuery = useQuery<TopicSourceWithDetails[]>({
     queryKey: [`/api/topics/${topic.id}/sources`],
@@ -298,7 +327,11 @@ function TopicSettingsDialog({
   const updateMutation = useMutation({
     mutationFn: async () => {
       return await apiRequest("PATCH", `/api/topics/${topic.id}`, { 
-        taxonomyRules: rules 
+        taxonomyRules: rules,
+        timezone,
+        publishTimes,
+        articlesPerRun,
+        runIntervalMinutes
       });
     },
     onSuccess: () => {
@@ -372,10 +405,14 @@ function TopicSettingsDialog({
         </DialogHeader>
         
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid grid-cols-3 w-full">
+          <TabsList className="grid grid-cols-4 w-full">
             <TabsTrigger value="sources" data-testid="tab-topic-sources">
               <Rss className="w-4 h-4 mr-1" />
               Sources
+            </TabsTrigger>
+            <TabsTrigger value="schedule" data-testid="tab-topic-schedule">
+              <Clock className="w-4 h-4 mr-1" />
+              Schedule
             </TabsTrigger>
             <TabsTrigger value="general" data-testid="tab-topic-general">General</TabsTrigger>
             <TabsTrigger value="taxonomy" data-testid="tab-topic-taxonomy">
@@ -489,6 +526,124 @@ function TopicSettingsDialog({
                     {sourceSearch ? "No matching sources found" : "All available sources are already added"}
                   </p>
                 )}
+              </div>
+            </div>
+          </TabsContent>
+          
+          <TabsContent value="schedule" className="space-y-4 pt-4">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Your Timezone</Label>
+                <Select value={timezone} onValueChange={setTimezone}>
+                  <SelectTrigger data-testid="select-timezone">
+                    <SelectValue placeholder="Select timezone..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {commonTimezones.map(tz => (
+                      <SelectItem key={tz.value} value={tz.value}>{tz.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Publishing times will be scheduled based on this timezone
+                </p>
+              </div>
+              
+              <Separator />
+              
+              <div className="space-y-2">
+                <Label>Publishing Times</Label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Add specific times when content should be published each day
+                </p>
+                
+                <div className="flex gap-2">
+                  <Input 
+                    type="time" 
+                    value={newPublishTime}
+                    onChange={(e) => setNewPublishTime(e.target.value)}
+                    className="flex-1"
+                    data-testid="input-publish-time"
+                  />
+                  <Button onClick={addPublishTime} size="default" data-testid="button-add-publish-time">
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Time
+                  </Button>
+                </div>
+                
+                {publishTimes.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {publishTimes.map(time => (
+                      <Badge 
+                        key={time} 
+                        variant="secondary"
+                        className="flex items-center gap-1"
+                      >
+                        <Clock className="w-3 h-3" />
+                        {time}
+                        <button
+                          onClick={() => removePublishTime(time)}
+                          className="ml-1 hover:text-destructive"
+                          data-testid={`button-remove-time-${time}`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic mt-2">
+                    No publishing times set. Items will publish using interval spacing.
+                  </p>
+                )}
+              </div>
+              
+              <Separator />
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Articles Per Run</Label>
+                  <Select 
+                    value={String(articlesPerRun)} 
+                    onValueChange={(v) => setArticlesPerRun(Number(v))}
+                  >
+                    <SelectTrigger data-testid="select-articles-per-run">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1 article</SelectItem>
+                      <SelectItem value="2">2 articles</SelectItem>
+                      <SelectItem value="3">3 articles</SelectItem>
+                      <SelectItem value="4">4 articles</SelectItem>
+                      <SelectItem value="5">5 articles</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Max articles per publishing slot
+                  </p>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Interval Between Articles</Label>
+                  <Select 
+                    value={String(runIntervalMinutes)} 
+                    onValueChange={(v) => setRunIntervalMinutes(Number(v))}
+                  >
+                    <SelectTrigger data-testid="select-run-interval">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="2">2 minutes</SelectItem>
+                      <SelectItem value="3">3 minutes</SelectItem>
+                      <SelectItem value="5">5 minutes</SelectItem>
+                      <SelectItem value="10">10 minutes</SelectItem>
+                      <SelectItem value="15">15 minutes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Time between each article
+                  </p>
+                </div>
               </div>
             </div>
           </TabsContent>

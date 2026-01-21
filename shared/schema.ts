@@ -1111,6 +1111,12 @@ export const topics = pgTable("topics", {
   minSpacingMinutes: integer("min_spacing_minutes").default(120),
   quietHours: jsonb("quiet_hours"),
   
+  // Publishing schedule configuration
+  timezone: text("timezone").default("UTC"),
+  publishTimes: text("publish_times").array().default([]),
+  articlesPerRun: integer("articles_per_run").default(3),
+  runIntervalMinutes: integer("run_interval_minutes").default(5),
+  
   // Legacy fields (kept for compatibility)
   outputVolumePerDay: integer("output_volume_per_day").default(5),
   reviewMode: text("review_mode").default("manual"),
