@@ -29,7 +29,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -62,7 +61,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { PublishingTarget, PublishJob, Asset, AssetVersion, TargetType, WpTaxonomyCache } from "@shared/schema";
+import type { PublishingTarget, TargetType, WpTaxonomyCache } from "@shared/schema";
 import { PluginDiagnostics } from "@/components/plugin-diagnostics";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDistanceToNow } from "date-fns";
@@ -99,10 +98,6 @@ const targetSchema = z.object({
 });
 
 type TargetFormValues = z.infer<typeof targetSchema>;
-
-type AssetWithVersion = Asset & {
-  latestVersion?: AssetVersion;
-};
 
 function PlatformIcon({ type, className }: { type: string; className?: string }) {
   const option = platformOptions.find((p) => p.value === type);
@@ -1059,189 +1054,16 @@ function CreateTargetDialog({
   );
 }
 
-function PublishDialog({ 
-  open, 
-  onOpenChange, 
-  asset 
-}: { 
-  open: boolean; 
-  onOpenChange: (open: boolean) => void;
-  asset: AssetWithVersion | null;
-}) {
-  const { toast } = useToast();
-  const [selectedTarget, setSelectedTarget] = useState<string>("");
-
-  const { data: targets } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
-    queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
-  });
-  
-  const safeDialogTargets = targets ?? [];
-
-  const publishMutation = useMutation({
-    mutationFn: async () => {
-      if (!asset || !selectedTarget) return;
-      await apiRequest("POST", "/api/publish-jobs", {
-        assetVersionId: asset.latestVersion?.id,
-        targetId: selectedTarget,
-        status: "queued",
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publish-jobs"] });
-      toast({ title: "Content queued for publishing" });
-      onOpenChange(false);
-      setSelectedTarget("");
-    },
-    onError: () => {
-      toast({ title: "Failed to publish", variant: "destructive" });
-    },
-  });
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Publish Content</DialogTitle>
-          <DialogDescription>
-            Select a destination to publish "{asset?.latestVersion?.title}"
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-4 py-4">
-          {safeDialogTargets.length > 0 ? (
-            <div className="flex flex-col gap-2">
-              {safeDialogTargets.map((target) => (
-                <button
-                  key={target.id}
-                  onClick={() => setSelectedTarget(target.id)}
-                  className={`flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
-                    selectedTarget === target.id ? "border-primary bg-primary/5" : "hover:bg-muted/50"
-                  }`}
-                  data-testid={`button-select-target-${target.id}`}
-                >
-                  <PlatformIcon type={target.type} className="h-5 w-5" />
-                  <span className="font-medium">{target.name}</span>
-                  {selectedTarget === target.id && (
-                    <CheckCircle className="ml-auto h-5 w-5 text-primary" />
-                  )}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed p-6 text-center">
-              <Globe className="mx-auto h-10 w-10 text-muted-foreground/50" />
-              <p className="mt-2 text-sm text-muted-foreground">
-                No publishing targets connected yet.
-              </p>
-            </div>
-          )}
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={() => publishMutation.mutate()} 
-            disabled={!selectedTarget || publishMutation.isPending}
-            data-testid="button-confirm-publish"
-          >
-            {publishMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            <Send className="mr-2 h-4 w-4" />
-            Publish
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function PublishJobCard({ job }: { job: PublishJob & { target?: PublishingTarget } }) {
-  const statusColors: Record<string, string> = {
-    queued: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
-    running: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
-    succeeded: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
-    failed: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
-  };
-
-  const resultJson = job.resultJson as { publishedUrl?: string } | null;
-
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
-      <div className="flex items-center gap-3">
-        <PlatformIcon type={job.target?.type || ""} className="h-5 w-5" />
-        <div className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">{job.target?.name || "Unknown Target"}</span>
-          <span className="text-xs text-muted-foreground">
-            {job.createdAt ? new Date(job.createdAt).toLocaleString() : ""}
-          </span>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <Badge variant="secondary" className={statusColors[job.status] || ""}>
-          {job.status}
-        </Badge>
-        {resultJson?.publishedUrl && (
-          <a href={resultJson.publishedUrl} target="_blank" rel="noopener noreferrer">
-            <Button variant="ghost" size="icon">
-              <ExternalLink className="h-4 w-4" />
-            </Button>
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ApprovedAssetCard({ 
-  asset, 
-  onPublish 
-}: { 
-  asset: AssetWithVersion; 
-  onPublish: () => void;
-}) {
-  return (
-    <Card data-testid={`card-approved-asset-${asset.id}`}>
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex flex-col gap-1 min-w-0">
-            <h4 className="font-medium truncate">{asset.latestVersion?.title || "Untitled"}</h4>
-            <p className="line-clamp-2 text-sm text-muted-foreground">
-              {asset.latestVersion?.body?.slice(0, 100)}...
-            </p>
-          </div>
-          <Button size="sm" onClick={onPublish} data-testid={`button-publish-asset-${asset.id}`}>
-            <Send className="mr-2 h-4 w-4" />
-            Publish
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 export default function Publishing() {
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<PublishingTarget | null>(null);
-  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
-  const [selectedAsset, setSelectedAsset] = useState<AssetWithVersion | null>(null);
 
   const { data: targets, isLoading: targetsLoading, isError: targetsError } = useQuery<PublishingTarget[]>({
     queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
     queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
   });
 
-  const { data: jobs, isLoading: jobsLoading, isError: jobsError } = useQuery<(PublishJob & { target?: PublishingTarget })[]>({
-    queryKey: ["/api/publish-jobs"],
-  });
-
-  const { data: assets, isLoading: assetsLoading, isError: assetsError } = useQuery<AssetWithVersion[]>({
-    queryKey: ["/api/assets", { status: "approved" }],
-  });
-  
-  // Safe arrays to prevent crash on undefined
   const safeTargets = targets ?? [];
-  const safeJobs = jobs ?? [];
-  const safeAssets = assets ?? [];
 
   const handleEdit = (target: PublishingTarget) => {
     setEditTarget(target);
@@ -1252,13 +1074,6 @@ export default function Publishing() {
     setTargetDialogOpen(open);
     if (!open) setEditTarget(null);
   };
-
-  const handlePublish = (asset: AssetWithVersion) => {
-    setSelectedAsset(asset);
-    setPublishDialogOpen(true);
-  };
-
-  const approvedAssets = safeAssets.filter((a) => a.status === "approved");
 
   return (
     <div className="flex flex-col gap-8 p-8">
@@ -1271,140 +1086,64 @@ export default function Publishing() {
         </p>
       </div>
 
-      <Tabs defaultValue="targets" className="w-full">
-        <TabsList>
-          <TabsTrigger value="targets" data-testid="tab-targets">Connected Targets</TabsTrigger>
-          <TabsTrigger value="ready" data-testid="tab-ready">Ready to Publish</TabsTrigger>
-          <TabsTrigger value="history" data-testid="tab-history">Publish History</TabsTrigger>
-        </TabsList>
+      <div className="flex flex-col gap-6">
+        <div className="flex justify-end">
+          <Button onClick={() => setTargetDialogOpen(true)} data-testid="button-add-target">
+            <Plus className="mr-2 h-4 w-4" />
+            Add Target
+          </Button>
+        </div>
 
-        <TabsContent value="targets" className="mt-6">
-          <div className="flex flex-col gap-6">
-            <div className="flex justify-end">
-              <Button onClick={() => setTargetDialogOpen(true)} data-testid="button-add-target">
-                <Plus className="mr-2 h-4 w-4" />
-                Add Target
-              </Button>
-            </div>
-
-            {targetsLoading ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {[...Array(3)].map((_, i) => (
-                  <TargetCardSkeleton key={i} />
-                ))}
-              </div>
-            ) : targetsError ? (
-              <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
-                <AlertCircle className="h-16 w-16 text-destructive/50" />
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <h3 className="font-serif text-xl font-semibold">Failed to load targets</h3>
-                  <p className="max-w-sm text-muted-foreground">
-                    There was an error loading publishing targets. Please try again.
-                  </p>
-                </div>
-                <Button onClick={() => window.location.reload()} variant="outline">
-                  Refresh Page
-                </Button>
-              </div>
-            ) : safeTargets.length > 0 ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {safeTargets.map((target) => (
-                  <TargetCard 
-                    key={target.id} 
-                    target={target} 
-                    onEdit={() => handleEdit(target)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
-                <Globe className="h-16 w-16 text-muted-foreground/50" />
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <h3 className="font-serif text-xl font-semibold">No targets connected</h3>
-                  <p className="max-w-sm text-muted-foreground">
-                    Connect your first publishing target to start distributing content.
-                  </p>
-                </div>
-                <Button onClick={() => setTargetDialogOpen(true)} data-testid="button-add-first-target">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Target
-                </Button>
-              </div>
-            )}
+        {targetsLoading ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[...Array(3)].map((_, i) => (
+              <TargetCardSkeleton key={i} />
+            ))}
           </div>
-        </TabsContent>
-
-        <TabsContent value="ready" className="mt-6">
-          {assetsLoading ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {[...Array(4)].map((_, i) => (
-                <Card key={i}>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-16 w-full" />
-                  </CardContent>
-                </Card>
-              ))}
+        ) : targetsError ? (
+          <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
+            <AlertCircle className="h-16 w-16 text-destructive/50" />
+            <div className="flex flex-col items-center gap-2 text-center">
+              <h3 className="font-serif text-xl font-semibold">Failed to load targets</h3>
+              <p className="max-w-sm text-muted-foreground">
+                There was an error loading publishing targets. Please try again.
+              </p>
             </div>
-          ) : approvedAssets.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {approvedAssets.map((asset) => (
-                <ApprovedAssetCard 
-                  key={asset.id} 
-                  asset={asset} 
-                  onPublish={() => handlePublish(asset)}
-                />
-              ))}
+            <Button onClick={() => window.location.reload()} variant="outline">
+              Refresh Page
+            </Button>
+          </div>
+        ) : safeTargets.length > 0 ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {safeTargets.map((target) => (
+              <TargetCard 
+                key={target.id} 
+                target={target} 
+                onEdit={() => handleEdit(target)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
+            <Globe className="h-16 w-16 text-muted-foreground/50" />
+            <div className="flex flex-col items-center gap-2 text-center">
+              <h3 className="font-serif text-xl font-semibold">No targets connected</h3>
+              <p className="max-w-sm text-muted-foreground">
+                Connect your first publishing target to start distributing content.
+              </p>
             </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
-              <CheckCircle className="h-16 w-16 text-muted-foreground/50" />
-              <div className="flex flex-col items-center gap-2 text-center">
-                <h3 className="font-serif text-xl font-semibold">No approved content</h3>
-                <p className="max-w-sm text-muted-foreground">
-                  Approve content from your library to see it here ready for publishing.
-                </p>
-              </div>
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="history" className="mt-6">
-          {jobsLoading ? (
-            <div className="flex flex-col gap-3">
-              {[...Array(3)].map((_, i) => (
-                <Skeleton key={i} className="h-16 w-full" />
-              ))}
-            </div>
-          ) : safeJobs.length > 0 ? (
-            <div className="flex flex-col gap-3">
-              {safeJobs.map((job) => (
-                <PublishJobCard key={job.id} job={job} />
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16">
-              <Send className="h-16 w-16 text-muted-foreground/50" />
-              <div className="flex flex-col items-center gap-2 text-center">
-                <h3 className="font-serif text-xl font-semibold">No publish history</h3>
-                <p className="max-w-sm text-muted-foreground">
-                  Your publishing activity will appear here.
-                </p>
-              </div>
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
+            <Button onClick={() => setTargetDialogOpen(true)} data-testid="button-add-first-target">
+              <Plus className="mr-2 h-4 w-4" />
+              Add Target
+            </Button>
+          </div>
+        )}
+      </div>
 
       <CreateTargetDialog 
         open={targetDialogOpen} 
         onOpenChange={handleTargetDialogChange}
         editTarget={editTarget}
-      />
-
-      <PublishDialog
-        open={publishDialogOpen}
-        onOpenChange={setPublishDialogOpen}
-        asset={selectedAsset}
       />
     </div>
   );
