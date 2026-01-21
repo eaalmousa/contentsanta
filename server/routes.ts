@@ -2794,21 +2794,30 @@ export async function registerRoutes(
     }
   });
 
-  // Topic Source Recommendations - DEBUG logging before auth
-  app.post("/api/topics/recommend-sources", (req: Request, res: Response, next) => {
-    console.log("[recommend-sources] PRE-AUTH:", { 
-      isAuthenticated: req.isAuthenticated?.(), 
-      hasUser: !!req.user,
-      hasSessionID: !!req.sessionID,
-      cookies: Object.keys(req.cookies || {}),
-      workspaceId: req.body?.workspaceId,
-    });
-    next();
-  }, isAuthenticated, async (req: Request, res: Response) => {
+  // Topic Source Recommendations - workspace resolved from session (not client)
+  app.post("/api/topics/recommend-sources", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const { topicQuery, contentType, region, countries, language, workspaceId = "demo-workspace" } = req.body;
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
       
-      console.log("[recommend-sources] Request received:", { workspaceId, region, topicQuery: topicQuery?.substring(0, 30) });
+      // CRITICAL: Resolve workspace from session, don't trust client-sent workspaceId
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(404).json({ error: "No workspace found for user" });
+      }
+      const workspaceId = workspace.id;
+      
+      const { topicQuery, contentType, region, countries, language } = req.body;
+      
+      console.log("[recommend-sources] Request received:", { 
+        userId, 
+        workspaceId, 
+        workspaceName: workspace.name,
+        region, 
+        topicQuery: topicQuery?.substring(0, 30) 
+      });
       
       if (!region) {
         return res.status(400).json({ error: "region is required" });

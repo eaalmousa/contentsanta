@@ -1,0 +1,113 @@
+The fix (do this now — it will stop the bleeding)
+1) Normalize the Sources response in the Create Topic modal (Step 2)
+
+In the Sources step component, wherever you do the query for sources/recommendations, normalize like this:
+
+function normalizeList<T>(data: any): T[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.sources)) return data.sources;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+
+Then:
+
+const sources = normalizeList<Source>(sourcesQuery.data);
+
+
+Do the same normalization for the “recommended sources” call (if separate).
+
+This alone fixes A) permanently.
+
+2) Fix the queryKey so buildUrl never turns it into /api/sources/<something>
+
+Even after you fixed publishing-targets, I guarantee Sources still has at least one query written like:
+
+queryKey: ["/api/sources", activeWorkspaceId]
+
+
+That will still break if your fetcher joins the key into a path.
+
+✅ Change all sources queries to one of these:
+
+If backend resolves workspace from session (recommended):
+
+queryKey: ["/api/sources"]
+
+
+If you must include workspaceId, include it as object (cache key + query string only):
+
+queryKey: ["/api/sources", { workspaceId: activeWorkspaceId }]
+
+
+And make sure buildUrl only treats the 2nd item as query params if it’s an object (not a string).
+
+This fixes the silent 404/HTML-returning-empty behavior.
+
+3) Add a server-side fallback: if a workspace has 0 sources, auto-seed defaults
+
+This fixes B) permanently and makes onboarding commercial-grade.
+
+In the backend (where you resolve active workspace / ensure workspace exists), add:
+
+ensureWorkspaceHasDefaultSources(workspaceId, userId)
+
+Call it in either of these places:
+
+after workspace auto-create
+
+OR at the start of /api/sources/recommend and /api/sources if count is 0
+
+So even if a new user signs up, Sources will never be empty.
+
+4) Add a migration “adopt legacy sources” endpoint (one-time rescue)
+
+If sources exist in old demo-workspace or null workspace, you need a controlled migration:
+
+Find sources where workspaceId in ('demo-workspace', '', null) OR createdByUserId = currentUserId AND workspaceId != activeWorkspaceId
+
+Move them into the user’s active workspace
+
+This is why it “worked before” and suddenly doesn’t now.
+
+The quickest proof (no guessing)
+
+Open DevTools → Network while you’re on Step 2.
+
+You should see one of these calls:
+
+/api/sources ✅ (should return list)
+
+/api/sources/recommend ✅ (should return list)
+
+If you see something like:
+
+/api/sources/<workspaceId> or /api/sources/<topicId> ❌
+then it’s still the queryKey/buildUrl path-joining bug.
+
+If the response is [...] but UI shows nothing → it’s response-shape mismatch.
+
+If response is [] and /api/me/context shows sourcesCount 0 → it’s workspace scoping / missing seed/migration.
+
+Copy-paste message to Replit (this is the exact implementation ask)
+
+Send them this, verbatim:
+
+Bug: Create Topic → Step 2 “Sources” always shows empty even though it previously worked.
+Likely root causes:
+(1) UI expects data.sources but API returns [] (or vice versa) → normalize response shape.
+(2) Sources queries still use queryKey: ["/api/sources", workspaceId] and fetcher joins into /api/sources/<id> → silent 404/HTML → parsed as empty.
+(3) Workspace migration left current workspace with sourcesCount=0; old sources exist under legacy workspace IDs.
+Fix required:
+
+Add normalizeList() in Sources step to accept [] or {sources:[]}.
+
+Ensure all Sources queryKeys are [ "/api/sources" ] or [ "/api/sources", { workspaceId } ] (never a primitive segment).
+
+Add backend ensureWorkspaceHasDefaultSources() auto-seed when workspace has 0 sources.
+
+Add one-time migration endpoint to adopt legacy sources into current workspace.
+
+If you paste me the exact API call used in Step 2 (the useQuery(...) block from the Sources step), I’ll rewrite it in the correct, drop-in form and tell you exactly which endpoints need seeding/migration — without any more trial-and-error.

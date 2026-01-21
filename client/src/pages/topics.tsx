@@ -3,6 +3,15 @@ import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspaceContext } from "@/hooks/use-workspace-context";
+
+// Helper to normalize various API response shapes to arrays
+function normalizeList<T>(data: any): T[] {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.sources)) return data.sources;
+  if (data && Array.isArray(data.items)) return data.items;
+  if (data && Array.isArray(data.data)) return data.data;
+  return [];
+}
 import { 
   Plus,
   Power,
@@ -1747,13 +1756,21 @@ export default function TopicsPage() {
       const response = await apiRequest("POST", "/api/topics/recommend-sources", requestBody);
       console.log("[RecommendSources] Response status:", response.status, response.ok);
       
-      const data = await response.json() as { sources: RecommendedSource[]; defaultEnabled: string[]; totalFound: number; query: string };
-      console.log("[RecommendSources] Success:", { 
-        sourceCount: data.sources?.length,
-        totalFound: data.totalFound,
+      const rawData = await response.json();
+      console.log("[RecommendSources] Raw response:", rawData);
+      
+      // Normalize response - handle various shapes ([], {sources:[]}, {items:[]}, {data:[]})
+      const sources = normalizeList<RecommendedSource>(rawData);
+      const defaultEnabled = Array.isArray(rawData?.defaultEnabled) ? rawData.defaultEnabled : [];
+      const totalFound = rawData?.totalFound ?? sources.length;
+      
+      console.log("[RecommendSources] Normalized:", { 
+        sourceCount: sources.length,
+        totalFound,
+        defaultEnabledCount: defaultEnabled.length,
       });
-      setRecommendedSources(data.sources ?? []);
-      setSelectedSourceIds(new Set(data.defaultEnabled ?? []));
+      setRecommendedSources(sources);
+      setSelectedSourceIds(new Set(defaultEnabled));
       setIsBroadenedSearch(broaden);
     } catch (error: any) {
       console.error("[RecommendSources] FAILED:", error?.message || error, error);

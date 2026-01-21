@@ -96,6 +96,8 @@ class AuthStorage implements IAuthStorage {
     // Check if user already has a workspace
     const existing = await this.getUserDefaultWorkspace(userId);
     if (existing) {
+      // Still ensure workspace has default sources (auto-seed if empty)
+      await this.ensureWorkspaceHasDefaultSources(existing.id);
       return existing;
     }
 
@@ -128,7 +130,33 @@ class AuthStorage implements IAuthStorage {
 
     console.log(`[Auth] Created workspace ${workspaceId} with owner membership for user ${userId}`);
 
+    // Auto-seed default sources for new workspace
+    await this.ensureWorkspaceHasDefaultSources(workspaceId);
+
     return { id: workspaceId, slug, name };
+  }
+
+  /**
+   * Ensure workspace has default sources - auto-seed if empty
+   */
+  async ensureWorkspaceHasDefaultSources(workspaceId: string): Promise<void> {
+    try {
+      // Check current source count
+      const countResult = await db.execute(sql`
+        SELECT COUNT(*)::int as count FROM sources WHERE workspace_id = ${workspaceId}
+      `);
+      const currentCount = (countResult.rows?.[0] as any)?.count || 0;
+      
+      if (currentCount === 0) {
+        console.log(`[Auth] Workspace ${workspaceId} has 0 sources, auto-seeding defaults...`);
+        const { seedOfficialSources } = await import("../seeds/official-sources");
+        const result = await seedOfficialSources(workspaceId);
+        console.log(`[Auth] Auto-seeded ${result.inserted} sources for workspace ${workspaceId}`);
+      }
+    } catch (error) {
+      // Don't fail workspace creation if seeding fails
+      console.error(`[Auth] Failed to auto-seed sources for workspace ${workspaceId}:`, error);
+    }
   }
 }
 
