@@ -280,16 +280,17 @@ function TopicSettingsDialog({
     s => !topicSourceIds.has(s.id) && s.name.toLowerCase().includes(sourceSearch.toLowerCase())
   );
   
-  const { data: targets } = useQuery<PublishingTarget[]>({
+  const { data: targets, isLoading: targetsLoading } = useQuery<PublishingTarget[]>({
     queryKey: ["/api/publishing-targets", { workspaceId: topic.workspaceId }],
     queryFn: () => fetch(`/api/publishing-targets?workspaceId=${topic.workspaceId}`).then(r => r.json()),
-    enabled: open,
+    enabled: open && !!topic.workspaceId,
   });
   
-  const wordPressTargets = useMemo(() => 
-    (targets ?? []).filter(t => t.type === "wordpress" || t.type === "wordpress_pull"), 
-    [targets]
-  );
+  const wordPressTargets = useMemo(() => {
+    const filtered = (targets ?? []).filter(t => t.type === "wordpress" || t.type === "wordpress_pull");
+    console.log("[EditDialog] targets:", targets, "filtered:", filtered, "workspaceId:", topic.workspaceId);
+    return filtered;
+  }, [targets, topic.workspaceId]);
   
   const taxonomyQuery = useQuery<{ 
     items: WpTaxonomyCache[]; 
@@ -1657,12 +1658,15 @@ export default function TopicsPage() {
   
   // Safe array even on error or undefined
   const safeTopics = topics ?? [];
+  
+  // Get user's workspace ID from first topic (topics are per-workspace)
+  const userWorkspaceId = safeTopics[0]?.workspaceId;
 
   // Fetch publishing targets for create dialog
   const { data: createDialogTargets } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
-    queryFn: () => fetch(`/api/publishing-targets?workspaceId=demo-workspace`).then(r => r.json()),
-    enabled: showCreateDialog,
+    queryKey: ["/api/publishing-targets", { workspaceId: userWorkspaceId }],
+    queryFn: () => fetch(`/api/publishing-targets?workspaceId=${userWorkspaceId}`).then(r => r.json()),
+    enabled: showCreateDialog && !!userWorkspaceId,
   });
   
   const createDialogWordPressTargets = useMemo(() => 
@@ -1682,7 +1686,7 @@ export default function TopicsPage() {
         region: broaden ? "global" : newTopic.region,
         countries: broaden ? [] : newTopic.countries,
         language: newTopic.language,
-        workspaceId: "demo-workspace",
+        workspaceId: userWorkspaceId,
       });
       const data = await response.json() as { sources: RecommendedSource[]; defaultEnabled: string[]; totalFound: number; query: string };
       setRecommendedSources(data.sources ?? []);
@@ -1718,7 +1722,7 @@ export default function TopicsPage() {
     mutationFn: async (data: typeof newTopic) => {
       const response = await apiRequest("POST", "/api/topics", {
         ...data,
-        workspaceId: "demo-workspace",
+        workspaceId: userWorkspaceId,
       });
       return await response.json();
     },
