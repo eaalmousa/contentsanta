@@ -146,6 +146,13 @@ function PipelineItemCard({
             {item.createdAt && (
               <span>Created: {formatDistanceToNow(new Date(item.createdAt))} ago</span>
             )}
+            {item.status === "scheduled" && item.scheduledFor && (
+              <span className="text-orange-600 font-medium">
+                Publishes: {new Date(item.scheduledFor) <= new Date() 
+                  ? "Next pipeline run" 
+                  : `in ${formatDistanceToNow(new Date(item.scheduledFor))}`}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex flex-col gap-1">
