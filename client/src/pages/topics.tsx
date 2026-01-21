@@ -1659,8 +1659,11 @@ export default function TopicsPage() {
   // Safe array even on error or undefined
   const safeTopics = topics ?? [];
   
-  // Get user's workspace ID from first topic (topics are per-workspace)
-  const userWorkspaceId = safeTopics[0]?.workspaceId;
+  // Fetch user's workspace ID from server (works even when no topics exist)
+  const { data: userWorkspaceData } = useQuery<{ workspaceId: string }>({
+    queryKey: ["/api/user/workspace"],
+  });
+  const userWorkspaceId = userWorkspaceData?.workspaceId;
 
   // Fetch publishing targets for create dialog
   const { data: createDialogTargets } = useQuery<PublishingTarget[]>({

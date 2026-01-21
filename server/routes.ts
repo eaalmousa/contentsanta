@@ -214,6 +214,21 @@ export async function registerRoutes(
   await setupAuth(app);
   registerAuthRoutes(app);
   
+  // Get current user's workspace ID (for API calls that need it)
+  app.get("/api/user/workspace", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const workspaceId = await resolveWorkspaceId(userId);
+      return res.json({ workspaceId });
+    } catch (error) {
+      console.error("[API] Error getting user workspace:", error);
+      return res.status(500).json({ error: "Failed to get workspace" });
+    }
+  });
+  
   // Debug: WordPress probe for diagnosing API issues
   app.get("/api/debug/wp-probe", async (req: Request, res: Response) => {
     const url = req.query.url;
