@@ -1,0 +1,114 @@
+Yes — test it now, but do it as a hard, end-to-end automation test (not a UI click test). Here’s the exact runbook.
+
+Test Runbook (Automated Topic)
+0) Pre-flight (2 minutes)
+
+Confirm the topic is set to Full Auto (not Semi / Manual).
+
+Confirm at least 1 active publishing target is linked (your WP Plugin target).
+
+Confirm there are active sources for that topic/region.
+
+1) Create a clean test scenario
+
+Pick a topic that will reliably return fresh stories (your “Real Estate and Property News” is fine).
+
+Set limits for the test:
+
+Daily cap: 2 (so results are obvious)
+
+Run now allowed
+
+Quarantine enabled
+
+2) Execute a single controlled run
+
+Click Run Pipeline once.
+
+Immediately open:
+
+Job History
+
+Automation Status card
+
+Plugin Diagnostics panel
+
+3) Verify the pipeline created items + drafts automatically
+
+You must see, in order:
+
+A) Job History
+
+A run record with status: success / partial (not “unauthorized”)
+
+No 401/403 in the run steps
+
+B) Pipeline Items
+
+Items created > 0
+
+C) Smart Editor → Drafts
+
+Drafts created > 0 automatically
+
+Each draft should show a linkage (pipelineItemId or equivalent)
+
+If drafts are still empty: the systems are still not truly connected.
+
+4) Verify publishing via the WP plugin pull model
+
+In WordPress: trigger Manual Pull once (or wait for cron interval).
+
+Confirm:
+
+A draft/post appears in WP (draft or publish depending on your rules)
+
+ContentSanta shows Published or Ready to Publish transitions correctly
+
+5) Verify stats + diagnostics accuracy
+
+On the Automation Status widget:
+
+Last run timestamp updates
+
+Counts match reality (items/drafts/published/quarantine)
+
+Health state matches outcomes:
+
+✅ Healthy if clean
+
+⚠️ Degraded if recoverable errors but still progressed
+
+❌ Failing if run aborted
+
+On Copy Debug Bundle:
+
+Contains runId + topicId
+
+Shows the last error (if any)
+
+Includes last 20 job logs
+
+Includes WP plugin logs
+
+Pass/Fail Criteria
+
+✅ PASS if, after one run:
+
+Items created > 0
+
+Drafts created > 0 automatically
+
+WP pull publishes/creates WP draft successfully
+
+UI stats reflect the truth
+
+❌ FAIL if any of these happen:
+
+Any 401 Unauthorized
+
+Pipeline says success but drafts remain empty
+
+WP pull works but ContentSanta still reports failure
+
+Stats don’t match actual counts
