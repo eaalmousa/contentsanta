@@ -2127,10 +2127,19 @@ export async function registerRoutes(
 
   app.post("/api/topics", isAuthenticated, async (req: Request, res: Response) => {
     const requestId = crypto.randomUUID();
-    // Server-enforced workspaceId - derive from authenticated user's default workspace
-    const serverWorkspaceId = "demo-workspace"; // TODO: derive from user context when multi-tenant
     
     try {
+      // Server-enforced workspaceId - derive from authenticated user's default workspace
+      const userId = (req.user as any)?.claims?.sub;
+      const serverWorkspaceId = await resolveWorkspaceId(userId);
+      
+      if (!serverWorkspaceId) {
+        console.log(`[topics:create] requestId=${requestId} no workspace found for user=${userId}`);
+        return res.status(400).json({
+          error: "No workspace found. Please contact support.",
+          errorCode: "WORKSPACE_NOT_FOUND"
+        });
+      }
       console.log(`[topics:create] requestId=${requestId} payloadKeys=${Object.keys(req.body).join(",")}`);
       
       // Normalize region: empty/missing -> "global"
