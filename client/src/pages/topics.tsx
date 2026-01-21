@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
+import { useWorkspaceContext } from "@/hooks/use-workspace-context";
 import { 
   Plus,
   Power,
@@ -191,7 +192,22 @@ function TopicSettingsDialog({
 }) {
   const { toast } = useToast();
   const { isAuthenticated } = useAuth();
+  const { activeWorkspaceId, isLoading: isWorkspaceLoading } = useWorkspaceContext();
   const [activeTab, setActiveTab] = useState("sources");
+  
+  // Block dialog content until workspace context is loaded
+  if (isWorkspaceLoading) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-4xl">
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-muted-foreground">Loading workspace...</span>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
   const [publishingTargetId, setPublishingTargetId] = useState<string | null>(topic.publishingTargetId || null);
   const [tagSearch, setTagSearch] = useState("");
   const [sourceSearch, setSourceSearch] = useState("");
@@ -282,10 +298,10 @@ function TopicSettingsDialog({
     s => !topicSourceIds.has(s.id) && s.name.toLowerCase().includes(sourceSearch.toLowerCase())
   );
   
-  // Server auto-resolves workspace from session
+  // Server auto-resolves workspace from session - include activeWorkspaceId in key for cache separation
   const { data: targets, isLoading: targetsLoading } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets"],
-    enabled: open && isAuthenticated,
+    queryKey: ["/api/publishing-targets", activeWorkspaceId],
+    enabled: open && isAuthenticated && !!activeWorkspaceId,
   });
   
   const wordPressTargets = useMemo(() => {
@@ -1656,6 +1672,14 @@ export default function TopicsPage() {
 
   const { isAuthenticated } = useAuth();
   
+  // Use unified workspace context for all workspace-scoped operations
+  const { 
+    activeWorkspaceId, 
+    counts: workspaceCounts, 
+    recentTargets,
+    isLoading: isContextLoading 
+  } = useWorkspaceContext();
+  
   const { data: topics, isLoading, isError } = useQuery<(Topic & { enabledSourceCount: number })[]>({
     queryKey: ["/api/topics"],
     enabled: isAuthenticated,
@@ -1664,24 +1688,29 @@ export default function TopicsPage() {
   // Safe array even on error or undefined
   const safeTopics = topics ?? [];
   
-  // Fetch user's workspace info from server (works even when no topics exist)
-  const { data: userWorkspaceData } = useQuery<{ workspaceId: string; workspaceSlug?: string }>({
-    queryKey: ["/api/user/workspace"],
-    enabled: isAuthenticated,
-    retry: false,
-  });
-  const userWorkspaceId = userWorkspaceData?.workspaceId || safeTopics[0]?.workspaceId;
+  // Use activeWorkspaceId from context as single source of truth - no fallback to avoid cross-workspace data
+  const userWorkspaceId = activeWorkspaceId;
 
-  // Fetch publishing targets for create dialog - server auto-resolves workspace from session
-  const { data: createDialogTargets } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets"],
-    enabled: isAuthenticated && showCreateDialog,
+  // Fetch publishing targets for create dialog - include activeWorkspaceId in key for cache separation
+  const { data: createDialogTargets, isLoading: isTargetsLoading } = useQuery<PublishingTarget[]>({
+    queryKey: ["/api/publishing-targets", activeWorkspaceId],
+    enabled: isAuthenticated && showCreateDialog && !!activeWorkspaceId,
   });
   
   const createDialogWordPressTargets = useMemo(() => 
     (createDialogTargets ?? []).filter(t => t.type === "wordpress" || t.type === "wordpress_pull"), 
     [createDialogTargets]
   );
+  
+  // Debug info for development (remove in production)
+  const debugInfo = useMemo(() => ({
+    activeWorkspaceId,
+    isContextLoading,
+    targetsCount: workspaceCounts?.targetsCount ?? 0,
+    loadedTargets: createDialogTargets?.length ?? 0,
+    wpTargets: createDialogWordPressTargets.length,
+    isTargetsLoading,
+  }), [activeWorkspaceId, isContextLoading, workspaceCounts, createDialogTargets, createDialogWordPressTargets, isTargetsLoading]);
 
   const fetchRecommendedSources = async (options?: { broaden?: boolean }) => {
     setIsLoadingSources(true);
@@ -2016,6 +2045,17 @@ export default function TopicsPage() {
               }
             </DialogDescription>
           </DialogHeader>
+          
+          {process.env.NODE_ENV === "development" && (
+            <div className="text-xs font-mono bg-muted/50 p-2 rounded mb-2 text-muted-foreground">
+              WS: {debugInfo.activeWorkspaceId || "none"} |
+              ctxLoad: {debugInfo.isContextLoading ? "Y" : "N"} |
+              ctx-targets: {debugInfo.targetsCount} | 
+              loaded: {debugInfo.loadedTargets} | 
+              wp: {debugInfo.wpTargets} |
+              targetsLoad: {debugInfo.isTargetsLoading ? "Y" : "N"}
+            </div>
+          )}
           
           <div className="flex items-center gap-2 mb-4">
             <div className={`flex items-center gap-1 text-sm ${wizardStep >= 1 ? "text-primary" : "text-muted-foreground"}`}>

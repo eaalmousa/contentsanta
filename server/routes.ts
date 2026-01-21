@@ -724,6 +724,58 @@ export async function registerRoutes(
       res.status(500).json({ error: error?.message || "Failed to get debug context" });
     }
   });
+  
+  // Migrate legacy workspace IDs (admin-only)
+  app.post("/api/debug/migrate-legacy-workspace-ids", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      
+      // Get user's default workspace to migrate to
+      const targetWorkspace = await resolveWorkspace(userId);
+      if (!targetWorkspace) {
+        return res.status(404).json({ error: "No target workspace found" });
+      }
+      
+      const LEGACY_SLUG = "demo-workspace";
+      
+      // Find and update topics with legacy slug
+      const allTopics = await storage.getAllTopics();
+      const legacyTopics = allTopics.filter(t => t.workspaceId === LEGACY_SLUG);
+      
+      // Find and update publishing targets with legacy slug
+      const allTargets = await storage.getAllPublishingTargets();
+      const legacyTargets = allTargets.filter(t => t.workspaceId === LEGACY_SLUG);
+      
+      let topicsUpdated = 0;
+      let targetsUpdated = 0;
+      
+      for (const topic of legacyTopics) {
+        await storage.updateTopic(topic.id, { workspaceId: targetWorkspace.id });
+        topicsUpdated++;
+      }
+      
+      for (const target of legacyTargets) {
+        await storage.updatePublishingTarget(target.id, { workspaceId: targetWorkspace.id });
+        targetsUpdated++;
+      }
+      
+      res.json({
+        success: true,
+        targetWorkspaceId: targetWorkspace.id,
+        targetWorkspaceName: targetWorkspace.name,
+        legacySlug: LEGACY_SLUG,
+        topicsUpdated,
+        targetsUpdated,
+        message: `Migrated ${topicsUpdated} topics and ${targetsUpdated} targets to workspace ${targetWorkspace.name}`,
+      });
+    } catch (error: any) {
+      console.error("[Debug] Error migrating legacy workspace IDs:", error);
+      res.status(500).json({ error: error?.message || "Failed to migrate" });
+    }
+  });
 
   // Ensure workspace for existing user (can be called to fix workspace issues)
   app.post("/api/debug/ensure-workspace", isAuthenticated, async (req: Request, res: Response) => {
@@ -1226,7 +1278,7 @@ export async function registerRoutes(
     }
   });
 
-  // Publishing Targets - auto-resolves workspace from user session, or accepts workspaceId param
+  // Publishing Targets - auto-resolves workspace from user session (consistent with /api/me/context)
   app.get("/api/publishing-targets", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const userId = (req.user as any)?.claims?.sub;
@@ -1234,20 +1286,28 @@ export async function registerRoutes(
         return res.status(401).json({ error: "Authentication required" });
       }
       
-      // Prefer query param if provided, otherwise resolve from user session
-      let workspaceId = req.query.workspaceId as string;
-      if (!workspaceId) {
-        const resolved = await resolveWorkspace(userId);
-        if (!resolved) {
-          return res.status(404).json({ 
-            error: "No workspace found for user",
-            errorCode: "NO_WORKSPACE"
-          });
-        }
-        workspaceId = resolved.id;
+      // Use resolveWorkspace as the authoritative source (matches /api/me/context logic)
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(404).json({ 
+          error: "No workspace found for user",
+          errorCode: "NO_WORKSPACE"
+        });
       }
       
+      // Override with X-Workspace-Id header if provided AND user is a member
+      let workspaceId = workspace.id;
+      const headerWorkspaceId = req.headers["x-workspace-id"] as string | undefined;
+      if (headerWorkspaceId) {
+        const memberships = await storage.getUserWorkspaceMemberships(userId);
+        if (memberships.some(m => m.workspaceId === headerWorkspaceId)) {
+          workspaceId = headerWorkspaceId;
+        }
+      }
+      
+      console.log(`[API] GET /api/publishing-targets - userId: ${userId}, workspaceId: ${workspaceId}`);
       const targets = await storage.getPublishingTargets(workspaceId);
+      console.log(`[API] GET /api/publishing-targets - found ${targets.length} targets`);
       res.json(targets);
     } catch (error) {
       console.error("[API] Error fetching publishing targets:", error);
@@ -1257,17 +1317,28 @@ export async function registerRoutes(
 
   app.post("/api/publishing-targets", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      if (!req.body.workspaceId) {
-        return res.status(400).json({ 
-          error: "workspaceId is required",
-          errorCode: "WORKSPACE_REQUIRED"
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      // Always resolve workspace from user session - never accept from client
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(404).json({ 
+          error: "No workspace found for user",
+          errorCode: "NO_WORKSPACE"
         });
       }
-      const data = insertPublishingTargetSchema.parse(req.body);
+      
+      // Override any client-provided workspaceId with the resolved one
+      const data = insertPublishingTargetSchema.parse({
+        ...req.body,
+        workspaceId: workspace.id,
+      });
       
       // Set createdByUserId to current authenticated user
-      const userId = (req.user as any)?.claims?.sub;
-      (data as any).createdByUserId = userId || null;
+      (data as any).createdByUserId = userId;
       
       // For wordpress_pull targets, generate a siteId
       if (data.type === "wordpress_pull") {
