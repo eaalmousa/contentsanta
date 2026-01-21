@@ -1638,6 +1638,7 @@ export default function TopicsPage() {
     countries: [] as string[],
     contentIntent: "news_monitoring" as ContentIntent,
     outputVolumePerDay: 5,
+    publishingTargetId: null as string | null,
   });
 
   // Auto-open create dialog from query param (e.g., /topics?create=1)
@@ -1656,6 +1657,18 @@ export default function TopicsPage() {
   
   // Safe array even on error or undefined
   const safeTopics = topics ?? [];
+
+  // Fetch publishing targets for create dialog
+  const { data: createDialogTargets } = useQuery<PublishingTarget[]>({
+    queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
+    queryFn: () => fetch(`/api/publishing-targets?workspaceId=demo-workspace`).then(r => r.json()),
+    enabled: showCreateDialog,
+  });
+  
+  const createDialogWordPressTargets = useMemo(() => 
+    (createDialogTargets ?? []).filter(t => t.type === "wordpress" || t.type === "wordpress_pull"), 
+    [createDialogTargets]
+  );
 
   const fetchRecommendedSources = async (options?: { broaden?: boolean }) => {
     setIsLoadingSources(true);
@@ -1742,6 +1755,7 @@ export default function TopicsPage() {
       countries: [],
       contentIntent: "news_monitoring",
       outputVolumePerDay: 5,
+      publishingTargetId: null,
     });
   };
 
@@ -2132,6 +2146,29 @@ export default function TopicsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              <div>
+                <Label htmlFor="publishingTarget">Publishing Target</Label>
+                <Select 
+                  value={newTopic.publishingTargetId || "none"} 
+                  onValueChange={(v) => setNewTopic({ ...newTopic, publishingTargetId: v === "none" ? null : v })}
+                >
+                  <SelectTrigger data-testid="select-create-topic-target">
+                    <SelectValue placeholder="Select publishing target..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {createDialogWordPressTargets.map((target) => (
+                      <SelectItem key={target.id} value={target.id}>
+                        {target.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  WordPress site where content will be published
+                </p>
               </div>
 
               <DialogFooter>
