@@ -1,0 +1,51 @@
+We still have a critical workspace scoping bug:
+
+Problem:
+- Create Topic dialog shows Publishing Target dropdown = only "None"
+- A WordPress Plugin target exists and is connected, but it is not returned in the dropdown.
+
+Root cause is almost certainly workspace resolution/scoping inconsistency.
+We must make the active workspace explicit for ALL workspace-scoped APIs.
+
+Implement the following:
+
+A) Add a single source of truth for "active workspace"
+1) Create GET /api/me/context (auth required) returning:
+   - userId (claims.sub)
+   - memberships: [{workspaceId, name, role}]
+   - activeWorkspaceId (the one UI should use)
+   - counts: topicsCount, targetsCount, sourcesCount in active workspace
+   - recentTargets: [{id, name, type, workspaceId}]
+2) Determine activeWorkspaceId in this order:
+   - header X-Workspace-Id (if provided AND user is member)
+   - cookie cs_workspace_id (if valid AND user is member)
+   - else first membership workspaceId
+
+B) Enforce workspace scoping consistently in backend
+1) Update GET /api/publishing-targets to REQUIRE a resolved workspaceId
+   - use the active workspace resolver above
+   - return only targets where workspace_id == activeWorkspaceId
+2) Update POST /api/publishing-targets to ALWAYS set workspace_id = activeWorkspaceId
+   - never accept workspace_id from client
+3) Update topics endpoints similarly (list/create/update/run-pipeline)
+
+C) Frontend: send active workspace with every request
+1) Add a small API client wrapper that always includes:
+   - credentials: 'include'
+   - header X-Workspace-Id = activeWorkspaceId (from /api/me/context)
+2) In Create Topic modal, load publishing targets using this wrapper.
+3) Add a temporary "Debug" line in the modal (dev only) showing:
+   - activeWorkspaceId
+   - targetsCount
+   - so we can confirm correctness quickly
+
+D) Migration safety (handle legacy data)
+1) If any topics/targets have workspace_id equal to 'demo-workspace' (string/slug),
+   add a one-time admin-only endpoint POST /api/debug/migrate-legacy-workspace-ids
+   that rewrites them to the user's active workspace UUID.
+2) Return a summary of updated rows.
+
+Acceptance Criteria:
+- After refresh, Create Topic -> Publishing Target dropdown shows the connected WordPress target.
+- /api/me/context shows targetsCount > 0 in the active workspace.
+- No 401/403 spam related to publishing-targets or workspace endpoints.

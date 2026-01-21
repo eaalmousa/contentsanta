@@ -232,6 +232,75 @@ export async function registerRoutes(
     }
   });
   
+  // GET /api/me/context - Single source of truth for active workspace
+  app.get("/api/me/context", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      
+      // Get all user's workspace memberships
+      const memberships = await storage.getUserWorkspaceMemberships(userId);
+      if (!memberships || memberships.length === 0) {
+        return res.status(404).json({ 
+          error: "No workspace memberships found",
+          errorCode: "NO_WORKSPACE"
+        });
+      }
+      
+      // Determine active workspace:
+      // 1. Check X-Workspace-Id header (if provided AND user is member)
+      // 2. Check cs_workspace_id cookie (if valid AND user is member)
+      // 3. Fall back to first membership
+      let activeWorkspaceId: string = memberships[0].workspaceId;
+      
+      const headerWorkspaceId = req.headers["x-workspace-id"] as string | undefined;
+      if (headerWorkspaceId && memberships.some((m: { workspaceId: string }) => m.workspaceId === headerWorkspaceId)) {
+        activeWorkspaceId = headerWorkspaceId;
+      } else {
+        const cookieWorkspaceId = (req.cookies as any)?.cs_workspace_id;
+        if (cookieWorkspaceId && memberships.some((m: { workspaceId: string }) => m.workspaceId === cookieWorkspaceId)) {
+          activeWorkspaceId = cookieWorkspaceId;
+        }
+      }
+      
+      // Get counts for active workspace
+      const [topics, targets, sources] = await Promise.all([
+        storage.getTopics(activeWorkspaceId),
+        storage.getPublishingTargets(activeWorkspaceId),
+        storage.getSources(activeWorkspaceId),
+      ]);
+      
+      // Get recent targets for quick display
+      const recentTargets = targets.slice(0, 5).map(t => ({
+        id: t.id,
+        name: t.name,
+        type: t.type,
+        workspaceId: t.workspaceId,
+      }));
+      
+      res.json({
+        userId,
+        memberships: memberships.map((m: { workspaceId: string; workspaceName: string; role: string }) => ({
+          workspaceId: m.workspaceId,
+          name: m.workspaceName,
+          role: m.role,
+        })),
+        activeWorkspaceId,
+        counts: {
+          topicsCount: topics.length,
+          targetsCount: targets.length,
+          sourcesCount: sources.length,
+        },
+        recentTargets,
+      });
+    } catch (error) {
+      console.error("[API] Error getting user context:", error);
+      return res.status(500).json({ error: "Failed to get user context" });
+    }
+  });
+  
   // Debug: WordPress probe for diagnosing API issues
   app.get("/api/debug/wp-probe", async (req: Request, res: Response) => {
     const url = req.query.url;

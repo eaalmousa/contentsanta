@@ -67,6 +67,7 @@ export interface IStorage {
   updateWorkspaceUserRole(id: string, role: RoleType): Promise<WorkspaceUser | undefined>;
   removeUserFromWorkspace(workspaceId: string, userId: string): Promise<void>;
   getUserWorkspaces(userId: string): Promise<Workspace[]>;
+  getUserWorkspaceMemberships(userId: string): Promise<{ workspaceId: string; workspaceName: string; role: RoleType }[]>;
   
   // Brands
   getBrands(workspaceId?: string): Promise<Brand[]>;
@@ -398,6 +399,20 @@ export class DatabaseStorage implements IStorage {
     const workspaceIds = userWorkspaces.map(wu => wu.workspaceId);
     return await db.select().from(workspaces)
       .where(sql`${workspaces.id} IN ${workspaceIds}`);
+  }
+  
+  async getUserWorkspaceMemberships(userId: string): Promise<{ workspaceId: string; workspaceName: string; role: RoleType }[]> {
+    const result = await db
+      .select({
+        workspaceId: workspaceUsers.workspaceId,
+        workspaceName: workspaces.name,
+        role: workspaceUsers.role,
+      })
+      .from(workspaceUsers)
+      .innerJoin(workspaces, eq(workspaceUsers.workspaceId, workspaces.id))
+      .where(eq(workspaceUsers.userId, userId));
+    
+    return result;
   }
 
   // Brands
