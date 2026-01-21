@@ -1,0 +1,81 @@
+Yes — test it now, but test it end-to-end in a way that proves automation (not just UI).
+
+A) Confirm the scheduler is truly running
+
+Go to Pipeline → Automation Overview
+
+Click Run All Pipelines (manual trigger) once.
+
+Immediately check:
+
+Job History tab: a new run entry should appear.
+
+No 401 / 500 toast.
+
+“Last global run” should update after the run completes.
+
+If you still see an error, open DevTools → Network and click the failing request:
+
+If it’s 400 now, copy the debug payload shown in the response (that’s progress — it’s your actionable fix signal).
+
+If it’s still 500, the validation didn’t catch the real failure path.
+
+B) Verify stories → pipeline_items → drafts are being created automatically
+
+After the run:
+
+Go to Smart Editor
+
+Select your automated topic from the dropdown
+
+Check:
+
+Drafts tab: do you see new drafts?
+
+Ready to Publish: do any appear (if you’re in full-auto publish, they may move through quickly)
+
+If you see stories but no drafts:
+
+The ingestion step is working
+
+The “generate → create draft” step is still not firing, or failing silently
+
+C) Verify publishing is happening via the WordPress Plugin (pull model)
+
+This is the real proof.
+
+Go to Publishing → your WordPress (Plugin) target
+
+Open the Plugin Diagnostics / Logs panel
+
+In WordPress: Settings → Content Santa Connector → Run Now (Manual Pull)
+
+Expected:
+
+A new log entry appears: PULL → returns a job (not 204/no job)
+
+Then REPORT_SUCCESS
+
+In Content Santa:
+
+pipeline item becomes published
+
+published_today increments
+
+In WordPress:
+
+a new post exists (draft/published depending on your mode)
+
+If pull returns 204:
+
+Content Santa didn’t queue a job (pipeline didn’t reach publishing stage, or job status mismatch like the earlier pending/queued issue).
+
+D) Why your UI might still look “manual”
+
+Even in full-auto systems, the Smart Editor can still show:
+
+the Stories grid (it’s your audit trail)
+
+buttons that should be hidden only when a specific automated topic is selected
+
+The real difference is not whether you “see stories” — it’s whether drafts/publishing happen without you pressing Create Draft.
