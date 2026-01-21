@@ -2,6 +2,8 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { storage } from "./storage";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 import { setupAuth, registerAuthRoutes, isAuthenticated, authStorage, createAutomationAuthMiddleware, resolveWorkspaceId, resolveWorkspace } from "./replit_integrations/auth";
 import { processWorkflowWithAI } from "./ai-workflow";
 import { 
@@ -2781,7 +2783,7 @@ export async function registerRoutes(
     }
   });
 
-  // Seed official GCC sources
+  // Seed sources from demo-workspace (or fallback to hardcoded official sources)
   app.post("/api/sources/seed-official", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const userId = (req.user as any)?.claims?.sub;
@@ -2795,12 +2797,112 @@ export async function registerRoutes(
         return res.status(404).json({ error: "No workspace found for user" });
       }
       
-      const { seedOfficialSources } = await import("./seeds/official-sources");
-      const result = await seedOfficialSources(workspace.id);
+      // Use the auth storage method which copies from demo-workspace
+      const { authStorage } = await import("./replit_integrations/auth/storage");
+      const result = await authStorage.ensureWorkspaceHasDefaultSources(workspace.id);
       res.json({ success: true, ...result, workspaceId: workspace.id });
     } catch (error: any) {
       console.error("[API] seed-official error:", error);
-      res.status(500).json({ error: error.message || "Failed to seed official sources" });
+      res.status(500).json({ error: error.message || "Failed to seed sources" });
+    }
+  });
+
+  // Debug endpoint: Force seed sources from demo-workspace (bypasses count check)
+  app.post("/api/debug/seed-sources", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+      
+      // Resolve workspace from session
+      const workspace = await resolveWorkspace(userId);
+      if (!workspace) {
+        return res.status(404).json({ error: "No workspace found for user" });
+      }
+      
+      // Restrict to workspace owners/admins only
+      const membership = await storage.getWorkspaceUser(workspace.id, userId);
+      if (!membership || !["owner", "admin"].includes(membership.role)) {
+        return res.status(403).json({ error: "Only workspace owners or admins can use this endpoint" });
+      }
+      
+      const SYSTEM_WORKSPACE_ID = "demo-workspace";
+      console.log(`[Debug] Force seeding sources from ${SYSTEM_WORKSPACE_ID} to ${workspace.id} (authorized as ${membership.role})`);
+      
+      // Get sources from demo-workspace
+      const systemSources = await db.execute(sql`
+        SELECT * FROM sources WHERE workspace_id = ${SYSTEM_WORKSPACE_ID}
+      `);
+      
+      if (!systemSources.rows || systemSources.rows.length === 0) {
+        return res.json({ 
+          success: false, 
+          message: `No sources found in ${SYSTEM_WORKSPACE_ID}`,
+          workspaceId: workspace.id 
+        });
+      }
+      
+      // Copy sources to target workspace with new UUIDs
+      let inserted = 0;
+      let skipped = 0;
+      for (const source of systemSources.rows as any[]) {
+        try {
+          const result = await db.execute(sql`
+            INSERT INTO sources (
+              id, workspace_id, name, type, feed_url, domain, description,
+              language, region, country, tags, media_tier, tier,
+              is_official, is_active, fetch_interval_minutes,
+              last_fetched_at, last_success_at, last_error, item_count,
+              created_at, updated_at
+            ) VALUES (
+              gen_random_uuid(),
+              ${workspace.id},
+              ${source.name},
+              ${source.type},
+              ${source.feed_url},
+              ${source.domain},
+              ${source.description},
+              ${source.language},
+              ${source.region},
+              ${source.country},
+              ${source.tags},
+              ${source.media_tier},
+              ${source.tier},
+              ${source.is_official},
+              ${source.is_active},
+              ${source.fetch_interval_minutes},
+              NULL,
+              NULL,
+              NULL,
+              0,
+              now(),
+              now()
+            )
+            ON CONFLICT (workspace_id, feed_url) DO NOTHING
+          `);
+          if (result.rowCount && result.rowCount > 0) {
+            inserted++;
+          } else {
+            skipped++;
+          }
+        } catch (insertError) {
+          console.error(`[Debug] Failed to insert source ${source.name}:`, insertError);
+          skipped++;
+        }
+      }
+      
+      console.log(`[Debug] Copied ${inserted} sources (${skipped} skipped) from ${SYSTEM_WORKSPACE_ID} to ${workspace.id}`);
+      res.json({ 
+        success: true, 
+        inserted, 
+        skipped, 
+        total: systemSources.rows.length,
+        workspaceId: workspace.id 
+      });
+    } catch (error: any) {
+      console.error("[API] debug/seed-sources error:", error);
+      res.status(500).json({ error: error.message || "Failed to seed sources" });
     }
   });
 
@@ -2843,13 +2945,13 @@ export async function registerRoutes(
       
       // Get existing sources in target workspace to avoid duplicates
       const existingSources = await storage.getSources(targetWorkspace.id);
-      const existingUrls = new Set(existingSources.map(s => s.feedUrl || s.url).filter(Boolean));
+      const existingUrls = new Set(existingSources.map(s => s.feedUrl).filter(Boolean));
       
       let adopted = 0;
       let skipped = 0;
       
       for (const source of sourceSources) {
-        const sourceUrl = source.feedUrl || source.url;
+        const sourceUrl = source.feedUrl;
         if (sourceUrl && existingUrls.has(sourceUrl)) {
           skipped++;
           continue;
@@ -2858,15 +2960,14 @@ export async function registerRoutes(
         // Create a copy of the source in target workspace
         await storage.createSource({
           name: source.name,
-          url: source.url || "",
-          feedUrl: source.feedUrl || source.url || "",
+          feedUrl: source.feedUrl || "",
           type: source.type || "rss",
           language: source.language,
           country: source.country,
           region: source.region,
           tier: source.tier || 2,
-          isOfficial: source.isOfficial || false,
-          isActive: source.isActive ?? true,
+          isOfficial: source.isOfficial === "true" ? "true" : "false",
+          isActive: source.isActive === "true" ? "true" : "false",
           workspaceId: targetWorkspace.id,
         });
         adopted++;

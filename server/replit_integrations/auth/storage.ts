@@ -137,25 +137,95 @@ class AuthStorage implements IAuthStorage {
   }
 
   /**
-   * Ensure workspace has default sources - auto-seed if empty
+   * Ensure workspace has default sources - copy from demo-workspace if empty
    */
-  async ensureWorkspaceHasDefaultSources(workspaceId: string): Promise<void> {
+  async ensureWorkspaceHasDefaultSources(workspaceId: string): Promise<{ seeded: boolean; count: number }> {
+    const SYSTEM_WORKSPACE_ID = "demo-workspace";
+    
     try {
-      // Check current source count
+      // Don't try to seed the system workspace itself
+      if (workspaceId === SYSTEM_WORKSPACE_ID) {
+        return { seeded: false, count: 0 };
+      }
+      
+      // Check current source count for target workspace
       const countResult = await db.execute(sql`
         SELECT COUNT(*)::int as count FROM sources WHERE workspace_id = ${workspaceId}
       `);
       const currentCount = (countResult.rows?.[0] as any)?.count || 0;
       
-      if (currentCount === 0) {
-        console.log(`[Auth] Workspace ${workspaceId} has 0 sources, auto-seeding defaults...`);
-        const { seedOfficialSources } = await import("../seeds/official-sources");
-        const result = await seedOfficialSources(workspaceId);
-        console.log(`[Auth] Auto-seeded ${result.inserted} sources for workspace ${workspaceId}`);
+      if (currentCount > 0) {
+        console.log(`[Auth] Workspace ${workspaceId} already has ${currentCount} sources, skipping seed`);
+        return { seeded: false, count: currentCount };
       }
+      
+      console.log(`[Auth] Workspace ${workspaceId} has 0 sources, copying from ${SYSTEM_WORKSPACE_ID}...`);
+      
+      // Get sources from demo-workspace
+      const systemSources = await db.execute(sql`
+        SELECT * FROM sources WHERE workspace_id = ${SYSTEM_WORKSPACE_ID}
+      `);
+      
+      if (!systemSources.rows || systemSources.rows.length === 0) {
+        console.log(`[Auth] No sources found in ${SYSTEM_WORKSPACE_ID}, trying hardcoded fallback...`);
+        // Fallback to hardcoded sources if demo-workspace is empty
+        const { seedOfficialSources } = await import("../../seeds/official-sources");
+        const result = await seedOfficialSources(workspaceId);
+        return { seeded: true, count: result.inserted };
+      }
+      
+      // Copy sources to target workspace with new UUIDs using INSERT ... RETURNING for accurate count
+      let inserted = 0;
+      for (const source of systemSources.rows as any[]) {
+        try {
+          const result = await db.execute(sql`
+            INSERT INTO sources (
+              id, workspace_id, name, type, feed_url, domain, description,
+              language, region, country, tags, media_tier, tier,
+              is_official, is_active, fetch_interval_minutes,
+              last_fetched_at, last_success_at, last_error, item_count,
+              created_at, updated_at
+            ) VALUES (
+              gen_random_uuid(),
+              ${workspaceId},
+              ${source.name},
+              ${source.type},
+              ${source.feed_url},
+              ${source.domain},
+              ${source.description},
+              ${source.language},
+              ${source.region},
+              ${source.country},
+              ${source.tags},
+              ${source.media_tier},
+              ${source.tier},
+              ${source.is_official},
+              ${source.is_active},
+              ${source.fetch_interval_minutes},
+              NULL,
+              NULL,
+              NULL,
+              0,
+              now(),
+              now()
+            )
+            ON CONFLICT (workspace_id, feed_url) DO NOTHING
+            RETURNING id
+          `);
+          // Only count if row was actually inserted
+          if (result.rowCount && result.rowCount > 0) {
+            inserted++;
+          }
+        } catch (insertError) {
+          console.error(`[Auth] Failed to insert source ${source.name}:`, insertError);
+        }
+      }
+      
+      console.log(`[Auth] Copied ${inserted} sources from ${SYSTEM_WORKSPACE_ID} to ${workspaceId}`);
+      return { seeded: true, count: inserted };
     } catch (error) {
-      // Don't fail workspace creation if seeding fails
-      console.error(`[Auth] Failed to auto-seed sources for workspace ${workspaceId}:`, error);
+      console.error(`[Auth] Failed to seed sources for workspace ${workspaceId}:`, error);
+      return { seeded: false, count: 0 };
     }
   }
 }

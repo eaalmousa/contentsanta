@@ -1,0 +1,245 @@
+What the data shows (hard fact)
+
+Your active workspace is: a6fa665e-2f03-416b-bc99-b30ae1531726
+
+In /api/me/context → sourcesCount: 0 ✅ (so the app is correctly saying “no sources”)
+
+But the “real sources” you pasted are all stored under:
+
+workspaceId: "demo-workspace" ❌
+
+So the Sources step is empty because the sources were never seeded/copied into your real workspace. They’re sitting in a legacy/system workspace.
+
+That’s the whole bug.
+
+The fastest fix (what you should implement)
+
+You need a system seed behavior:
+
+If a workspace has 0 sources, automatically clone sources from the system workspace (demo-workspace) into the user’s active workspace.
+
+Why this is the right fix
+
+Doesn’t break multi-tenant.
+
+Doesn’t require you to “remove workspaces”.
+
+Works for every new customer automatically.
+
+Keeps demo-workspace as a system catalog.
+
+Backend patch (copy sources from demo-workspace into active workspace)
+1) Create a helper: ensureWorkspaceSeededSources(workspaceId)
+
+Logic:
+
+Count sources for workspaceId
+
+If count == 0:
+
+Insert copies of sources where workspaceId = "demo-workspace"
+
+Set workspaceId to the user’s workspace
+
+Keep everything else the same
+
+Avoid duplicates using a uniqueness key (best: feedUrl + workspaceId)
+
+Pseudo-code (Node/Drizzle-ish):
+
+const SYSTEM_WORKSPACE_ID = "demo-workspace";
+
+export async function ensureWorkspaceSeededSources(workspaceId: string) {
+  const existing = await db.select({ n: sql<number>`count(*)` })
+    .from(sources)
+    .where(eq(sources.workspaceId, workspaceId));
+
+  if ((existing[0]?.n ?? 0) > 0) return { seeded: false };
+
+  const systemSources = await db.select().from(sources)
+    .where(eq(sources.workspaceId, SYSTEM_WORKSPACE_ID));
+
+  if (systemSources.length === 0) return { seeded: false, reason: "no_system_sources" };
+
+  // Insert copies
+  for (const s of systemSources) {
+    await db.insert(sources).values({
+      ...pickFieldsYouWant(s),
+      id: crypto.randomUUID(),           // important: new id
+      workspaceId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).onConflictDoNothing({
+      target: [sources.workspaceId, sources.feedUrl], // add unique index if missing
+    });
+  }
+
+  return { seeded: true, count: systemSources.length };
+}
+
+
+Important: don’t “UPDATE workspaceId” from demo → real. That would steal the shared catalog and break other users later. Always COPY.
+
+2) Call this helper in the right places
+
+Call ensureWorkspaceSeededSources(activeWorkspaceId) before any endpoint that needs sources:
+
+GET /api/sources
+
+POST /api/topics/recommend-sources
+
+any “topic create sources step” endpoint
+
+That guarantees the modal never loads empty for a new workspace.
+
+3) Add one emergency endpoint for you (immediate recovery)
+
+Since you already have a production user with 0 sources, add:
+
+POST /api/debug/seed-sources
+
+Resolve workspace from session
+
+Run ensureWorkspaceSeededSources(workspaceId)
+
+Return {seeded, count}
+
+Then you can run it once and be done.
+
+4) Why the Publishing Target shows but sources don’t
+
+Because your publishing target was created correctly in your real workspace:
+
+Target workspaceId = a6fa...1726 ✅
+
+But sources were never migrated/seeded:
+
+Sources workspaceId = "demo-workspace" ❌
+
+So the targets dropdown works, sources list doesn’t.
+
+After you apply this fix — what you should see
+
+/api/me/context becomes:
+
+sourcesCount: 41 (or similar)
+
+The “Select Sources” step will immediately show your sources.
+
+Topics creation becomes usable again.
+
+Answer to your earlier question: “why workspaces at all?”
+
+Workspaces are fine — your mistake was scoping “source catalog data” as if it’s tenant-owned.
+
+You have two clean models:
+
+System catalog + per-workspace enable/disable (best long-term)
+
+Copy-on-first-use seeding (fastest and good enough)
+
+Right now, you’re halfway between them, so it breaks.
+
+If you want the absolute quickest “one-liner” fix just to unblock yourself today:
+
+Implement POST /api/debug/seed-sources that copies from demo-workspace to your active workspace, then click it once.
+
+That will make Sources appear immediately.
+
+[{"id":"85fefb6a-cbfb-4da4-9856-0cd0cbc39dc0","workspaceId":"demo-workspace","name":"Al Jazeera English","type":"rss","feedUrl":"https://www.aljazeera.com/xml/rss/all.xml","domain":"aljazeera.com","description":"Al Jazeera English - International news from Qatar","language":"en","region":"mena","country":"QA","tags":null,"mediaTier":"tier_2","tier":2,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:38:36.272Z","lastSuccessAt":"2026-01-21T21:38:36.272Z","lastError":null,"itemCount":92,"createdAt":"2026-01-19T19:31:50.411Z","updatedAt":"2026-01-19T19:31:50.411Z"},{"id":"5e4a6691-fdf3-405d-897b-20ad18be7786","workspaceId":"demo-workspace","name":"Gulf Business","type":"rss","feedUrl":"https://gulfbusiness.com/feed/","domain":"gulfbusiness.com","description":"Gulf Business - GCC business magazine","language":"en","region":"gcc","country":"AE","tags":null,"mediaTier":"tier_2","tier":2,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:39:30.172Z","lastSuccessAt":"2026-01-21T21:39:30.172Z","lastError":null,"itemCount":20,"createdAt":"2026-01-19T19:31:50.353Z","updatedAt":"2026-01-19T19:31:50.353Z"},{"id":"2df05eba-fdb4-48f8-8f22-fb3994b4a8f2","workspaceId":"demo-workspace","name":"Arab Times","type":"rss","feedUrl":"https://www.arabtimesonline.com/rssFeed/92/","domain":"arabtimesonline.com","description":"Arab Times - Kuwait mainstream English newspaper","language":"en","region":"gcc","country":"KW","tags":null,"mediaTier":"tier_2","tier":2,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T22:02:15.226Z","lastSuccessAt":"2026-01-21T22:02:15.226Z","lastError":null,"itemCount":100,"createdAt":"2026-01-19T19:31:50.295Z","updatedAt":"2026-01-19T19:31:50.295Z"},{"id":"ff95a043-e8ab-41b0-894c-89eb47f51fb1","workspaceId":"demo-workspace","name":"Doha News","type":"rss","feedUrl":"https://dohanews.co/feed/","domain":"dohanews.co","description":"Doha News - Qatar independent English news","language":"en","region":"gcc","country":"QA","tags":null,"mediaTier":"tier_2","tier":2,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T22:02:46.727Z","lastSuccessAt":"2026-01-21T22:02:46.727Z","lastError":null,"itemCount":11,"createdAt":"2026-01-19T19:31:50.236Z","updatedAt":"2026-01-19T19:31:50.236Z"},{"id":"8732da4e-bd3f-45f9-ba14-df06b36ab772","workspaceId":"demo-workspace","name":"Gulf Times","type":"rss","feedUrl":"https://www.gulf-times.com/rssFeed/0","domain":"gulf-times.com","description":"Gulf Times - Qatar leading English daily newspaper","language":"en","region":"gcc","country":"QA","tags":null,"mediaTier":"tier_2","tier":2,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:34:27.572Z","lastSuccessAt":"2026-01-21T21:34:27.572Z","lastError":null,"itemCount":142,"createdAt":"2026-01-19T19:31:50.178Z","updatedAt":"2026-01-19T19:31:50.178Z"},{"id":"e78cf0e1-8928-49f1-abdc-d1f2ed6f83b8","workspaceId":"demo-workspace","name":"Arab News","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:arabnews.com+when:3d&hl=en&gl=SA&ceid=SA:en","domain":"arabnews.com","description":"Arab News - Saudi Arabia English daily (via Google News)","language":"en","region":"gcc","country":"SA","tags":null,"mediaTier":"tier_2","tier":2,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:33:01.964Z","lastSuccessAt":"2026-01-21T21:02:52.472Z","lastError":"HTTP 503","itemCount":205,"createdAt":"2026-01-19T19:31:50.119Z","updatedAt":"2026-01-19T19:31:50.119Z"},{"id":"a863b087-9c13-49dd-9ff8-54592a493657","workspaceId":"demo-workspace","name":"Khaleej Times","type":"rss","feedUrl":"https://www.khaleejtimes.com/stories.rss","domain":"khaleejtimes.com","description":"Khaleej Times - UAE mainstream English newspaper","language":"en","region":"gcc","country":"AE","tags":null,"mediaTier":"tier_2","tier":2,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T22:03:11.027Z","lastSuccessAt":"2026-01-21T22:03:11.027Z","lastError":null,"itemCount":128,"createdAt":"2026-01-19T19:31:50.061Z","updatedAt":"2026-01-19T19:31:50.061Z"},{"id":"bdfea86e-a6b2-4e2f-b23c-0cea007ed9d9","workspaceId":"demo-workspace","name":"ONA English","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:omannews.gov.om+when:3d&hl=en&gl=OM&ceid=OM:en","domain":"omannews.gov.om","description":"Oman News Agency English (via Google News)","language":"en","region":"gcc","country":"OM","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:34:56.572Z","lastSuccessAt":"2026-01-21T20:33:21.272Z","lastError":"HTTP 503","itemCount":88,"createdAt":"2026-01-19T19:31:50.002Z","updatedAt":"2026-01-19T19:31:50.002Z"},{"id":"ab81297b-c422-4b42-b319-3e515d50eea1","workspaceId":"demo-workspace","name":"وكالة الأنباء العمانية","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:omannews.gov.om+when:3d&hl=ar&gl=OM&ceid=OM:ar","domain":"omannews.gov.om","description":"Oman News Agency Arabic (via Google News)","language":"ar","region":"gcc","country":"OM","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:39:00.272Z","lastSuccessAt":"2026-01-21T20:34:52.872Z","lastError":"HTTP 503","itemCount":195,"createdAt":"2026-01-19T19:31:49.944Z","updatedAt":"2026-01-19T19:31:49.944Z"},{"id":"f53b6bd5-7c1d-4113-9c51-7ce19e7901bd","workspaceId":"demo-workspace","name":"BNA English","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:bna.bh+when:3d&hl=en&gl=BH&ceid=BH:en","domain":"bna.bh","description":"Bahrain News Agency English (via Google News)","language":"en","region":"gcc","country":"BH","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:35:30.372Z","lastSuccessAt":"2026-01-21T20:33:35.772Z","lastError":"HTTP 503","itemCount":185,"createdAt":"2026-01-19T19:31:49.886Z","updatedAt":"2026-01-19T19:31:49.886Z"},{"id":"b8664f1c-9c74-4802-a1e8-d47514a96c7d","workspaceId":"demo-workspace","name":"وكالة أنباء البحرين","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:bna.bh+when:3d&hl=ar&gl=BH&ceid=BH:ar","domain":"bna.bh","description":"Bahrain News Agency Arabic (via Google News)","language":"ar","region":"gcc","country":"BH","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T22:01:23.827Z","lastSuccessAt":"2026-01-21T22:01:23.827Z","lastError":null,"itemCount":116,"createdAt":"2026-01-19T19:31:49.826Z","updatedAt":"2026-01-19T19:31:49.826Z"},{"id":"84417cfa-aabc-49f3-9274-b5fcab744813","workspaceId":"demo-workspace","name":"KUNA English","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:kuna.net.kw+when:3d&hl=en&gl=KW&ceid=KW:en","domain":"kuna.net.kw","description":"Kuwait News Agency English (via Google News)","language":"en","region":"gcc","country":"KW","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:35:58.272Z","lastSuccessAt":"2026-01-21T20:33:42.372Z","lastError":"HTTP 503","itemCount":107,"createdAt":"2026-01-19T19:31:49.767Z","updatedAt":"2026-01-19T19:31:49.767Z"},{"id":"171bfb60-76c0-42c8-bdbf-2b9500584c21","workspaceId":"demo-workspace","name":"وكالة الأنباء الكويتية","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:kuna.net.kw+when:3d&hl=ar&gl=KW&ceid=KW:ar","domain":"kuna.net.kw","description":"Kuwait News Agency Arabic (via Google News)","language":"ar","region":"gcc","country":"KW","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T22:00:44.627Z","lastSuccessAt":"2026-01-21T22:00:44.627Z","lastError":null,"itemCount":139,"createdAt":"2026-01-19T19:31:49.709Z","updatedAt":"2026-01-19T19:31:49.709Z"},{"id":"552754f5-62be-4d1d-8a61-790d84aeb4ca","workspaceId":"demo-workspace","name":"QNA English","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:qna.org.qa+when:3d&hl=en&gl=QA&ceid=QA:en","domain":"qna.org.qa","description":"Qatar News Agency English (via Google News)","language":"en","region":"gcc","country":"QA","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:36:29.393Z","lastSuccessAt":"2026-01-21T20:33:51.572Z","lastError":"HTTP 503","itemCount":131,"createdAt":"2026-01-19T19:31:49.650Z","updatedAt":"2026-01-19T19:31:49.650Z"},{"id":"9f9b5244-06c2-4ba2-84c1-5761e25b7fb6","workspaceId":"demo-workspace","name":"وكالة الأنباء القطرية","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:qna.org.qa+when:3d&hl=ar&gl=QA&ceid=QA:ar","domain":"qna.org.qa","description":"Qatar News Agency Arabic (via Google News)","language":"ar","region":"gcc","country":"QA","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:30:32.272Z","lastSuccessAt":"2026-01-21T21:00:46.299Z","lastError":"HTTP 503","itemCount":124,"createdAt":"2026-01-19T19:31:49.591Z","updatedAt":"2026-01-19T19:31:49.591Z"},{"id":"98e1ee28-e1e6-4570-b7fb-53a804a16e8a","workspaceId":"demo-workspace","name":"SPA English","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:spa.gov.sa+when:3d&hl=en&gl=SA&ceid=SA:en","domain":"spa.gov.sa","description":"Saudi Press Agency English (via Google News)","language":"en","region":"gcc","country":"SA","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:36:58.307Z","lastSuccessAt":"2026-01-21T20:33:54.672Z","lastError":"HTTP 503","itemCount":19,"createdAt":"2026-01-19T19:31:49.532Z","updatedAt":"2026-01-19T19:31:49.532Z"},{"id":"d502d3f2-6ce5-4a23-b696-3b7d853ef50f","workspaceId":"demo-workspace","name":"واس - وكالة الأنباء السعودية","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:spa.gov.sa+when:3d&hl=ar&gl=SA&ceid=SA:ar","domain":"spa.gov.sa","description":"Saudi Press Agency Arabic (via Google News)","language":"ar","region":"gcc","country":"SA","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:38:33.102Z","lastSuccessAt":"2026-01-21T21:00:10.272Z","lastError":"HTTP 503","itemCount":5,"createdAt":"2026-01-19T19:31:49.459Z","updatedAt":"2026-01-19T19:31:49.459Z"},{"id":"bfd0cbb3-7f14-469d-b729-ad4f0e830ee7","workspaceId":"demo-workspace","name":"Gulf News","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:gulfnews.com+when:3d&hl=en&gl=AE&ceid=AE:en","domain":"gulfnews.com","description":"Gulf News - UAE leading English daily (via Google News)","language":"en","region":"gcc","country":"AE","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:37:36.672Z","lastSuccessAt":"2026-01-21T20:34:20.572Z","lastError":"HTTP 503","itemCount":191,"createdAt":"2026-01-19T19:31:49.392Z","updatedAt":"2026-01-19T19:31:49.392Z"},{"id":"58cfce76-217e-47ae-9f67-4f7de5bf250a","workspaceId":"demo-workspace","name":"WAM English","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:wam.ae+when:3d&hl=en&gl=AE&ceid=AE:en","domain":"wam.ae","description":"WAM - Emirates News Agency English (via Google News)","language":"en","region":"gcc","country":"AE","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:34:17.772Z","lastSuccessAt":"2026-01-21T20:33:00.472Z","lastError":"HTTP 503","itemCount":169,"createdAt":"2026-01-19T19:31:49.333Z","updatedAt":"2026-01-19T19:31:49.333Z"},{"id":"e9e74790-9055-473b-9455-8210fd82c123","workspaceId":"demo-workspace","name":"The National","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:thenationalnews.com+when:3d&hl=en&gl=AE&ceid=AE:en","domain":"thenationalnews.com","description":"The National - UAE's leading English newspaper (via Google News)","language":"en","region":"gcc","country":"AE","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:33:38.972Z","lastSuccessAt":"2026-01-21T20:32:36.572Z","lastError":"HTTP 503","itemCount":196,"createdAt":"2026-01-19T19:31:49.268Z","updatedAt":"2026-01-19T19:31:49.268Z"},{"id":"a297b776-57a3-4709-b194-2e528971f9ae","workspaceId":"demo-workspace","name":"وكالة أنباء الإمارات","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:wam.ae+when:3d&hl=ar&gl=AE&ceid=AE:ar","domain":"wam.ae","description":"WAM - Emirates News Agency Arabic (via Google News)","language":"ar","region":"gcc","country":"AE","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:38:08.372Z","lastSuccessAt":"2026-01-21T20:30:23.372Z","lastError":"HTTP 503","itemCount":235,"createdAt":"2026-01-19T19:31:49.206Z","updatedAt":"2026-01-19T19:31:49.206Z"},{"id":"709a24d5-eb05-4785-9470-eed73938a159","workspaceId":"demo-workspace","name":"الإمارات اليوم","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:emaratalyoum.com+when:3d&hl=ar&gl=AE&ceid=AE:ar","domain":"emaratalyoum.com","description":"Emarat Al Youm - UAE official Arabic newspaper (via Google News)","language":"ar","region":"gcc","country":"AE","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:39:55.472Z","lastSuccessAt":"2026-01-21T20:34:34.272Z","lastError":"HTTP 503","itemCount":162,"createdAt":"2026-01-19T19:31:49.147Z","updatedAt":"2026-01-19T19:31:49.147Z"},{"id":"66958fa6-7282-4b71-8e3f-bbd39b4a347d","workspaceId":"demo-workspace","name":"الاتحاد","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:alittihad.ae+when:3d&hl=ar&gl=AE&ceid=AE:ar","domain":"alittihad.ae","description":"Al Ittihad - UAE official Arabic newspaper (via Google News)","language":"ar","region":"gcc","country":"AE","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T22:02:18.027Z","lastSuccessAt":"2026-01-21T22:02:18.027Z","lastError":null,"itemCount":3,"createdAt":"2026-01-19T19:31:49.087Z","updatedAt":"2026-01-19T19:31:49.087Z"},{"id":"17bcc0da-b49d-4fb1-8d47-1a4d40048430","workspaceId":"demo-workspace","name":"البيان","type":"rss","feedUrl":"https://news.google.com/rss/search?q=site:albayan.ae+when:3d&hl=ar&gl=AE&ceid=AE:ar","domain":"albayan.ae","description":"Al Bayan - UAE official Arabic newspaper (via Google News)","language":"ar","region":"gcc","country":"AE","tags":null,"mediaTier":"tier_1","tier":1,"isOfficial":"true","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:39:28.540Z","lastSuccessAt":"2026-01-21T20:35:09.972Z","lastError":"HTTP 503","itemCount":134,"createdAt":"2026-01-19T19:31:49.020Z","updatedAt":"2026-01-19T19:31:49.020Z"},{"id":"8d09c21f-9611-4a91-b819-124a3cfcca78","workspaceId":"demo-workspace","name":"BBCI","type":"rss","feedUrl":"https://feeds.bbci.co.uk/news/technology/rss.xml","domain":null,"description":"Real Estate","language":"en","region":null,"country":null,"tags":null,"mediaTier":"tier_3","tier":null,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:33:52.972Z","lastSuccessAt":"2026-01-21T21:33:52.972Z","lastError":null,"itemCount":0,"createdAt":"2025-12-27T13:47:56.335Z","updatedAt":"2026-01-17T23:44:05.419Z"},{"id":"92a83d33-1607-443c-9056-0c9fbd864993","workspaceId":"demo-workspace","name":"BBC General","type":"rss","feedUrl":"https://feeds.bbci.co.uk/news/technology/rss.xml","domain":null,"description":"","language":"en","region":null,"country":null,"tags":null,"mediaTier":"tier_3","tier":null,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:37:09.172Z","lastSuccessAt":"2026-01-21T21:37:09.172Z","lastError":null,"itemCount":60,"createdAt":"2025-12-27T11:44:13.455Z","updatedAt":"2026-01-17T23:44:05.419Z"},{"id":"06f0d211-6371-4edb-9e07-25b87171c955","workspaceId":"demo-workspace","name":"BBC Tech","type":"rss","feedUrl":"https://feeds.bbci.co.uk/news/technology/rss.xml","domain":null,"description":"Tech","language":"en","region":null,"country":null,"tags":null,"mediaTier":"tier_3","tier":null,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T21:33:09.472Z","lastSuccessAt":"2026-01-21T21:33:09.472Z","lastError":null,"itemCount":43,"createdAt":"2025-12-27T11:43:42.216Z","updatedAt":"2026-01-17T23:44:05.419Z"},{"id":"f798b2f5-7348-498b-9b7d-f8b4af9dbb6c","workspaceId":"demo-workspace","name":"BBC 2","type":"rss","feedUrl":"https://feeds.bbci.co.uk/news/technology/rss.xml","domain":null,"description":"Real Estate","language":"en","region":null,"country":null,"tags":null,"mediaTier":"tier_3","tier":null,"isOfficial":"false","isActive":"true","fetchIntervalMinutes":60,"lastFetchedAt":"2026-01-21T22:02:36.727Z","lastSuccessAt":"2026-01-21T22:02:36.727Z","lastError":null,"itemCount":0,"createdAt":"2025-12-27T11:42:21.463Z","updatedAt":"2026-01-17T23:44:05.419Z"}]   {"userId":"34087082","memberships":[{"workspaceId":"a6fa665e-2f03-416b-bc99-b30ae1531726","name":"ealmousa's Workspace","role":"owner"}],"activeWorkspaceId":"a6fa665e-2f03-416b-bc99-b30ae1531726","counts":{"topicsCount":0,"targetsCount":1,"sourcesCount":0},"recentTargets":[{"id":"9710fc55-7a2d-45bf-b262-e07a6a3bd570","name":"Gulf Estate Gazette","type":"wordpress_pull","workspaceId":"a6fa665e-2f03-416b-bc99-b30ae1531726"}]} these are the resuls after redeploying
+
+Yep — these results confirm it 100%.
+
+What’s happening (in one line)
+
+Your system sources exist only in demo-workspace, but your actual active workspace (a6fa...1726) has zero sources, so the UI is correctly showing nothing.
+
+Nothing in your redeploy changed the database state for your workspace, so sourcesCount: 0 stays true.
+
+The real fix you need (database action, not UI)
+
+You must COPY sources from demo-workspace → a6fa665e-2f03-416b-bc99-b30ae1531726.
+
+Until that happens, “Sources” will always be empty for you.
+
+Do this now (fastest, safest): add a one-time debug endpoint
+
+Create:
+
+POST /api/debug/seed-sources
+
+Behavior:
+
+Resolve activeWorkspaceId from session (same as /api/me/context)
+
+If that workspace has 0 sources:
+
+Copy all sources where workspaceId = "demo-workspace" into the active workspace
+
+Return { seeded: true, inserted: N }
+
+Key rules:
+
+COPY, don’t move (never update the original demo-workspace rows)
+
+New UUIDs for inserted rows
+
+workspaceId becomes the active one
+
+Optional: avoid duplicates by feedUrl
+
+Minimal SQL version (if you want the blunt instrument)
+
+If you have direct DB access, this is the cleanest “just fix it” move:
+
+INSERT INTO sources (
+  id, workspace_id, name, type, feed_url, domain, description,
+  language, region, country, tags, media_tier, tier,
+  is_official, is_active, fetch_interval_minutes,
+  last_fetched_at, last_success_at, last_error, item_count,
+  created_at, updated_at
+)
+SELECT
+  gen_random_uuid(), 
+  'a6fa665e-2f03-416b-bc99-b30ae1531726',
+  name, type, feed_url, domain, description,
+  language, region, country, tags, media_tier, tier,
+  is_official, is_active, fetch_interval_minutes,
+  NULL, NULL, NULL, 0,
+  now(), now()
+FROM sources
+WHERE workspace_id = 'demo-workspace';
+
+
+(Adjust column names to match your schema exactly — but that’s the idea.)
+
+Why your “auto-seed” didn’t work
+
+Because the app might be:
+
+seeding only on workspace creation (yours already exists), or
+
+seeding into the wrong workspace (still demo-workspace), or
+
+checking “0 sources” incorrectly (string/bool stored as "true"/"false" could break logic), or
+
+the seeding route is never being called for your session path.
+
+But we don’t need to guess anymore: your active workspace is still empty. So we force seed it.
+
+After you seed successfully
+
+Run /api/me/context again. You should see:
+
+sourcesCount: 41 (or similar)
+Then your “Select Sources” step will populate instantly.
+
+If you want the correct architecture (so this never happens again)
+
+Keep demo-workspace as a global catalog and add a join table:
+
+workspace_sources(workspace_id, source_id, enabled, customOverrides...)
+
+But for now: copy-and-seed is the right emergency fix.
+
+If you paste me your actual table name + key columns (or a screenshot of the Drizzle schema for sources), I’ll give you the exact endpoint code that matches your project conventions (and won’t fight TypeScript/Drizzle).
