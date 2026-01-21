@@ -4308,6 +4308,24 @@ export async function registerRoutes(
 </rss>`);
   });
 
+  // GET handler for POST-only debug endpoints (returns 405)
+  app.get("/api/debug/seed-sources", (_req, res) => {
+    return res.status(405).json({ 
+      message: "Use POST /api/debug/seed-sources",
+      method: "POST",
+      description: "Seeds sources from demo-workspace to your workspace"
+    });
+  });
+
+  // API 404 handler - must come after all API routes but before SPA fallback
+  app.all("/api/*", (req, res) => {
+    return res.status(404).json({ 
+      message: "API route not found", 
+      path: req.path,
+      method: req.method
+    });
+  });
+
   // Start background scheduler for automated pipeline runs
   startScheduler();
 

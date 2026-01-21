@@ -1,0 +1,94 @@
+Two things are happening:
+
+You opened /api/debug/seed-sources in the browser → that is a GET request.
+But your endpoint is POST (as designed). A GET will miss the route and fall through to the SPA, which then shows its own 404.
+
+Even worse: your server is currently allowing SPA fallback to catch /api/... routes when the API route isn’t matched. That’s why you see the React 404 page instead of a JSON 404/405.
+
+Do this now (the correct POST call)
+
+Open DevTools → Console and run exactly:
+
+fetch("/api/debug/seed-sources", {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+})
+  .then(async (r) => ({ status: r.status, body: await r.text() }))
+  .then(console.log)
+  .catch(console.error);
+
+What you should see
+
+status: 200
+
+body like: {"success":true,"inserted":41,"skipped":0}
+
+If you see HTML in body
+
+Then the server is still serving the SPA for that path (route not mounted OR fallback order is wrong). That’s a backend routing bug, not a data bug.
+
+The real fix you must implement in Replit (so this never happens again)
+Fix A — API must never fall into SPA fallback
+
+In your Express server, the order must be:
+
+mount API routes
+
+if route starts with /api/ and wasn’t handled → return JSON 404
+
+only then do SPA fallback (index.html) for non-API routes
+
+Add this after app.use("/api", apiRouter) and before app.get("*", serveIndex):
+
+app.all("/api/*", (req, res) => {
+  return res.status(404).json({ message: "API route not found", path: req.path });
+});
+
+
+Now /api/debug/seed-sources will return JSON even if missing, instead of showing the React 404 page.
+
+Fix B — If seed-sources is POST-only, add a GET that returns 405 JSON
+
+So opening it in a browser is self-explanatory:
+
+router.get("/debug/seed-sources", (req, res) => {
+  return res.status(405).json({ message: "Use POST /api/debug/seed-sources" });
+});
+
+Why your sources still aren’t showing (confirmed by your data)
+
+Your /api/me/context says:
+
+activeWorkspaceId = a6fa...
+
+sourcesCount = 0
+
+But the source rows you pasted are all:
+
+workspaceId = "demo-workspace"
+
+So the UI is correct to show no sources in your workspace. Nothing is “wrong” in the UI—your workspace simply has zero sources.
+
+The seed endpoint must copy from demo-workspace → a6fa....
+
+One more gotcha I can already see in your source rows
+
+Your source objects contain:
+
+"isOfficial":"false" (string)
+
+"isActive":"true" (string)
+
+If your DB columns are boolean, your copy logic must coerce:
+
+isOfficial: source.isOfficial === true || source.isOfficial === "true",
+isActive: source.isActive === true || source.isActive === "true",
+
+
+Otherwise you can end up inserting junk types or failing inserts.
+
+Next message from you
+
+Paste me the console output from the POST test above (status + body).
+If the body is HTML, I’ll give you the exact Replit prompt to fix the Express route mounting/fallback ordering in one go.
