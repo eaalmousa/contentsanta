@@ -158,6 +158,15 @@ export async function reportJobResult(data: ReportRequest): Promise<ReportResult
       leaseExpiresAt: null,
     });
     
+    if (job.pipelineItemId) {
+      await storage.updatePipelineItem(job.pipelineItemId, {
+        status: "published",
+        targetPostId: wpPostId?.toString(),
+        targetPermalink: wpUrl,
+        publishedAt: now,
+      });
+    }
+    
     await storage.updatePublishingTargetBySiteId(siteId, {
       lastReportAt: now,
       lastHealthStatus: "ok",
