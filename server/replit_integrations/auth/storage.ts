@@ -61,11 +61,8 @@ class AuthStorage implements IAuthStorage {
       })
       .returning();
     
-    // Auto-create workspace for new users
-    if (isNewUser) {
-      console.log(`[Auth] New user detected, creating default workspace for: ${user.id}`);
-      await this.ensureUserHasWorkspace(user.id, user.email || undefined);
-    }
+    // Always ensure user has workspace (covers both new users and existing users without workspace)
+    await this.ensureUserHasWorkspace(user.id, user.email || undefined);
     
     return user;
   }
