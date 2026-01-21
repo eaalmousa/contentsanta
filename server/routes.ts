@@ -3114,8 +3114,22 @@ export async function registerRoutes(
       });
     } catch (error: any) {
       console.error(`[Pipeline] Error running pipeline:`, error?.stack || error);
+      
+      // Handle validation errors with 400 instead of 500
+      const errorMessage = error?.message || "Failed to run pipeline";
+      if (errorMessage.includes("WORKSPACE_NOT_FOUND") || errorMessage.includes("TOPIC_NOT_FOUND")) {
+        return res.status(400).json({ 
+          error: errorMessage,
+          errorCode: "VALIDATION_ERROR",
+          debug: {
+            topicId: req.params.topicId,
+            hint: "Workspace or topic does not exist in database"
+          }
+        });
+      }
+      
       res.status(500).json({ 
-        error: error.message || "Failed to run pipeline",
+        error: errorMessage,
         errorCode: "PIPELINE_ERROR"
       });
     }

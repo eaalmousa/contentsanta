@@ -34,6 +34,18 @@ async function createJobRun(
   topicId: string,
   jobType: AutomationJobType
 ): Promise<string> {
+  // Validate workspace exists to prevent FK constraint violations
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace) {
+    throw new Error(`WORKSPACE_NOT_FOUND: Workspace ${workspaceId} does not exist. Cannot create job run.`);
+  }
+  
+  // Validate topic exists
+  const topic = await storage.getTopic(topicId);
+  if (!topic) {
+    throw new Error(`TOPIC_NOT_FOUND: Topic ${topicId} does not exist. Cannot create job run.`);
+  }
+  
   const run = await storage.createAutomationJobRun({
     workspaceId,
     topicId,
