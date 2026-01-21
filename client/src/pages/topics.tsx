@@ -299,8 +299,9 @@ function TopicSettingsDialog({
   );
   
   // Server auto-resolves workspace from session - include activeWorkspaceId in key for cache separation
+  // Use object form to prevent URL concatenation (workspace ID is for cache key only, not URL)
   const { data: targets, isLoading: targetsLoading } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets", activeWorkspaceId],
+    queryKey: ["/api/publishing-targets", { workspaceId: activeWorkspaceId }],
     enabled: open && isAuthenticated && !!activeWorkspaceId,
   });
   
@@ -1699,8 +1700,9 @@ export default function TopicsPage() {
   const userWorkspaceId = activeWorkspaceId;
 
   // Fetch publishing targets for create dialog - include activeWorkspaceId in key for cache separation
+  // Use object form to prevent URL concatenation (workspace ID is for cache key only, not URL)
   const { data: createDialogTargets, isLoading: isTargetsLoading } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets", activeWorkspaceId],
+    queryKey: ["/api/publishing-targets", { workspaceId: activeWorkspaceId }],
     enabled: isAuthenticated && showCreateDialog && !!activeWorkspaceId,
   });
   
