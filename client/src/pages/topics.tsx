@@ -34,6 +34,7 @@ import {
   Zap,
   Shield,
   Pause,
+  Rss,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -164,6 +165,20 @@ function CategoryTreeSelect({
   );
 }
 
+interface TopicSourceWithDetails {
+  topicId: string;
+  sourceId: string;
+  isEnabled: boolean;
+  source: {
+    id: string;
+    name: string;
+    feedUrl: string;
+    domain?: string;
+    tier?: number;
+    language?: string;
+  } | null;
+}
+
 function TopicSettingsDialog({ 
   topic,
   open,
@@ -174,12 +189,67 @@ function TopicSettingsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState("general");
+  const [activeTab, setActiveTab] = useState("sources");
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [tagSearch, setTagSearch] = useState("");
+  const [sourceSearch, setSourceSearch] = useState("");
   
   const currentRules = topic.taxonomyRules as TopicTaxonomyRules || {};
   const [rules, setRules] = useState<TopicTaxonomyRules>(currentRules);
+  
+  // Fetch topic sources
+  const topicSourcesQuery = useQuery<TopicSourceWithDetails[]>({
+    queryKey: [`/api/topics/${topic.id}/sources`],
+    enabled: open,
+  });
+  
+  // Fetch all available sources
+  const allSourcesQuery = useQuery<any[]>({
+    queryKey: ["/api/sources"],
+    enabled: open,
+  });
+  
+  const toggleSourceMutation = useMutation({
+    mutationFn: async ({ sourceId, isEnabled }: { sourceId: string; isEnabled: boolean }) => {
+      return await apiRequest("PATCH", `/api/topics/${topic.id}/sources/${sourceId}`, { isEnabled });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/topics", topic.id, "sources"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
+    },
+    onError: () => {
+      toast({ title: "Failed to update source", variant: "destructive" });
+    },
+  });
+  
+  const addSourceMutation = useMutation({
+    mutationFn: async (sourceId: string) => {
+      return await apiRequest("POST", `/api/topics/${topic.id}/sources`, {
+        sourceSelections: [{ sourceId, isEnabled: true }]
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/topics", topic.id, "sources"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
+      toast({ title: "Source added" });
+    },
+    onError: () => {
+      toast({ title: "Failed to add source", variant: "destructive" });
+    },
+  });
+  
+  // Get enabled source IDs for quick lookup
+  const enabledSourceIds = new Set(
+    (topicSourcesQuery.data ?? []).filter(ts => ts.isEnabled).map(ts => ts.sourceId)
+  );
+  const topicSourceIds = new Set(
+    (topicSourcesQuery.data ?? []).map(ts => ts.sourceId)
+  );
+  
+  // Filter available sources not yet added to topic
+  const availableSources = (allSourcesQuery.data ?? []).filter(
+    s => !topicSourceIds.has(s.id) && s.name.toLowerCase().includes(sourceSearch.toLowerCase())
+  );
   
   const { data: targets } = useQuery<PublishingTarget[]>({
     queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
@@ -302,13 +372,126 @@ function TopicSettingsDialog({
         </DialogHeader>
         
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid grid-cols-2 w-full">
+          <TabsList className="grid grid-cols-3 w-full">
+            <TabsTrigger value="sources" data-testid="tab-topic-sources">
+              <Rss className="w-4 h-4 mr-1" />
+              Sources
+            </TabsTrigger>
             <TabsTrigger value="general" data-testid="tab-topic-general">General</TabsTrigger>
             <TabsTrigger value="taxonomy" data-testid="tab-topic-taxonomy">
               <FolderTree className="w-4 h-4 mr-1" />
-              Taxonomy Rules
+              Taxonomy
             </TabsTrigger>
           </TabsList>
+          
+          <TabsContent value="sources" className="space-y-4 pt-4">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <Label className="text-base font-medium">Topic Sources</Label>
+                  <p className="text-xs text-muted-foreground">
+                    {enabledSourceIds.size} sources enabled for this topic
+                  </p>
+                </div>
+                {topicSourcesQuery.isLoading && (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                )}
+              </div>
+              
+              {/* Current topic sources */}
+              {(topicSourcesQuery.data ?? []).length > 0 ? (
+                <ScrollArea className="h-48 rounded border p-2">
+                  <div className="space-y-2">
+                    {(topicSourcesQuery.data ?? []).map((ts) => (
+                      <div 
+                        key={ts.sourceId}
+                        className="flex items-center justify-between gap-2 p-2 rounded hover-elevate"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {ts.source?.name || "Unknown source"}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {ts.source?.domain || ts.source?.feedUrl}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {ts.source?.language && (
+                            <Badge variant="outline" className="text-xs">
+                              {ts.source.language.toUpperCase()}
+                            </Badge>
+                          )}
+                          <Switch
+                            checked={ts.isEnabled}
+                            onCheckedChange={(checked) => 
+                              toggleSourceMutation.mutate({ sourceId: ts.sourceId, isEnabled: checked })
+                            }
+                            disabled={toggleSourceMutation.isPending}
+                            data-testid={`switch-source-${ts.sourceId}`}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              ) : (
+                <div className="text-center py-8 border rounded">
+                  <Rss className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                  <p className="text-sm text-muted-foreground">
+                    No sources assigned to this topic yet.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Add sources below to start discovering stories.
+                  </p>
+                </div>
+              )}
+              
+              {/* Add more sources */}
+              <div className="border-t pt-4">
+                <Label className="text-sm">Add More Sources</Label>
+                <Input 
+                  placeholder="Search sources..." 
+                  className="mt-2"
+                  value={sourceSearch}
+                  onChange={(e) => setSourceSearch(e.target.value)}
+                  data-testid="input-search-add-sources"
+                />
+                {allSourcesQuery.isLoading ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  </div>
+                ) : availableSources.length > 0 ? (
+                  <ScrollArea className="h-32 mt-2 rounded border p-2">
+                    <div className="space-y-1">
+                      {availableSources.slice(0, 20).map((source) => (
+                        <div 
+                          key={source.id}
+                          className="flex items-center justify-between gap-2 p-2 rounded hover-elevate cursor-pointer"
+                          onClick={() => addSourceMutation.mutate(source.id)}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm truncate">{source.name}</p>
+                          </div>
+                          <Button 
+                            size="sm" 
+                            variant="ghost"
+                            disabled={addSourceMutation.isPending}
+                            data-testid={`button-add-source-${source.id}`}
+                          >
+                            <Plus className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                ) : (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {sourceSearch ? "No matching sources found" : "All available sources are already added"}
+                  </p>
+                )}
+              </div>
+            </div>
+          </TabsContent>
           
           <TabsContent value="general" className="space-y-4 pt-4">
             <div className="space-y-4">
