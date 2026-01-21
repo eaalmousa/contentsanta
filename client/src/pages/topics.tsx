@@ -190,7 +190,6 @@ function TopicSettingsDialog({
 }) {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("sources");
-  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [publishingTargetId, setPublishingTargetId] = useState<string | null>(topic.publishingTargetId || null);
   const [tagSearch, setTagSearch] = useState("");
   const [sourceSearch, setSourceSearch] = useState("");
@@ -296,16 +295,16 @@ function TopicSettingsDialog({
     items: WpTaxonomyCache[]; 
     lastSync: { categories: string | null; tags: string | null } 
   }>({
-    queryKey: ["/api/publishing-targets", selectedTargetId, "taxonomy"],
-    enabled: !!selectedTargetId,
+    queryKey: ["/api/publishing-targets", publishingTargetId, "taxonomy"],
+    enabled: !!publishingTargetId,
   });
   
   const syncCategoriesMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", `/api/publishing-targets/${selectedTargetId}/sync-categories`);
+      return await apiRequest("POST", `/api/publishing-targets/${publishingTargetId}/sync-categories`);
     },
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", selectedTargetId, "taxonomy"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", publishingTargetId, "taxonomy"] });
       toast({ title: "Categories synced", description: `${data.count} categories imported` });
     },
     onError: () => {
@@ -315,10 +314,10 @@ function TopicSettingsDialog({
   
   const syncTagsMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", `/api/publishing-targets/${selectedTargetId}/sync-tags`);
+      return await apiRequest("POST", `/api/publishing-targets/${publishingTargetId}/sync-tags`);
     },
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", selectedTargetId, "taxonomy"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", publishingTargetId, "taxonomy"] });
       toast({ title: "Tags synced", description: `${data.count} tags imported` });
     },
     onError: () => {
@@ -373,24 +372,24 @@ function TopicSettingsDialog({
   };
   
   const toggleCategory = (categoryId: number) => {
-    if (!selectedTargetId) return;
-    const current = getTargetRules(selectedTargetId).defaultCategoryIds || [];
+    if (!publishingTargetId) return;
+    const current = getTargetRules(publishingTargetId).defaultCategoryIds || [];
     const updated = current.includes(categoryId)
       ? current.filter(id => id !== categoryId)
       : [...current, categoryId];
-    setTargetRules(selectedTargetId, { defaultCategoryIds: updated });
+    setTargetRules(publishingTargetId, { defaultCategoryIds: updated });
   };
   
   const toggleTag = (tagId: number) => {
-    if (!selectedTargetId) return;
-    const current = getTargetRules(selectedTargetId).defaultTagIds || [];
+    if (!publishingTargetId) return;
+    const current = getTargetRules(publishingTargetId).defaultTagIds || [];
     const updated = current.includes(tagId)
       ? current.filter(id => id !== tagId)
       : [...current, tagId];
-    setTargetRules(selectedTargetId, { defaultTagIds: updated });
+    setTargetRules(publishingTargetId, { defaultTagIds: updated });
   };
   
-  const targetRules = selectedTargetId ? getTargetRules(selectedTargetId) : null;
+  const targetRules = publishingTargetId ? getTargetRules(publishingTargetId) : null;
   const selectedCategories = targetRules?.defaultCategoryIds || [];
   const selectedTags = targetRules?.defaultTagIds || [];
   
@@ -751,38 +750,32 @@ function TopicSettingsDialog({
           </TabsContent>
           
           <TabsContent value="taxonomy" className="space-y-4 pt-4">
-            {wordPressTargets.length === 0 ? (
+            {!publishingTargetId ? (
               <div className="text-center py-6">
                 <FolderTree className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm text-muted-foreground">
-                  No WordPress targets configured.
+                  No publishing target linked to this topic.
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Add a WordPress target in Publishing to configure taxonomy rules.
+                  Go to the General tab and select a Publishing Target first.
                 </p>
               </div>
             ) : (
               <>
-                <div>
-                  <Label>WordPress Target</Label>
-                  <Select 
-                    value={selectedTargetId || ""} 
-                    onValueChange={setSelectedTargetId}
-                  >
-                    <SelectTrigger data-testid="select-wp-target">
-                      <SelectValue placeholder="Select a target..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {wordPressTargets.map(t => (
-                        <SelectItem key={t.id} value={t.id}>
-                          {t.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {(() => {
+                  const linkedTarget = wordPressTargets.find(t => t.id === publishingTargetId);
+                  return linkedTarget ? (
+                    <div className="flex items-center gap-2 p-2 rounded bg-muted/50">
+                      <Globe className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">{linkedTarget.name}</span>
+                      <span className="text-xs text-muted-foreground">{linkedTarget.wpSiteUrl}</span>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">Loading target...</div>
+                  );
+                })()}
                 
-                {selectedTargetId && targetRules && (
+                {publishingTargetId && targetRules && (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="flex flex-col gap-2">
@@ -905,7 +898,7 @@ function TopicSettingsDialog({
                         </div>
                         <Switch 
                           checked={targetRules.allowCreateTags}
-                          onCheckedChange={(v) => setTargetRules(selectedTargetId, { allowCreateTags: v })}
+                          onCheckedChange={(v) => setTargetRules(publishingTargetId!, { allowCreateTags: v })}
                           data-testid="switch-allow-create-tags"
                         />
                       </div>
@@ -919,7 +912,7 @@ function TopicSettingsDialog({
                         </div>
                         <Select
                           value={targetRules.locationMode || "none"}
-                          onValueChange={(v) => setTargetRules(selectedTargetId, { locationMode: v as any })}
+                          onValueChange={(v) => setTargetRules(publishingTargetId!, { locationMode: v as any })}
                         >
                           <SelectTrigger className="w-36" data-testid="select-location-mode">
                             <SelectValue />
