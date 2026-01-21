@@ -190,12 +190,14 @@ function StoryCard({
   story, 
   onCreateDraft, 
   onViewDetails,
-  isPending 
+  isPending,
+  isAutomated 
 }: { 
   story: StoryWithProvenance;
   onCreateDraft: () => void;
   onViewDetails: () => void;
   isPending: boolean;
+  isAutomated: boolean;
 }) {
   const primarySource = story.sources.find(s => s.isPrimary) || story.sources[0];
   const hasImage = story.featuredImage?.originalUrl || primarySource?.imageUrl;
@@ -267,16 +269,23 @@ function StoryCard({
             <Eye className="w-3 h-3 mr-1" />
             Details
           </Button>
-          <Button 
-            size="sm" 
-            variant="default"
-            onClick={onCreateDraft}
-            disabled={isPending}
-            data-testid={`button-create-draft-${story.id}`}
-          >
-            <Edit3 className="w-3 h-3 mr-1" />
-            Create Draft
-          </Button>
+          {isAutomated ? (
+            <Badge variant="secondary" className="text-xs">
+              <Sparkles className="w-3 h-3 mr-1" />
+              Managed by automation
+            </Badge>
+          ) : (
+            <Button 
+              size="sm" 
+              variant="default"
+              onClick={onCreateDraft}
+              disabled={isPending}
+              data-testid={`button-create-draft-${story.id}`}
+            >
+              <Edit3 className="w-3 h-3 mr-1" />
+              Create Draft
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -609,6 +618,7 @@ export default function SmartEditorPage() {
   const automatedTopics = liveTopics.filter(t => t.automationMode === "auto" || t.automationMode === "approval_required");
   const manualTopics = liveTopics.filter(t => t.automationMode === "manual" || !t.automationMode);
   const hasAutomation = automatedTopics.length > 0;
+  const allTopicsAutomated = liveTopics.length > 0 && manualTopics.length === 0;
   const automationDrafts = drafts?.filter(d => d.pipelineItemId !== null) || [];
 
   return (
@@ -771,6 +781,7 @@ export default function SmartEditorPage() {
                       onCreateDraft={() => handleCreateDraft(story)}
                       onViewDetails={() => setSelectedStory(story)}
                       isPending={createDraftMutation.isPending}
+                      isAutomated={allTopicsAutomated}
                     />
                   ))}
                 </div>
