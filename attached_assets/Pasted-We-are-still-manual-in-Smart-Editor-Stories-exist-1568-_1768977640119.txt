@@ -1,0 +1,41 @@
+We are still manual in Smart Editor. Stories exist (1568) but Drafts remain empty, and automation is not producing drafts.
+
+Observed:
+- Smart Editor shows “No drafts in progress”
+- DevTools console shows POST ... returning 500 (Internal Server Error)
+- Some 404s for unrelated assets, but main blocker is the 500 POST.
+
+Goal:
+Make ContentSanta fully automated so the user only sets Topic + region + target WP, and the system auto-creates drafts and publishes (exceptions to Quarantine).
+
+Required fixes:
+
+1) Fix the 500 POST
+- Identify which endpoint is failing (likely create-draft, run-pipeline, or refresh stories action).
+- Add server-side logs with stack traces for this route (safe for prod; return a requestId to the client).
+- Patch root cause so draft creation works reliably.
+
+2) Add/verify background scheduler (true automation)
+- Implement a recurring server job that runs every X minutes:
+  a) For each topic with automationEnabled=true:
+     - fetch latest eligible stories
+     - dedupe (by canonical URL + title similarity window)
+     - select up to dailyLimit and perRunLimit
+     - auto-create drafts (status=DRAFTED)
+     - optionally auto-enhance and move to READY_TO_PUBLISH
+     - enqueue publishing jobs
+  b) Failures go to QUARANTINE with reason codes.
+
+- This job MUST run without browser cookies (system/workspace automation identity).
+
+3) Wire the stages (no separate islands)
+- Ensure Pipeline “auto” is not just a UI label:
+  - Smart Editor drafts should be created by pipeline jobs automatically.
+  - Publishing should pull from READY_TO_PUBLISH via WP Plugin connector.
+  - Update UI: Smart Editor becomes optional review, not required.
+
+Deliverables:
+- After enabling auto on a topic, within 1 run cycle we should see new drafts appear automatically.
+- No manual “create draft” step required.
+- Quarantine captures exceptions with readable reasons.
+- Add a small “Automation Activity” log (last run time, created drafts count, published count).
