@@ -500,17 +500,36 @@ export default function SmartEditorPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [activeTab, setActiveTab] = useState("stories");
   const [selectedStory, setSelectedStory] = useState<StoryWithProvenance | null>(null);
-
-  const { data: stories, isLoading: storiesLoading } = useQuery<StoryWithProvenance[]>({
-    queryKey: ["/api/stories"],
-  });
-
-  const { data: drafts, isLoading: draftsLoading } = useQuery<Draft[]>({
-    queryKey: ["/api/drafts"],
-  });
+  const [selectedTopicId, setSelectedTopicId] = useState<string>("all");
 
   const { data: topics } = useQuery<Topic[]>({
     queryKey: ["/api/topics"],
+  });
+
+  const selectedTopic = topics?.find(t => t.id === selectedTopicId);
+  const isTopicAutomated = selectedTopic?.automationMode === "auto";
+  const isTopicSemiAuto = selectedTopic?.automationMode === "approval_required";
+
+  const { data: allStories, isLoading: allStoriesLoading } = useQuery<StoryWithProvenance[]>({
+    queryKey: ["/api/stories"],
+    enabled: selectedTopicId === "all",
+  });
+
+  const { data: topicStories, isLoading: topicStoriesLoading } = useQuery<StoryWithProvenance[]>({
+    queryKey: ["/api/topics", selectedTopicId, "stories"],
+    queryFn: async () => {
+      const res = await fetch(`/api/topics/${selectedTopicId}/stories`);
+      if (!res.ok) throw new Error("Failed to fetch topic stories");
+      return res.json();
+    },
+    enabled: selectedTopicId !== "all",
+  });
+
+  const stories = selectedTopicId === "all" ? allStories : topicStories;
+  const storiesLoading = selectedTopicId === "all" ? allStoriesLoading : topicStoriesLoading;
+
+  const { data: drafts, isLoading: draftsLoading } = useQuery<Draft[]>({
+    queryKey: ["/api/drafts"],
   });
 
   const updateDraftMutation = useMutation({
@@ -570,6 +589,7 @@ export default function SmartEditorPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
     },
     onError: (error: any) => {
       toast({
@@ -600,6 +620,7 @@ export default function SmartEditorPage() {
     }
     
     queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
     toast({ title: "Discovery completed", description: `Found ${totalMatched} total matching stories` });
   };
 
@@ -759,6 +780,43 @@ export default function SmartEditorPage() {
             </div>
 
             <TabsContent value="stories" className="space-y-4">
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Filter by topic:</span>
+                  <Select value={selectedTopicId} onValueChange={setSelectedTopicId}>
+                    <SelectTrigger className="w-[200px]" data-testid="select-topic-filter">
+                      <SelectValue placeholder="All Stories" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Stories</SelectItem>
+                      {topics?.filter(t => t.isLive === "true").map(topic => (
+                        <SelectItem key={topic.id} value={topic.id}>
+                          <div className="flex items-center gap-2">
+                            <span>{topic.name}</span>
+                            {topic.automationMode === "auto" && (
+                              <Sparkles className="w-3 h-3 text-primary" />
+                            )}
+                            {topic.automationMode === "approval_required" && (
+                              <Eye className="w-3 h-3 text-amber-500" />
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedTopic && (
+                  <Badge variant={isTopicAutomated ? "default" : isTopicSemiAuto ? "secondary" : "outline"}>
+                    {isTopicAutomated ? "Full Auto" : isTopicSemiAuto ? "Semi-Auto" : "Manual"}
+                  </Badge>
+                )}
+                {isTopicAutomated && (
+                  <p className="text-sm text-muted-foreground">
+                    Drafts are created automatically for this topic
+                  </p>
+                )}
+              </div>
+
               {storiesLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -781,7 +839,7 @@ export default function SmartEditorPage() {
                       onCreateDraft={() => handleCreateDraft(story)}
                       onViewDetails={() => setSelectedStory(story)}
                       isPending={createDraftMutation.isPending}
-                      isAutomated={allTopicsAutomated}
+                      isAutomated={isTopicAutomated}
                     />
                   ))}
                 </div>
