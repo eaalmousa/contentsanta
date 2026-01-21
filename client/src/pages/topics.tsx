@@ -1721,9 +1721,11 @@ export default function TopicsPage() {
     isTargetsLoading,
   }), [activeWorkspaceId, isContextLoading, workspaceCounts, createDialogTargets, createDialogWordPressTargets, isTargetsLoading]);
 
-  const fetchRecommendedSources = async (options?: { broaden?: boolean }) => {
+  const fetchRecommendedSources = async (options?: { broaden?: boolean; retryCount?: number }) => {
     setIsLoadingSources(true);
     const broaden = options?.broaden ?? false;
+    const retryCount = options?.retryCount ?? 0;
+    const maxRetries = 2;
     
     try {
       const response = await apiRequest("POST", "/api/topics/recommend-sources", {
@@ -1741,7 +1743,16 @@ export default function TopicsPage() {
       setIsBroadenedSearch(broaden);
     } catch (error: any) {
       console.error("Failed to fetch recommended sources:", error);
-      const errorMsg = error?.message?.includes("401") 
+      
+      // Retry on 401 errors (session might not be fully restored after server restart)
+      const is401 = error?.message?.includes("401");
+      if (is401 && retryCount < maxRetries) {
+        console.log(`[Sources] Retrying after 401 (attempt ${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+        return fetchRecommendedSources({ broaden, retryCount: retryCount + 1 });
+      }
+      
+      const errorMsg = is401 
         ? "Please sign in to discover sources" 
         : "Failed to load sources";
       toast({ title: errorMsg, variant: "destructive" });
