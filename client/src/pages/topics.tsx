@@ -1733,7 +1733,7 @@ export default function TopicsPage() {
     const maxRetries = 2;
     
     try {
-      const response = await apiRequest("POST", "/api/topics/recommend-sources", {
+      const requestBody = {
         topicQuery: newTopic.query,
         contentType: newTopic.contentIntent,
         // When broadening: use global region and drop countries
@@ -1741,13 +1741,22 @@ export default function TopicsPage() {
         countries: broaden ? [] : newTopic.countries,
         language: newTopic.language,
         workspaceId: userWorkspaceId,
-      });
+      };
+      console.log("[RecommendSources] Sending request:", JSON.stringify(requestBody));
+      
+      const response = await apiRequest("POST", "/api/topics/recommend-sources", requestBody);
+      console.log("[RecommendSources] Response status:", response.status, response.ok);
+      
       const data = await response.json() as { sources: RecommendedSource[]; defaultEnabled: string[]; totalFound: number; query: string };
+      console.log("[RecommendSources] Success:", { 
+        sourceCount: data.sources?.length,
+        totalFound: data.totalFound,
+      });
       setRecommendedSources(data.sources ?? []);
       setSelectedSourceIds(new Set(data.defaultEnabled ?? []));
       setIsBroadenedSearch(broaden);
     } catch (error: any) {
-      console.error("Failed to fetch recommended sources:", error);
+      console.error("[RecommendSources] FAILED:", error?.message || error, error);
       
       // Retry on 401 errors (session might not be fully restored after server restart)
       const is401 = error?.message?.includes("401");

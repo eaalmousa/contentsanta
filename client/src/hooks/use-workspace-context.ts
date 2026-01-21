@@ -36,10 +36,27 @@ export function useWorkspaceContext() {
     refetchOnWindowFocus: true,
   });
   
+  // DEBUG: Log the raw API response
+  if (query.data) {
+    console.log("[WorkspaceContext] API Response:", {
+      userId: query.data.userId,
+      activeWorkspaceId: query.data.activeWorkspaceId,
+      memberships: query.data.memberships,
+      sourcesCount: query.data.counts?.sourcesCount,
+    });
+  }
+  
   // Find active workspace name from memberships
   const activeWorkspace = query.data?.memberships?.find(
     m => m.workspaceId === query.data?.activeWorkspaceId
   );
+  
+  console.log("[WorkspaceContext] Resolved:", {
+    activeWorkspaceId: query.data?.activeWorkspaceId,
+    activeWorkspaceName: activeWorkspace?.name,
+    isLoading: query.isLoading,
+    isError: query.isError,
+  });
   
   return {
     ...query,
