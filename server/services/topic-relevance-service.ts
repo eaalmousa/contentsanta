@@ -1,7 +1,8 @@
 import type { Topic } from "@shared/schema";
 
 // Shared relevance scoring constants
-export const MIN_RELEVANCE_SCORE = 0.15;
+// INCREASED from 0.15 to 0.30 for stricter filtering (blocks more off-topic content)
+export const MIN_RELEVANCE_SCORE = 0.30;
 export const TIER1_SOURCE_BOOST = 0.05;
 
 // Common stop-words that should not be used for topic matching
@@ -77,6 +78,35 @@ const REAL_ESTATE_VOCABULARY_MEDIUM_WEIGHT = [
   "landlord", "landlords", "occupancy", "vacancy",
   "hotel project", "resort development", "mall development",
   "إيجار", "شقة", "فيلا", "بناء", "مشروع",
+];
+
+// HARD BLOCK PATTERNS - These patterns IMMEDIATELY reject articles regardless of score
+// Use for content that is NEVER relevant to real estate topics
+const HARD_BLOCK_PATTERNS = [
+  // Political & Diplomatic (absolute blocks)
+  "president receives", "president welcomes", "president congratulates",
+  "president sends", "president orders", "president visits", "president discusses",
+  "emir receives", "emir welcomes", "emir congratulates", "emir sends",
+  "king receives", "king welcomes", "king congratulates", "king sends",
+  "crown prince receives", "crown prince welcomes", "crown prince visits",
+  "foreign minister", "foreign relations", "diplomatic ties", "fraternal ties",
+  "bilateral relations", "bilateral cooperation", "phone call", "telephone call",
+  "wishes", "condolences", "congratulates", "delegation", "summit",
+  "inmates", "prisoners", "release", "pardon", "amnesty",
+  "lunar new year", "ramadan", "eid", "holiday wishes",
+  
+  // Government appointments (not real estate)
+  "named chairperson", "appointed chairman", "appointed minister",
+  "cabinet reshuffle", "ministerial", "parliament",
+  
+  // Political events (absolute blocks)
+  "election", "referendum", "voting", "ballot", "sovereignty dispute",
+  "territorial dispute", "border conflict", "ceasefire", "protest",
+  
+  // Social/Cultural (not real estate)
+  "egg prices", "food prices", "grocery prices", "inflation rate",
+  "tournament", "championship", "sports", "athlete",
+  "movie premiere", "film festival", "concert", "festival",
 ];
 
 const NEGATIVE_KEYWORDS = [
@@ -182,6 +212,28 @@ export function calculateTopicRelevance(
   const content = normalizeText(item.rawContent || '');
   const combinedText = `${title} ${summary} ${content}`;
   
+  // 🚨 HARD BLOCK CHECK - Reject immediately if any hard block pattern detected
+  for (const blockPattern of HARD_BLOCK_PATTERNS) {
+    if (title.includes(blockPattern)) {
+      return {
+        score: 0,
+        matchedTerms: [],
+        negativeMatches: [blockPattern],
+        isRelevant: false,
+        reason: `HARD BLOCKED: "${blockPattern}" detected in title - political/diplomatic/off-topic content`,
+      };
+    }
+    if (summary.includes(blockPattern)) {
+      return {
+        score: 0,
+        matchedTerms: [],
+        negativeMatches: [blockPattern],
+        isRelevant: false,
+        reason: `HARD BLOCKED: "${blockPattern}" detected - political/diplomatic/off-topic content`,
+      };
+    }
+  }
+  
   const topicQuery = topic.query || topic.name || '';
   const queryKeywords = extractQueryKeywords(topicQuery);
   
@@ -241,15 +293,23 @@ export function calculateTopicRelevance(
     }
   }
   
-  // Negative keywords (off-topic indicators)
+  // Negative keywords (off-topic indicators) - STRENGTHENED PENALTIES
   for (const term of NEGATIVE_KEYWORDS) {
     if (title.includes(term)) {
-      score -= 0.25;
+      score -= 0.50;  // Increased from 0.25 - stronger title penalty
       negativeMatches.push(term);
-    } else if (combinedText.includes(term)) {
-      score -= 0.1;
+    } else if (summary.includes(term)) {
+      score -= 0.25;  // Increased from 0.1 - stronger summary penalty
+      if (!negativeMatches.includes(term)) negativeMatches.push(term);
+    } else if (content.includes(term)) {
+      score -= 0.15;  // Added content penalty
       if (!negativeMatches.includes(term)) negativeMatches.push(term);
     }
+  }
+  
+  // ADDITIONAL: If multiple negative keywords detected, apply exponential penalty
+  if (negativeMatches.length >= 2) {
+    score -= 0.30 * (negativeMatches.length - 1);  // -0.30 for each additional negative match
   }
   
   score = Math.max(0, Math.min(1, score));
