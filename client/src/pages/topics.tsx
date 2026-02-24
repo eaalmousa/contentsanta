@@ -348,6 +348,7 @@ function TopicSettingsDialog({
   const [articlesPerRun, setArticlesPerRun] = useState(topic.articlesPerRun || 3);
   const [runIntervalMinutes, setRunIntervalMinutes] = useState(topic.runIntervalMinutes || 5);
   const [newPublishTime, setNewPublishTime] = useState("14:30");
+  const [query, setQuery] = useState(topic.query || "");
 
   const commonTimezones = [
     { value: "Asia/Dubai", label: "Dubai (GMT+4)" },
@@ -476,6 +477,7 @@ function TopicSettingsDialog({
   const updateMutation = useMutation({
     mutationFn: async () => {
       return await apiRequest("PATCH", `/api/topics/${topic.id}`, {
+        query,
         taxonomyRules: rules,
         timezone,
         publishTimes,
@@ -814,6 +816,22 @@ function TopicSettingsDialog({
 
           <TabsContent value="general" className="space-y-4 pt-4">
             <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="topic-query">What to Track</Label>
+                <textarea
+                  id="topic-query"
+                  className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  placeholder="Describe what content you want to track... e.g., Real estate market updates, property prices, developer announcements, etc."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Define what content this topic should track. This helps the AI identify relevant articles from your sources.
+                </p>
+              </div>
+
+              <Separator />
+
               <div className="space-y-2">
                 <Label>Publishing Target</Label>
                 <Select
