@@ -80,25 +80,62 @@ const REAL_ESTATE_VOCABULARY_MEDIUM_WEIGHT = [
 ];
 
 const NEGATIVE_KEYWORDS = [
+  // Food & Agriculture (NOT real estate)
   "infant formula", "baby formula", "recall", "food safety", "food recall",
+  "egg prices", "food prices", "grocery", "groceries", "supermarket", "produce",
+  "agriculture", "farming", "crop", "harvest", "livestock", "poultry",
+  
+  // Energy & Resources (NOT real estate)
   "gas deal", "lng deal", "natural gas", "petroleum deal", "crude oil", "oil prices",
+  "oil field", "gas field", "drilling", "refinery", "pipeline",
+  
+  // Transportation (NOT real estate)
   "airline deal", "flight", "aviation deal", "aircraft order", "airline",
+  "airport", "cargo", "shipping", "logistics", "freight",
+  
+  // Healthcare & Pharma (NOT real estate)
   "pharmaceutical", "medicine", "drug approval", "vaccine",
+  "hospital", "clinic", "medical", "healthcare", "patient",
+  
+  // Technology & Telecom (NOT real estate unless specifically PropTech)
   "telecom deal", "5g network", "network deal",
-  "military", "defense contract", "armament", "weapons",
+  "cryptocurrency", "bitcoin", "fintech",
+  "software", "startup tech", "app launch", "cybersecurity",
+  
+  // Military & Defense (NOT real estate)
+  "military", "defense contract", "armament", "weapons", "army", "navy",
+  "military base", "defense", "security forces", "armed forces",
+  
+  // Politics & Diplomacy (NOT real estate unless policy directly affects real estate)
+  "ceasefire", "protest", "election", "political", "diplomatic",
+  "sovereignty", "territorial", "border dispute", "sanctions",
+  "embassy", "consulate", "foreign minister", "foreign relations",
+  "parliament", "legislation", "bill passed", "referendum",
+  
+  // Sports & Entertainment (NOT real estate)
   "football", "cricket", "tennis", "golf tournament", "sports",
   "movie", "film", "concert", "festival", "entertainment",
-  "fashion", "clothing", "apparel",
-  "restaurant", "cuisine", "chef",
-  "cryptocurrency", "bitcoin", "fintech",
-  "insurance claims",
-  "hospital", "clinic", "medical",
-  "university", "school", "college",
-  "software", "startup tech", "app launch",
-  "car sales", "vehicle sales", "automotive",
-  "travel visa", "holiday", "tourism",
-  "ceasefire", "protest", "election", "political", "military",
-  "marathon", "championship", "tournament", "match",
+  "marathon", "championship", "tournament", "match", "athlete",
+  
+  // Retail & Consumer Goods (NOT real estate)
+  "fashion", "clothing", "apparel", "retail chain", "store opening",
+  "restaurant", "cuisine", "chef", "menu", "dining",
+  
+  // Finance (NOT real estate unless REIT/property investment)
+  "insurance claims", "insurance policy", "life insurance",
+  "stock market", "equity", "trading", "forex", "currency",
+  
+  // Education (NOT real estate)
+  "university", "school", "college", "education", "students",
+  "examination", "curriculum", "academic",
+  
+  // Automotive (NOT real estate)
+  "car sales", "vehicle sales", "automotive", "automobile",
+  "showroom", "car dealer", "auto parts",
+  
+  // Tourism & Travel (NOT real estate unless hospitality development)
+  "travel visa", "holiday", "tourism", "tourist", "vacation",
+  "beach resort", "theme park", "attraction",
 ];
 
 export interface RelevanceResult {
