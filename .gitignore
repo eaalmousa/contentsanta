@@ -9,6 +9,14 @@ vite.config.ts.*
 .env
 .env.local
 .env.*.local
+CORRECT_ENV.txt
+env-template.txt
+
+# Documentation with sensitive data
+HARDCODED_DATA_AUDIT_REPORT.md
+SESSION_FIX_INSTRUCTIONS.md
+*_COMPLETE.md
+*_INSTRUCTIONS.md
 
 # Development & Test files
 *.log
