@@ -18,9 +18,15 @@ export const sessions = pgTable(
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: varchar("email").unique(),
+  passwordHash: varchar("password_hash"),
+  authProvider: varchar("auth_provider").default("email"),
+  googleId: varchar("google_id"),
+  replitId: varchar("replit_id"),
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
+  emailVerified: timestamp("email_verified"),
+  isSiteAdmin: varchar("is_site_admin").default("false"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

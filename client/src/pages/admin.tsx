@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { sanitizeImageUrl } from "@/lib/image-utils";
 import { format } from "date-fns";
 import {
   Users,
@@ -305,7 +306,7 @@ function UsersTable({ users, loading }: { users?: UserWithStats[]; loading?: boo
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <Avatar className="h-8 w-8">
-                        <AvatarImage src={user.profileImageUrl || undefined} />
+                        <AvatarImage src={sanitizeImageUrl(user.profileImageUrl)} />
                         <AvatarFallback>
                           {(user.firstName?.[0] || user.email?.[0] || "U").toUpperCase()}
                         </AvatarFallback>

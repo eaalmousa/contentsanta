@@ -4,18 +4,31 @@ import { fetchAllActiveSources } from "./rss-service";
 import { runAllActiveAutomations } from "./automation-service";
 import { runAllLiveTopics, type TopicRunLog } from "./topic-run-service";
 import { runAllLivePipelines } from "./pipeline-jobs-service";
+import { reapStaleJobs } from "./reaper-service";
+import { publishingWorkerService } from "./publishing-worker-service";
 import { storage } from "../storage";
 
 let rssFetchJob: ScheduledTask | null = null;
 let automationJob: ScheduledTask | null = null;
 let topicDiscoveryJob: ScheduledTask | null = null;
 let pipelineAutomationJob: ScheduledTask | null = null;
+let publishingWorkerJob: ScheduledTask | null = null;
 let wpPullLeaseCleanupJob: ScheduledTask | null = null;
+let reaperJob: ScheduledTask | null = null;
 
 export function startScheduler() {
   console.log("[Scheduler] Starting background jobs...");
   
-  rssFetchJob = cron.schedule("*/30 * * * *", async () => {
+  // Read intervals from environment variables (fallback to defaults)
+  const RSS_FETCH_INTERVAL = parseInt(process.env.RSS_FETCH_INTERVAL_MINUTES || "30", 10);
+  const AUTOMATION_INTERVAL = parseInt(process.env.AUTOMATION_INTERVAL_MINUTES || "15", 10);
+  const TOPIC_DISCOVERY_INTERVAL = parseInt(process.env.TOPIC_DISCOVERY_INTERVAL_MINUTES || "20", 10);
+  const PIPELINE_INTERVAL = parseInt(process.env.PIPELINE_INTERVAL_MINUTES || "10", 10);
+  const PUBLISHING_WORKER_INTERVAL = parseInt(process.env.PUBLISHING_WORKER_INTERVAL_MINUTES || "3", 10);
+  const WP_PULL_CLEANUP_INTERVAL = parseInt(process.env.WP_PULL_CLEANUP_INTERVAL_MINUTES || "2", 10);
+  const REAPER_INTERVAL = parseInt(process.env.REAPER_INTERVAL_MINUTES || "5", 10);
+  
+  rssFetchJob = cron.schedule(`*/${RSS_FETCH_INTERVAL} * * * *`, async () => {
     console.log("[Scheduler] Running RSS fetch job...");
     try {
       const results = await fetchAllActiveSources();
@@ -25,7 +38,7 @@ export function startScheduler() {
     }
   });
   
-  automationJob = cron.schedule("*/15 * * * *", async () => {
+  automationJob = cron.schedule(`*/${AUTOMATION_INTERVAL} * * * *`, async () => {
     console.log("[Scheduler] Running automation job...");
     try {
       const results = await runAllActiveAutomations();
@@ -35,7 +48,7 @@ export function startScheduler() {
     }
   });
   
-  topicDiscoveryJob = cron.schedule("*/20 * * * *", async () => {
+  topicDiscoveryJob = cron.schedule(`*/${TOPIC_DISCOVERY_INTERVAL} * * * *`, async () => {
     console.log("[Scheduler] Running topic discovery job...");
     try {
       const logs = await runAllLiveTopics();
@@ -47,7 +60,7 @@ export function startScheduler() {
     }
   });
   
-  pipelineAutomationJob = cron.schedule("*/10 * * * *", async () => {
+  pipelineAutomationJob = cron.schedule(`*/${PIPELINE_INTERVAL} * * * *`, async () => {
     console.log("[Scheduler] Running pipeline automation job...");
     try {
       const results = await runAllLivePipelines();
@@ -62,7 +75,20 @@ export function startScheduler() {
     }
   });
   
-  wpPullLeaseCleanupJob = cron.schedule("*/2 * * * *", async () => {
+  // Publishing Worker: Independent from discovery - processes publishing_items
+  publishingWorkerJob = cron.schedule(`*/${PUBLISHING_WORKER_INTERVAL} * * * *`, async () => {
+    console.log("[Scheduler] Running publishing worker job...");
+    try {
+      const result = await publishingWorkerService.runPublishingWorker();
+      if (result.processed > 0) {
+        console.log(`[Scheduler] Publishing worker: ${result.published} published, ${result.failed} failed`);
+      }
+    } catch (error: any) {
+      console.error("[Scheduler] Publishing worker error:", error.message);
+    }
+  });
+  
+  wpPullLeaseCleanupJob = cron.schedule(`*/${WP_PULL_CLEANUP_INTERVAL} * * * *`, async () => {
     console.log("[Scheduler] Running WP Pull lease cleanup job...");
     try {
       const released = await storage.releaseExpiredWpPullJobLeases();
@@ -74,12 +100,27 @@ export function startScheduler() {
     }
   });
   
+  // Reaper job: Clean up stale running jobs
+  reaperJob = cron.schedule(`*/${REAPER_INTERVAL} * * * *`, async () => {
+    console.log("[Scheduler] Running reaper job...");
+    try {
+      const { reaped, jobs } = await reapStaleJobs();
+      if (reaped > 0) {
+        console.log(`[Scheduler] Reaper: ${reaped} stale jobs timed out`);
+      }
+    } catch (error: any) {
+      console.error("[Scheduler] Reaper error:", error.message);
+    }
+  });
+  
   console.log("[Scheduler] Background jobs started:");
-  console.log("  - RSS Fetch: every 30 minutes");
-  console.log("  - Automations: every 15 minutes");
-  console.log("  - Topic Discovery: every 20 minutes");
-  console.log("  - Pipeline Automation: every 10 minutes");
-  console.log("  - WP Pull Lease Cleanup: every 2 minutes");
+  console.log(`  - RSS Fetch: every ${RSS_FETCH_INTERVAL} minutes`);
+  console.log(`  - Automations: every ${AUTOMATION_INTERVAL} minutes`);
+  console.log(`  - Topic Discovery: every ${TOPIC_DISCOVERY_INTERVAL} minutes`);
+  console.log(`  - Pipeline Automation: every ${PIPELINE_INTERVAL} minutes`);
+  console.log(`  - Publishing Worker: every ${PUBLISHING_WORKER_INTERVAL} minutes`);
+  console.log(`  - WP Pull Lease Cleanup: every ${WP_PULL_CLEANUP_INTERVAL} minutes`);
+  console.log(`  - Reaper (stale job cleanup): every ${REAPER_INTERVAL} minutes`);
 }
 
 export function stopScheduler() {
@@ -99,9 +140,17 @@ export function stopScheduler() {
     pipelineAutomationJob.stop();
     pipelineAutomationJob = null;
   }
+  if (publishingWorkerJob) {
+    publishingWorkerJob.stop();
+    publishingWorkerJob = null;
+  }
   if (wpPullLeaseCleanupJob) {
     wpPullLeaseCleanupJob.stop();
     wpPullLeaseCleanupJob = null;
+  }
+  if (reaperJob) {
+    reaperJob.stop();
+    reaperJob = null;
   }
   console.log("[Scheduler] Background jobs stopped");
 }

@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { sanitizeImageUrl } from "@/lib/image-utils";
 import {
   Plus,
   Users,
@@ -116,7 +117,7 @@ function MemberCard({
     <div className="flex items-center justify-between gap-4 rounded-lg border p-4" data-testid={`card-member-${member.id}`}>
       <div className="flex items-center gap-4">
         <Avatar className="h-10 w-10">
-          <AvatarImage src={member.user?.profileImageUrl || undefined} />
+          <AvatarImage src={sanitizeImageUrl(member.user?.profileImageUrl)} />
           <AvatarFallback>{initials}</AvatarFallback>
         </Avatar>
         <div className="flex flex-col gap-1">

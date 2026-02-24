@@ -38,15 +38,9 @@ class AuthStorage implements IAuthStorage {
           .where(eq(users.email, userData.email))
           .returning();
         
-        // Ensure workspace exists after update
-        await this.ensureUserHasWorkspace(updated.id, updated.email || undefined);
         return updated;
       }
     }
-    
-    // Check if this is a new user (not existing)
-    const [existingUser] = await db.select().from(users).where(sql`${users.id} = ${userData.id}`);
-    const isNewUser = !existingUser;
     
     // Standard upsert by ID
     const [user] = await db
@@ -60,9 +54,6 @@ class AuthStorage implements IAuthStorage {
         },
       })
       .returning();
-    
-    // Always ensure user has workspace (covers both new users and existing users without workspace)
-    await this.ensureUserHasWorkspace(user.id, user.email || undefined);
     
     return user;
   }
@@ -178,6 +169,19 @@ class AuthStorage implements IAuthStorage {
       let inserted = 0;
       for (const source of systemSources.rows as any[]) {
         try {
+          // Use a simpler insert approach that doesn't rely on ON CONFLICT constraint
+          // Check if source already exists first
+          const existingCheck = await db.execute(sql`
+            SELECT id FROM sources 
+            WHERE workspace_id = ${workspaceId} 
+            AND feed_url = ${source.feed_url}
+            LIMIT 1
+          `);
+          
+          if (existingCheck.rows && existingCheck.rows.length > 0) {
+            continue; // Skip if already exists
+          }
+          
           const result = await db.execute(sql`
             INSERT INTO sources (
               id, workspace_id, name, type, feed_url, domain, description,
@@ -209,7 +213,6 @@ class AuthStorage implements IAuthStorage {
               now(),
               now()
             )
-            ON CONFLICT (workspace_id, feed_url) DO NOTHING
             RETURNING id
           `);
           // Only count if row was actually inserted

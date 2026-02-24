@@ -74,7 +74,10 @@ export interface PullJobPayload {
   excerpt?: string;
   slug?: string;
   sourceUrl?: string;
+  sourceName?: string; // NEW: Source attribution (e.g., "Al Khaleej Newspaper")
   featuredImageUrl?: string;
+  featuredImageCredit?: string; // NEW: Image attribution
+  featuredImageCaption?: string; // NEW: Image caption/alt
   meta: Record<string, unknown>;
 }
 
@@ -104,7 +107,10 @@ export async function pullNextJob(siteId: string): Promise<{ job: PullJobPayload
     excerpt: job.excerpt || undefined,
     slug: job.slug || undefined,
     sourceUrl: job.sourceUrl || undefined,
+    sourceName: (job.metadataJson as any)?.source_name || undefined, // NEW: Source attribution
     featuredImageUrl: job.featuredImageUrl || undefined,
+    featuredImageCredit: job.featuredImageCredit || undefined, // NEW: Image attribution
+    featuredImageCaption: job.featuredImageCaption || undefined, // NEW: Image caption/alt
     meta: (job.metadataJson as Record<string, unknown>) || {},
   };
   
@@ -119,6 +125,8 @@ export interface ReportRequest {
   wpPostId?: number;
   wpUrl?: string;
   error?: string;
+  featuredImageError?: string; // NEW: Image handling error (non-fatal)
+  warning?: string; // NEW: Warning message (post published but with issues)
 }
 
 export interface ReportResult {
@@ -128,7 +136,7 @@ export interface ReportResult {
 }
 
 export async function reportJobResult(data: ReportRequest): Promise<ReportResult> {
-  const { siteId, jobId, leaseToken, ok, wpPostId, wpUrl, error } = data;
+  const { siteId, jobId, leaseToken, ok, wpPostId, wpUrl, error, featuredImageError, warning } = data;
   
   if (!siteId || !jobId || !leaseToken) {
     return { ok: false, error: "Missing required fields", errorCode: "MISSING_FIELDS" };
@@ -150,6 +158,14 @@ export async function reportJobResult(data: ReportRequest): Promise<ReportResult
   const now = new Date();
   
   if (ok) {
+    // Log image handling issues (non-fatal)
+    if (featuredImageError) {
+      console.log(`[WP Report] Job ${jobId} published successfully, but featured image failed: ${featuredImageError}`);
+    }
+    if (warning) {
+      console.log(`[WP Report] Job ${jobId} warning: ${warning}`);
+    }
+    
     await storage.updateWpPullJob(jobId, {
       status: "published",
       resultWpPostId: wpPostId,
@@ -159,14 +175,31 @@ export async function reportJobResult(data: ReportRequest): Promise<ReportResult
     });
     
     if (job.pipelineItemId) {
+      console.log(`[WP Report] Updating pipeline item ${job.pipelineItemId} with wpPostId=${wpPostId}`);
       const pipelineItem = await storage.getPipelineItem(job.pipelineItemId);
       
-      await storage.updatePipelineItem(job.pipelineItemId, {
-        status: "published",
+      if (!pipelineItem) {
+        console.log(`[WP Report] ❌ Pipeline item ${job.pipelineItemId} not found!`);
+      } else {
+        console.log(`[WP Report] Pipeline item found, current status: ${pipelineItem.status}`);
+      }
+      
+      const updateData = {
+        status: "published" as const,
         targetPostId: wpPostId?.toString(),
         targetPermalink: wpUrl,
         publishedAt: now,
-      });
+      };
+      console.log(`[WP Report] About to update pipeline item with:`, JSON.stringify(updateData, null, 2));
+      
+      const updated = await storage.updatePipelineItem(job.pipelineItemId, updateData);
+      
+      if (updated) {
+        console.log(`[WP Report] ✅ Pipeline item ${job.pipelineItemId} updated successfully`);
+        console.log(`[WP Report]    New status: ${updated.status}, targetPostId: ${updated.targetPostId}`);
+      } else {
+        console.log(`[WP Report] ❌ storage.updatePipelineItem() returned undefined/null!`);
+      }
       
       if (pipelineItem?.topicId) {
         const topic = await storage.getTopic(pipelineItem.topicId);
@@ -177,6 +210,8 @@ export async function reportJobResult(data: ReportRequest): Promise<ReportResult
           });
         }
       }
+    } else {
+      console.log(`[WP Report] ⚠️  Job ${jobId} has NO pipelineItemId - cannot update pipeline_items`);
     }
     
     await storage.updatePublishingTargetBySiteId(siteId, {

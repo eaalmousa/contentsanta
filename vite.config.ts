@@ -36,5 +36,8 @@ export default defineConfig({
       strict: true,
       deny: ["**/.*"],
     },
+    hmr: {
+      overlay: false,  // Disable error overlay (useful when browser extensions interfere)
+    },
   },
 });

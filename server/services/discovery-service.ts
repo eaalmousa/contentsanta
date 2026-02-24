@@ -34,7 +34,9 @@ const COMMON_FEED_PATHS = [
 ];
 
 const FRESHNESS_DAYS = 14;
-const MAX_CANDIDATES_PER_DOMAIN = 3;
+
+// Externalized configuration - read from environment variables
+const MAX_CANDIDATES_PER_DOMAIN = parseInt(process.env.DISCOVERY_MAX_CANDIDATES || "3", 10);
 
 interface DiscoveryLog {
   timestamp: string;

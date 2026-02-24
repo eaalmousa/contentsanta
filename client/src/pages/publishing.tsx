@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useWorkspaceContext } from "@/hooks/use-workspace-context";
 import {
   Plus,
   Globe,
@@ -67,7 +68,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDistanceToNow } from "date-fns";
 
 const platformOptions: { value: TargetType; label: string; icon: React.ElementType; color: string; description?: string }[] = [
-  { value: "wordpress", label: "WordPress (Direct)", icon: SiWordpress, color: "text-blue-600", description: "Server pushes content directly to WordPress REST API" },
   { value: "wordpress_pull", label: "WordPress (Plugin)", icon: SiWordpress, color: "text-green-600", description: "WP plugin pulls content - avoids CAPTCHA blocks" },
   { value: "webflow", label: "Webflow", icon: Globe, color: "text-blue-500" },
   { value: "linkedin", label: "LinkedIn", icon: SiLinkedin, color: "text-blue-700" },
@@ -106,7 +106,7 @@ function PlatformIcon({ type, className }: { type: string; className?: string })
   return <Icon className={`${className} ${option.color}`} />;
 }
 
-function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () => void }) {
+function TargetCard({ target, onEdit, workspaceId }: { target: PublishingTarget; onEdit: () => void; workspaceId: string }) {
   const { toast } = useToast();
 
   const deleteMutation = useMutation({
@@ -114,7 +114,8 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
       await apiRequest("DELETE", `/api/publishing-targets/${target.id}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
+      // Invalidate all publishing targets queries across all workspaces
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets"] });
       toast({ title: "Target deleted" });
     },
   });
@@ -241,7 +242,7 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
     onSuccess: (data: any) => {
       if (data.ok) {
         setShowSecret(data.secret);
-        queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
+        queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId }] });
         toast({ 
           title: "Secret rotated", 
           description: "Copy the new secret now - it won't be shown again!" 
@@ -261,7 +262,7 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
       return await res.json();
     },
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId }] });
       if (data.status === "ok") {
         toast({ title: "Connection healthy", description: data.message || "Target is reachable" });
       } else {
@@ -273,7 +274,7 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
       }
     },
     onError: (error: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId }] });
       toast({ title: "Health check failed", description: error?.message || "Connection failed", variant: "destructive" });
     },
   });
@@ -581,6 +582,44 @@ function TargetCard({ target, onEdit }: { target: PublishingTarget; onEdit: () =
               </div>
               
               <PluginDiagnostics target={target} />
+              
+              {/* WordPress REST API Credentials for Category/Tag Sync */}
+              <div className="pt-4 border-t space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium">WordPress REST API Access</div>
+                    <div className="text-xs text-muted-foreground">Required to sync categories and tags from WordPress</div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={onEdit}
+                  >
+                    <Edit className="h-3 w-3 mr-1" />
+                    Configure
+                  </Button>
+                </div>
+                
+                {target.configJson?.username && target.configJson?.applicationPassword ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Site URL:</span>
+                        <div className="font-mono text-xs mt-1 truncate">{target.configJson.siteUrl || target.name}</div>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Username:</span>
+                        <div className="font-mono text-xs mt-1">{target.configJson.username}</div>
+                      </div>
+                    </div>
+                    <TaxonomySyncSection targetId={target.id} />
+                  </>
+                ) : (
+                  <div className="bg-yellow-50 dark:bg-yellow-950/30 rounded-lg p-3 text-sm text-muted-foreground">
+                    Click "Configure" to add your WordPress credentials (username + application password) for syncing categories and tags.
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -821,11 +860,13 @@ function TaxonomySyncSection({ targetId }: { targetId: string }) {
 function CreateTargetDialog({ 
   open, 
   onOpenChange, 
-  editTarget 
+  editTarget,
+  workspaceId
 }: { 
   open: boolean; 
   onOpenChange: (open: boolean) => void;
   editTarget?: PublishingTarget | null;
+  workspaceId: string | null;
 }) {
   const { toast } = useToast();
   const isEditing = !!editTarget;
@@ -833,7 +874,7 @@ function CreateTargetDialog({
   // Load form values - handle WordPress field name mapping
   const getDefaultConfigValues = () => {
     const config = editTarget?.configJson as any;
-    if (editTarget?.type === "wordpress") {
+    if (editTarget?.type === "wordpress" || editTarget?.type === "wordpress_pull") {
       return {
         apiUrl: config?.siteUrl || "",
         apiKey: config?.applicationPassword || "",
@@ -862,7 +903,7 @@ function CreateTargetDialog({
     mutationFn: async (data: TargetFormValues) => {
       // Transform field names for WordPress to match what the service expects
       let payload: any = { ...data };
-      if (data.type === "wordpress") {
+      if (data.type === "wordpress" || data.type === "wordpress_pull") {
         payload = {
           ...data,
           configJson: {
@@ -878,12 +919,13 @@ function CreateTargetDialog({
       } else {
         await apiRequest("POST", "/api/publishing-targets", {
           ...payload,
-          workspaceId: "demo-workspace",
+          workspaceId: workspaceId, // Use actual workspace ID
         });
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }] });
+      // Invalidate all publishing targets queries across all workspaces
+      queryClient.invalidateQueries({ queryKey: ["/api/publishing-targets"] });
       toast({ title: isEditing ? "Target updated" : "Target connected" });
       onOpenChange(false);
       form.reset();
@@ -946,21 +988,21 @@ function CreateTargetDialog({
               )}
             />
             
-            {(selectedType === "wordpress" || selectedType === "webflow" || selectedType === "custom") && (
+            {(selectedType === "wordpress" || selectedType === "wordpress_pull" || selectedType === "webflow" || selectedType === "custom") && (
               <FormField
                 control={form.control}
                 name="configJson.apiUrl"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{selectedType === "wordpress" ? "Site URL" : "API URL"}</FormLabel>
+                    <FormLabel>{selectedType === "wordpress" || selectedType === "wordpress_pull" ? "Site URL" : "API URL"}</FormLabel>
                     <FormControl>
                       <Input 
-                        placeholder={selectedType === "wordpress" ? "https://yourblog.com" : "https://api.example.com/webhook"} 
+                        placeholder={(selectedType === "wordpress" || selectedType === "wordpress_pull") ? "https://yourblog.com" : "https://api.example.com/webhook"} 
                         {...field} 
                         data-testid="input-target-url"
                       />
                     </FormControl>
-                    {selectedType === "wordpress" && (
+                    {(selectedType === "wordpress" || selectedType === "wordpress_pull") && (
                       <FormDescription>
                         Your WordPress site URL (without /wp-json)
                       </FormDescription>
@@ -971,7 +1013,7 @@ function CreateTargetDialog({
               />
             )}
 
-            {selectedType === "wordpress" && (
+            {(selectedType === "wordpress" || selectedType === "wordpress_pull") && (
               <FormField
                 control={form.control}
                 name="configJson.username"
@@ -994,22 +1036,22 @@ function CreateTargetDialog({
               />
             )}
 
-            {(selectedType === "wordpress" || selectedType === "webflow" || selectedType === "custom") && (
+            {(selectedType === "wordpress" || selectedType === "wordpress_pull" || selectedType === "webflow" || selectedType === "custom") && (
               <FormField
                 control={form.control}
                 name="configJson.apiKey"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{selectedType === "wordpress" ? "Application Password" : "API Key / Token"}</FormLabel>
+                    <FormLabel>{(selectedType === "wordpress" || selectedType === "wordpress_pull") ? "Application Password" : "API Key / Token"}</FormLabel>
                     <FormControl>
                       <Input 
                         type="password"
-                        placeholder={selectedType === "wordpress" ? "xxxx xxxx xxxx xxxx xxxx xxxx" : "Your API key or access token"} 
+                        placeholder={(selectedType === "wordpress" || selectedType === "wordpress_pull") ? "xxxx xxxx xxxx xxxx xxxx xxxx" : "Your API key or access token"} 
                         {...field} 
                         data-testid="input-target-apikey"
                       />
                     </FormControl>
-                    {selectedType === "wordpress" && (
+                    {(selectedType === "wordpress" || selectedType === "wordpress_pull") && (
                       <FormDescription>
                         Generate in WordPress → Users → Profile → Application Passwords
                       </FormDescription>
@@ -1057,10 +1099,17 @@ function CreateTargetDialog({
 export default function Publishing() {
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<PublishingTarget | null>(null);
+  
+  // Use workspace context to get active workspace ID
+  const { activeWorkspaceId, isLoading: isContextLoading } = useWorkspaceContext();
+  
+  // Debug logging
+  console.log("[Publishing] Workspace context:", { activeWorkspaceId, isContextLoading });
 
   const { data: targets, isLoading: targetsLoading, isError: targetsError } = useQuery<PublishingTarget[]>({
-    queryKey: ["/api/publishing-targets", { workspaceId: "demo-workspace" }],
-    queryFn: () => fetch("/api/publishing-targets?workspaceId=demo-workspace").then(r => r.json()),
+    queryKey: ["/api/publishing-targets", { workspaceId: activeWorkspaceId }],
+    queryFn: () => fetch(`/api/publishing-targets?workspaceId=${activeWorkspaceId}`).then(r => r.json()),
+    enabled: !!activeWorkspaceId,
   });
 
   const safeTargets = targets ?? [];
@@ -1075,6 +1124,18 @@ export default function Publishing() {
     if (!open) setEditTarget(null);
   };
 
+  // Show loading state while workspace context is loading
+  if (isContextLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading workspace...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-8 p-8">
       <div className="flex flex-col gap-2">
@@ -1084,6 +1145,11 @@ export default function Publishing() {
         <p className="text-muted-foreground">
           Connect publishing targets and distribute your approved content.
         </p>
+        {process.env.NODE_ENV === "development" && activeWorkspaceId && (
+          <div className="text-xs font-mono bg-muted/50 p-2 rounded mt-2">
+            Active Workspace ID: {activeWorkspaceId}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-6">
@@ -1120,6 +1186,7 @@ export default function Publishing() {
                 key={target.id} 
                 target={target} 
                 onEdit={() => handleEdit(target)}
+                workspaceId={activeWorkspaceId!}
               />
             ))}
           </div>
@@ -1144,6 +1211,7 @@ export default function Publishing() {
         open={targetDialogOpen} 
         onOpenChange={handleTargetDialogChange}
         editTarget={editTarget}
+        workspaceId={activeWorkspaceId}
       />
     </div>
   );

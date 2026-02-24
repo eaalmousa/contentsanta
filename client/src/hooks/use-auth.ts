@@ -14,20 +14,28 @@ async function fetchUser(): Promise<User | null> {
     throw new Error(`${response.status}: ${response.statusText}`);
   }
 
-  return response.json();
+  const user = await response.json();
+  
+  // Handle both custom auth (direct user object) and Replit auth (wrapped)
+  return user;
 }
 
 async function logout(): Promise<void> {
-  window.location.href = "/api/logout";
+  await fetch("/api/auth/logout", {
+    method: "POST",
+    credentials: "include",
+  });
+  window.location.href = "/";
 }
 
 export function useAuth() {
   const queryClient = useQueryClient();
-  const { data: user, isLoading } = useQuery<User | null>({
+  const { data: user, isLoading, refetch } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     queryFn: fetchUser,
     retry: false,
     staleTime: 1000 * 60 * 5, // 5 minutes
+    refetchOnWindowFocus: true, // Re-check auth when window regains focus
   });
 
   const logoutMutation = useMutation({
@@ -43,5 +51,6 @@ export function useAuth() {
     isAuthenticated: !!user,
     logout: logoutMutation.mutate,
     isLoggingOut: logoutMutation.isPending,
+    refetch, // Expose refetch for manual refresh
   };
 }

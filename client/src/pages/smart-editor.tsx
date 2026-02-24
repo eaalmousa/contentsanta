@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { 
-  Sparkles, 
-  Filter, 
-  Check, 
-  X, 
+import {
+  Sparkles,
+  Filter,
+  Check,
+  X,
   Edit3,
   ChevronRight,
   Globe,
@@ -19,6 +19,7 @@ import {
   Wand2,
   RefreshCw,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +44,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Draft, Topic, Story } from "@shared/schema";
+import { formatDistanceToNow } from "date-fns";
 
 interface StorySource {
   name: string;
@@ -65,11 +67,11 @@ function getTierBadgeVariant(tier: string): "default" | "secondary" | "outline" 
   }
 }
 
-function GenerateImageButton({ 
-  storyId, 
+function GenerateImageButton({
+  storyId,
   workspaceId,
-  onSuccess 
-}: { 
+  onSuccess
+}: {
   storyId: string;
   workspaceId: string;
   onSuccess?: () => void;
@@ -77,11 +79,11 @@ function GenerateImageButton({
   const [prompt, setPrompt] = useState("");
   const [showPromptInput, setShowPromptInput] = useState(false);
   const { toast } = useToast();
-  
+
   const { data: features } = useQuery<{ generate_images: boolean }>({
     queryKey: ['/api/workspaces', workspaceId, 'features'],
   });
-  
+
   const generateMutation = useMutation({
     mutationFn: async (data: { prompt: string }) => {
       const response = await apiRequest("POST", "/api/image-assets/generate", {
@@ -118,14 +120,14 @@ function GenerateImageButton({
       }
     },
   });
-  
+
   const isEntitled = features?.generate_images ?? false;
-  
+
   if (!isEntitled) {
     return (
-      <Button 
-        variant="outline" 
-        size="sm" 
+      <Button
+        variant="outline"
+        size="sm"
         disabled
         className="gap-2 opacity-60"
         data-testid="button-generate-image-locked"
@@ -137,7 +139,7 @@ function GenerateImageButton({
       </Button>
     );
   }
-  
+
   if (showPromptInput) {
     return (
       <div className="flex gap-2 items-center">
@@ -171,11 +173,11 @@ function GenerateImageButton({
       </div>
     );
   }
-  
+
   return (
-    <Button 
-      variant="outline" 
-      size="sm" 
+    <Button
+      variant="outline"
+      size="sm"
       onClick={() => setShowPromptInput(true)}
       className="gap-2"
       data-testid="button-generate-image"
@@ -186,13 +188,13 @@ function GenerateImageButton({
   );
 }
 
-function StoryCard({ 
-  story, 
-  onCreateDraft, 
+function StoryCard({
+  story,
+  onCreateDraft,
   onViewDetails,
   isPending,
-  isAutomated 
-}: { 
+  isAutomated
+}: {
   story: StoryWithProvenance;
   onCreateDraft: () => void;
   onViewDetails: () => void;
@@ -201,105 +203,130 @@ function StoryCard({
 }) {
   const primarySource = story.sources.find(s => s.isPrimary) || story.sources[0];
   const hasImage = story.featuredImage?.originalUrl || primarySource?.imageUrl;
-  
+
   return (
-    <Card className="hover-elevate overflow-visible" data-testid={`story-card-${story.id}`}>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ y: -5 }}
+      transition={{ duration: 0.3 }}
+      className="group relative overflow-hidden rounded-xl bg-card/40 backdrop-blur-sm border border-border/40 shadow-sm hover:shadow-xl hover:shadow-primary/5 hover:border-primary/20 hover:bg-card/60 transition-all duration-300 flex flex-col h-full"
+      data-testid={`story-card-${story.id}`}
+    >
       {hasImage && (
-        <div className="relative h-32 bg-muted overflow-hidden rounded-t-md">
-          <img 
-            src={story.featuredImage?.originalUrl || primarySource?.imageUrl} 
-            alt=""
-            className="w-full h-full object-cover"
+        <div className="relative h-40 bg-muted overflow-hidden">
+          <motion.img
+            initial={{ scale: 1 }}
+            whileHover={{ scale: 1.05 }}
+            transition={{ duration: 0.5 }}
+            src={story.featuredImage?.originalUrl || primarySource?.imageUrl}
+            alt={story.canonicalTitle}
+            className="w-full h-full object-cover transition-transform duration-500"
             onError={(e) => {
               const target = e.currentTarget;
               target.style.display = 'none';
               target.parentElement?.classList.add('flex', 'items-center', 'justify-center');
+              if (target.parentElement) target.parentElement.innerHTML = '<div class="text-muted-foreground text-xs">Image unavailable</div>';
             }}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-80" />
+
+          <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
+            {story.sourceCount && story.sourceCount > 1 && (
+              <Badge variant="secondary" className="bg-background/80 backdrop-blur-md shadow-sm text-[10px] px-2 h-5 border-0">
+                {story.sourceCount} sources
+              </Badge>
+            )}
+          </div>
+
+          {/* Tier Badges on Image */}
+          <div className="absolute bottom-2 left-2 flex flex-wrap gap-1">
+            {story.sources.slice(0, 2).map((source, i) => (
+              <Badge
+                key={i}
+                variant={getTierBadgeVariant(source.mediaTier)}
+                className="bg-background/90 backdrop-blur border-0 text-[10px] px-1.5 h-5 shadow-sm"
+              >
+                {source.name}
+              </Badge>
+            ))}
+          </div>
         </div>
       )}
-      <CardHeader className={hasImage ? "pt-3 pb-2" : "pb-2"}>
-        <div className="flex items-start justify-between gap-3">
-          <CardTitle className="text-base font-medium line-clamp-2">
-            {story.canonicalTitle}
-          </CardTitle>
-          {story.sourceCount && story.sourceCount > 1 && (
-            <Badge variant="secondary" className="shrink-0">
-              {story.sourceCount} sources
-            </Badge>
-          )}
-        </div>
-        {story.excerpt && (
-          <CardDescription className="line-clamp-2 mt-1">
-            {story.excerpt}
-          </CardDescription>
-        )}
-      </CardHeader>
-      <CardContent>
-        {story.sources.length > 0 && (
-          <div className="mb-3">
-            <span className="text-xs text-muted-foreground mr-2">Reported by:</span>
-            <div className="flex items-center gap-1 flex-wrap mt-1">
-              {story.sources.slice(0, 4).map((source, i) => (
-                <Badge 
-                  key={i} 
+
+      <CardHeader className={`${hasImage ? "pt-4 pb-2" : "pt-6 pb-2"} flex-1`}>
+        <div className="flex flex-col gap-1">
+          {!hasImage && (
+            <div className="flex flex-wrap gap-1 mb-2">
+              {story.sources.slice(0, 3).map((source, i) => (
+                <Badge
+                  key={i}
                   variant={getTierBadgeVariant(source.mediaTier)}
-                  className="text-xs"
+                  className="text-[10px] px-1.5 h-5"
                 >
                   {source.name}
                 </Badge>
               ))}
-              {story.sources.length > 4 && (
-                <span className="text-xs text-muted-foreground">
-                  +{story.sources.length - 4} more
-                </span>
-              )}
             </div>
-          </div>
+          )}
+          <h3 className="text-base font-semibold leading-tight text-foreground/90 line-clamp-2 md:line-clamp-3 group-hover:text-primary transition-colors">
+            {story.canonicalTitle}
+          </h3>
+        </div>
+        {story.excerpt && (
+          <p className="text-sm text-muted-foreground line-clamp-3 mt-2 leading-relaxed">
+            {story.excerpt}
+          </p>
         )}
-        
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button 
-            size="sm" 
-            variant="outline"
+      </CardHeader>
+
+      <CardContent className="pt-0 pb-4 mt-auto">
+        <div className="flex items-center gap-2 pt-4 border-t border-border/40 mt-2">
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={onViewDetails}
+            className="flex-1 h-8 text-xs hover:bg-primary/10 hover:text-primary"
             data-testid={`button-view-story-${story.id}`}
           >
-            <Eye className="w-3 h-3 mr-1" />
+            <Eye className="w-3 h-3 mr-1.5" />
             Details
           </Button>
+
           {isAutomated ? (
-            <Badge variant="secondary" className="text-xs">
-              <Sparkles className="w-3 h-3 mr-1" />
-              Managed by automation
-            </Badge>
+            <div className="flex-1 flex justify-center">
+              <Badge variant="secondary" className="text-[10px] px-2 h-7 bg-amber-500/10 text-amber-600 border-amber-500/20">
+                <Sparkles className="w-3 h-3 mr-1" />
+                Last Sync
+              </Badge>
+            </div>
           ) : (
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="default"
               onClick={onCreateDraft}
               disabled={isPending}
+              className="flex-1 h-8 text-xs bg-primary/90 hover:bg-primary shadow-sm hover:shadow-primary/20 transition-all font-medium"
               data-testid={`button-create-draft-${story.id}`}
             >
-              <Edit3 className="w-3 h-3 mr-1" />
-              Create Draft
+              <Edit3 className="w-3 h-3 mr-1.5" />
+              Draft
             </Button>
           )}
         </div>
       </CardContent>
-    </Card>
+    </motion.div>
   );
 }
 
-function DraftCard({ 
-  draft, 
-  onApprove, 
-  onReject, 
+function DraftCard({
+  draft,
+  onApprove,
+  onReject,
   onEdit,
   onPublish,
-  isPending 
-}: { 
+  isPending
+}: {
   draft: Draft;
   onApprove: () => void;
   onReject: () => void;
@@ -308,101 +335,121 @@ function DraftCard({
   isPending: boolean;
 }) {
   const provenance = Array.isArray(draft.provenance) ? draft.provenance : [];
-  
+
+  const statusColors = {
+    approved: "bg-green-500/10 text-green-600 border-green-500/20",
+    rejected: "bg-red-500/10 text-red-600 border-red-500/20",
+    published: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+    in_review: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+    draft: "bg-muted text-muted-foreground border-border/50",
+    pending: "bg-muted text-muted-foreground border-border/50" // Added fallback for potential 'pending' status
+  };
+
+  const statusColor = statusColors[draft.status as keyof typeof statusColors] || statusColors.draft;
+
   return (
-    <Card className="hover-elevate overflow-visible" data-testid={`draft-card-${draft.id}`}>
-      <CardHeader className="pb-3">
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ y: -3, scale: 1.01 }}
+      className="group relative overflow-hidden rounded-xl bg-card/40 backdrop-blur-sm border border-border/40 shadow-sm hover:shadow-lg hover:border-primary/20 transition-all duration-300"
+      data-testid={`draft-card-${draft.id}`}
+    >
+      <div className={`absolute top-0 bottom-0 left-0 w-1 ${draft.status === 'approved' ? 'bg-green-500' : draft.status === 'rejected' ? 'bg-red-500' : draft.status === 'published' ? 'bg-blue-500' : 'bg-amber-500'}`} />
+
+      <CardHeader className="pb-3 pl-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <CardTitle className="text-base font-medium line-clamp-2">
+            <div className="flex items-center gap-2 mb-2">
+              <Badge variant="outline" className={`text-[10px] capitalize px-2 h-5 border ${statusColor}`}>
+                {draft.status.replace('_', ' ')}
+              </Badge>
+              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {draft.updatedAt ? formatDistanceToNow(new Date(draft.updatedAt)) : "Just now"}
+              </span>
+            </div>
+            <CardTitle className="text-base font-semibold line-clamp-2 leading-tight group-hover:text-primary transition-colors">
               {draft.title}
             </CardTitle>
-            {draft.angle && (
-              <CardDescription className="mt-1 line-clamp-2">
-                {draft.angle}
-              </CardDescription>
-            )}
           </div>
-          <Badge variant={
-            draft.status === "approved" ? "default" :
-            draft.status === "rejected" ? "destructive" :
-            draft.status === "published" ? "secondary" :
-            draft.status === "in_review" ? "secondary" :
-            "outline"
-          }>
-            {draft.status}
-          </Badge>
         </div>
+        {draft.angle && (
+          <p className="text-sm text-muted-foreground mt-2 line-clamp-2 leading-relaxed">
+            {draft.angle}
+          </p>
+        )}
       </CardHeader>
-      <CardContent>
+
+      <CardContent className="pl-5 pt-0 pb-4">
         {provenance.length > 0 && (
-          <div className="mb-3">
-            <span className="text-xs text-muted-foreground mr-1">Based on:</span>
-            <div className="flex items-center gap-1 flex-wrap mt-1">
-              {provenance.slice(0, 3).map((source: any, i: number) => (
-                <Badge key={i} variant="outline" className="text-xs">
-                  {source.name || source}
-                </Badge>
-              ))}
-              {provenance.length > 3 && (
-                <span className="text-xs text-muted-foreground">
-                  +{provenance.length - 3} more
-                </span>
-              )}
-            </div>
+          <div className="mb-4 flex flex-wrap gap-1">
+            {provenance.slice(0, 3).map((source: any, i: number) => (
+              <span key={i} className="text-[10px] bg-muted/50 text-muted-foreground px-1.5 py-0.5 rounded border border-border/20">
+                {source.name || source}
+              </span>
+            ))}
           </div>
         )}
-        
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button 
-            size="sm" 
-            variant="outline"
+
+        <div className="flex items-center gap-2 pt-3 border-t border-border/40">
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={onEdit}
             disabled={isPending}
+            className="h-8 text-xs hover:bg-primary/10 hover:text-primary"
             data-testid={`button-edit-draft-${draft.id}`}
           >
-            <Edit3 className="w-3 h-3 mr-1" />
+            <Edit3 className="w-3 h-3 mr-1.5" />
             Edit
           </Button>
+
+          <div className="flex-1" />
+
           {draft.status !== "approved" && draft.status !== "published" && (
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="default"
               onClick={onApprove}
               disabled={isPending}
+              className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white shadow-sm"
               data-testid={`button-approve-draft-${draft.id}`}
             >
-              <Check className="w-3 h-3 mr-1" />
+              <Check className="w-3 h-3 mr-1.5" />
               Approve
             </Button>
           )}
+
           {draft.status === "approved" && (
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="default"
               onClick={onPublish}
               disabled={isPending}
+              className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-sm animate-pulse"
               data-testid={`button-publish-draft-${draft.id}`}
             >
-              <Send className="w-3 h-3 mr-1" />
+              <Send className="w-3 h-3 mr-1.5" />
               Publish
             </Button>
           )}
+
           {draft.status !== "rejected" && draft.status !== "published" && (
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="ghost"
               onClick={onReject}
               disabled={isPending}
+              className="h-8 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
               data-testid={`button-reject-draft-${draft.id}`}
             >
-              <X className="w-3 h-3 mr-1" />
-              Reject
+              <X className="w-3 h-3" />
             </Button>
           )}
         </div>
       </CardContent>
-    </Card>
+    </motion.div>
   );
 }
 
@@ -416,7 +463,7 @@ function StoryDetailsDialog({
   onClose: () => void;
 }) {
   if (!story) return null;
-  
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
@@ -426,7 +473,7 @@ function StoryDetailsDialog({
             <DialogDescription>{story.excerpt}</DialogDescription>
           )}
         </DialogHeader>
-        
+
         <div className="space-y-4">
           <div>
             <h4 className="text-sm font-medium mb-2">Sources ({story.sources.length})</h4>
@@ -435,17 +482,17 @@ function StoryDetailsDialog({
                 <div key={i} className="flex items-center justify-between p-2 rounded-md bg-muted/50">
                   <div className="flex items-center gap-2">
                     <Badge variant={getTierBadgeVariant(source.mediaTier)} className="text-xs">
-                      {source.mediaTier === 'tier_1' ? 'Tier 1' : 
-                       source.mediaTier === 'tier_2' ? 'Tier 2' : 'Tier 3'}
+                      {source.mediaTier === 'tier_1' ? 'Tier 1' :
+                        source.mediaTier === 'tier_2' ? 'Tier 2' : 'Tier 3'}
                     </Badge>
                     <span className="font-medium">{source.name}</span>
                     {source.isPrimary && (
                       <Badge variant="outline" className="text-xs">Primary</Badge>
                     )}
                   </div>
-                  <a 
-                    href={source.url} 
-                    target="_blank" 
+                  <a
+                    href={source.url}
+                    target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm text-muted-foreground hover:text-foreground"
                   >
@@ -455,11 +502,11 @@ function StoryDetailsDialog({
               ))}
             </div>
           </div>
-          
+
           <div>
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-sm font-medium">Featured Image</h4>
-              <GenerateImageButton 
+              <GenerateImageButton
                 storyId={story.id}
                 workspaceId={story.workspaceId}
                 onSuccess={() => queryClient.invalidateQueries({ queryKey: ['/api/stories', story.id] })}
@@ -467,9 +514,9 @@ function StoryDetailsDialog({
             </div>
             {story.featuredImage?.originalUrl ? (
               <div className="rounded-md overflow-hidden bg-muted">
-                <img 
-                  src={story.featuredImage.originalUrl} 
-                  alt={story.featuredImage.caption || ''} 
+                <img
+                  src={story.featuredImage.originalUrl}
+                  alt={story.featuredImage.caption || ''}
                   className="w-full h-48 object-cover"
                 />
                 {story.featuredImage.caption && (
@@ -486,7 +533,7 @@ function StoryDetailsDialog({
             )}
           </div>
         </div>
-        
+
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Close</Button>
         </DialogFooter>
@@ -606,9 +653,9 @@ export default function SmartEditorPage() {
       toast({ title: "No live topics", description: "Enable at least one topic to run discovery" });
       return;
     }
-    
+
     toast({ title: "Running discovery...", description: `Scanning ${liveTopics.length} live topic(s)` });
-    
+
     let totalMatched = 0;
     for (const topic of liveTopics) {
       try {
@@ -618,14 +665,14 @@ export default function SmartEditorPage() {
         // Individual errors already toasted
       }
     }
-    
+
     queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
     queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
     liveTopics.forEach(t => queryClient.invalidateQueries({ queryKey: ["/api/topics", t.id, "stories"] }));
     toast({ title: "Discovery completed", description: `Found ${totalMatched} total matching stories` });
   };
 
-  const filteredDrafts = drafts?.filter(d => 
+  const filteredDrafts = drafts?.filter(d =>
     statusFilter === "all" || d.status === statusFilter
   ) || [];
 
@@ -635,7 +682,7 @@ export default function SmartEditorPage() {
 
   const hasTopics = topics && topics.length > 0;
   const hasContent = (stories && stories.length > 0) || (drafts && drafts.length > 0);
-  
+
   const liveTopics = topics?.filter(t => t.isLive === "true") || [];
   const automatedTopics = liveTopics.filter(t => t.automationMode === "auto" || t.automationMode === "approval_required");
   const manualTopics = liveTopics.filter(t => t.automationMode === "manual" || !t.automationMode);
@@ -652,8 +699,8 @@ export default function SmartEditorPage() {
             Review stories and manage your content pipeline
           </p>
         </div>
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           onClick={handleRefreshAll}
           disabled={runDiscoveryMutation.isPending}
           data-testid="button-refresh-discovery"
@@ -692,8 +739,8 @@ export default function SmartEditorPage() {
           {topics && topics.length > 0 && (
             <div className="flex gap-2 overflow-x-auto pb-2">
               {topics.map((topic) => (
-                <Badge 
-                  key={topic.id} 
+                <Badge
+                  key={topic.id}
                   variant={topic.isLive === "true" ? "default" : "outline"}
                   className="whitespace-nowrap cursor-pointer"
                   data-testid={`badge-topic-${topic.id}`}
@@ -712,7 +759,7 @@ export default function SmartEditorPage() {
               ))}
             </div>
           )}
-          
+
           {hasAutomation && (
             <Card className="border-amber-500/50 bg-amber-50 dark:bg-amber-900/10 overflow-visible">
               <CardContent className="py-3 px-4">
@@ -894,7 +941,7 @@ export default function SmartEditorPage() {
                     <DraftCard
                       key={draft.id}
                       draft={draft}
-                      onApprove={() => {}}
+                      onApprove={() => { }}
                       onReject={() => handleReject(draft.id)}
                       onEdit={() => handleEdit(draft)}
                       onPublish={() => handlePublish(draft)}
@@ -921,10 +968,10 @@ export default function SmartEditorPage() {
                     <DraftCard
                       key={draft.id}
                       draft={draft}
-                      onApprove={() => {}}
-                      onReject={() => {}}
+                      onApprove={() => { }}
+                      onReject={() => { }}
                       onEdit={() => handleEdit(draft)}
-                      onPublish={() => {}}
+                      onPublish={() => { }}
                       isPending={false}
                     />
                   ))}
@@ -934,9 +981,9 @@ export default function SmartEditorPage() {
           </Tabs>
         </>
       )}
-      
-      <StoryDetailsDialog 
-        story={selectedStory} 
+
+      <StoryDetailsDialog
+        story={selectedStory}
         open={!!selectedStory}
         onClose={() => setSelectedStory(null)}
       />

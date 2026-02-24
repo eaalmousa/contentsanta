@@ -22,8 +22,9 @@ const parser = new Parser({
   },
 });
 
-const MAX_REDIRECTS = 5;
-const MAX_RETRIES = 3;
+// Externalized configuration - read from environment variables
+const MAX_REDIRECTS = parseInt(process.env.RSS_MAX_REDIRECTS || "5", 10);
+const MAX_RETRIES = parseInt(process.env.RSS_MAX_RETRIES || "3", 10);
 const TIMEOUT_RETRIES = 2;
 const INITIAL_BACKOFF_MS = 1000;
 

@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { formatDistanceToNow } from "date-fns";
+import { sanitizeImageUrl } from "@/lib/image-utils";
 import { Send, Trash2, MessageSquare, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -42,7 +43,7 @@ function CommentItem({
   return (
     <div className="group flex gap-3" data-testid={`comment-${comment.id}`}>
       <Avatar className="h-8 w-8 shrink-0">
-        <AvatarImage src={comment.user?.profileImageUrl || undefined} />
+        <AvatarImage src={sanitizeImageUrl(comment.user?.profileImageUrl)} />
         <AvatarFallback className="text-xs">{initials}</AvatarFallback>
       </Avatar>
       <div className="flex flex-col gap-1 flex-1 min-w-0">
@@ -169,7 +170,7 @@ export function CommentsPanel({ assetVersionId, className }: CommentsPanelProps)
         <Form {...form}>
           <form onSubmit={form.handleSubmit(handleSubmit)} className="flex gap-2">
             <Avatar className="h-8 w-8 shrink-0">
-              <AvatarImage src={user.profileImageUrl || undefined} />
+              <AvatarImage src={sanitizeImageUrl(user.profileImageUrl)} />
               <AvatarFallback className="text-xs">
                 {user.firstName && user.lastName
                   ? `${user.firstName[0]}${user.lastName[0]}`

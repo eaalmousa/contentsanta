@@ -4,6 +4,16 @@ import crypto from "crypto";
 import { filterItemsByRelevance, scoreStoryRelevance, MIN_RELEVANCE_SCORE, TIER1_SOURCE_BOOST } from "./topic-relevance-service";
 import { processNewItemsForClustering } from "./story-clustering-service";
 
+// Normalize topic query for better matching
+function normalizeTopicQuery(query: string): string {
+  return query
+    .replace(/["']/g, "") // Remove quotes
+    .replace(/,/g, " ") // Replace commas with spaces
+    .replace(/\s+/g, " ") // Collapse whitespace
+    .trim()
+    .toLowerCase();
+}
+
 export interface TopicRunLog {
   requestId: string;
   topicId: string;
@@ -62,6 +72,11 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
   console.log(`[TopicRun:${requestId}] enabled_source_domains=[${domains.join(", ")}]${enabledSources.length > 5 ? ` (+${enabledSources.length - 5} more)` : ""}`);
   
   try {
+    // Normalize topic query for better matching
+    const normalizedQuery = normalizeTopicQuery(topic.query);
+    console.log(`[TopicRun:${requestId}] Original query: "${topic.query}"`);
+    console.log(`[TopicRun:${requestId}] Normalized query: "${normalizedQuery}"`);
+    
     // Use 7 days (168 hours) to include older items that may still be relevant
     const recentItems = await storage.getRecentSourceItemsBySourceIds(
       enabledSourceIds,
@@ -73,15 +88,20 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
     
     const { relevantItems, stats } = filterItemsByRelevance(
       recentItems,
-      { query: topic.query, name: topic.name },
+      { query: normalizedQuery, name: topic.name },
       { minScore: MIN_RELEVANCE_SCORE, maxItems: 50, logResults: true }
     );
     
     console.log(`[TopicRun:${requestId}] Relevance filtering: ${stats.accepted} accepted, ${stats.rejected} rejected`);
     
-    // Process any new items into stories (clustering)
-    const clusterResult = await processNewItemsForClustering(topic.workspaceId);
-    console.log(`[TopicRun:${requestId}] Story clustering: ${clusterResult.newStories} new stories, ${clusterResult.clustered} clustered`);
+    // Process any new items into stories (clustering) - fire and forget to avoid blocking
+    processNewItemsForClustering(topic.workspaceId)
+      .then(clusterResult => {
+        console.log(`[TopicRun:${requestId}] Story clustering: ${clusterResult.newStories} new stories, ${clusterResult.clustered} clustered`);
+      })
+      .catch(error => {
+        console.error(`[TopicRun:${requestId}] Story clustering error:`, error.message);
+      });
     
     // Clear stale topic_stories before re-scoring
     await storage.deleteTopicStories(topic.id);
@@ -95,21 +115,49 @@ export async function runTopicDiscovery(topic: Topic): Promise<TopicRunLog> {
     // Persist relevance scores for stories from enabled sources (cross-workspace)
     const sourceStories = await storage.getStoriesFromSources(enabledSourceIds);
     console.log(`[TopicRun:${requestId}] Found ${sourceStories.length} stories from enabled sources`);
+    
+    // Pre-fetch all story items and build a lookup map to avoid N+1 queries
+    const storyIds = sourceStories.map(s => s.id);
+    const allStoryItemsPromises = storyIds.map(id => storage.getStoryItems(id));
+    const allStoryItemsArrays = await Promise.all(allStoryItemsPromises);
+    const storyItemsMap = new Map<string, any[]>();
+    storyIds.forEach((id, idx) => {
+      storyItemsMap.set(id, allStoryItemsArrays[idx] || []);
+    });
+    
+    // Pre-fetch all source items referenced by story items
+    const sourceItemIds = new Set<string>();
+    for (const items of allStoryItemsArrays) {
+      for (const item of items) {
+        sourceItemIds.add(item.sourceItemId);
+      }
+    }
+    const sourceItemsPromises = Array.from(sourceItemIds).map(id => storage.getSourceItem(id));
+    const sourceItemsArray = await Promise.all(sourceItemsPromises);
+    const sourceItemsMap = new Map<string, any>();
+    Array.from(sourceItemIds).forEach((id, idx) => {
+      if (sourceItemsArray[idx]) {
+        sourceItemsMap.set(id, sourceItemsArray[idx]);
+      }
+    });
+    
+    console.log(`[TopicRun:${requestId}] Batch fetched ${storyItemsMap.size} story-item groups and ${sourceItemsMap.size} source items`);
+    
     let storiesLinked = 0;
     
     for (const story of sourceStories) {
       const relevance = scoreStoryRelevance(
         { canonicalTitle: story.canonicalTitle, excerpt: story.excerpt },
-        { query: topic.query, name: topic.name }
+        { query: normalizedQuery, name: topic.name }
       );
       
       // Apply tier-1 source boost (+0.05) if story comes from tier-1 or official source
       let adjustedScore = relevance.score;
-      const linkedItems = await storage.getStoryItems(story.id);
+      const linkedItems = storyItemsMap.get(story.id) || [];
       let hasTier1Source = false;
       
       for (const linkItem of linkedItems) {
-        const sourceItem = await storage.getSourceItem(linkItem.sourceItemId);
+        const sourceItem = sourceItemsMap.get(linkItem.sourceItemId);
         if (sourceItem) {
           const sourceInfo = sourceLookup.get(sourceItem.sourceId);
           if (sourceInfo && (sourceInfo.tier === 1 || sourceInfo.isOfficial === "true")) {

@@ -1,6 +1,7 @@
 import { 
   workspaces, type Workspace, type InsertWorkspace,
   workspaceUsers, type WorkspaceUser, type InsertWorkspaceUser,
+  sites, type Site, type InsertSite,
   brands, type Brand, type InsertBrand,
   templates, type Template, type InsertTemplate,
   projects, type Project, type InsertProject,
@@ -39,6 +40,7 @@ import {
   pipelineItems, type PipelineItem, type InsertPipelineItem, type PipelineItemStatus,
   automationJobRuns, type AutomationJobRun, type InsertAutomationJobRun, type AutomationJobType, type AutomationJobStatus,
   publishAttempts, type PublishAttempt, type InsertPublishAttempt,
+  publishingItems, type PublishingItem, type InsertPublishingItem, type PublishingItemStatus,
   type TargetHealthStatus,
   type RoleType,
   type RunStatus,
@@ -154,6 +156,14 @@ export interface IStorage {
   updateWpPullJob(id: string, data: Partial<WpPullJob>): Promise<WpPullJob | undefined>;
   leaseNextWpPullJob(siteId: string, leaseToken: string, leaseMinutes: number): Promise<WpPullJob | null>;
   releaseExpiredWpPullJobLeases(): Promise<number>;
+  
+  // Publishing Items (separate publishing pipeline)
+  getPublishingItems(filters?: { workspaceId?: string; topicId?: string; status?: string; connectorId?: string }): Promise<(PublishingItem & { pipelineItem: PipelineItem })[]>;
+  getPublishingItem(id: string): Promise<PublishingItem | undefined>;
+  getPublishingItemByPipelineItemId(pipelineItemId: string): Promise<PublishingItem | undefined>;
+  createPublishingItem(data: InsertPublishingItem): Promise<PublishingItem>;
+  updatePublishingItem(id: string, data: Partial<PublishingItem>): Promise<PublishingItem | undefined>;
+  deletePublishingItem(id: string): Promise<void>;
   
   // WordPress Plugin Request Logs
   createPluginRequestLog(data: InsertWpPluginRequestLog): Promise<WpPluginRequestLog>;
@@ -691,7 +701,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePublishingTarget(id: string, data: Partial<InsertPublishingTarget>): Promise<PublishingTarget | undefined> {
-    const [target] = await db.update(publishingTargets).set(data).where(eq(publishingTargets.id, id)).returning();
+    const [target] = await db.update(publishingTargets)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(publishingTargets.id, id))
+      .returning();
     return target;
   }
 
@@ -791,6 +804,74 @@ export class DatabaseStorage implements IStorage {
       ))
       .returning();
     return result.length;
+  }
+
+  // Publishing Items (separate publishing pipeline)
+  async getPublishingItems(filters?: { 
+    workspaceId?: string; 
+    topicId?: string; 
+    status?: string; 
+    connectorId?: string;
+  }): Promise<(PublishingItem & { pipelineItem: PipelineItem })[]> {
+    const conditions = [];
+    
+    if (filters?.workspaceId) {
+      conditions.push(eq(publishingItems.workspaceId, filters.workspaceId));
+    }
+    if (filters?.topicId) {
+      conditions.push(eq(publishingItems.topicId, filters.topicId));
+    }
+    if (filters?.status) {
+      conditions.push(eq(publishingItems.status, filters.status as any));
+    }
+    if (filters?.connectorId) {
+      conditions.push(eq(publishingItems.wpConnectorId, filters.connectorId));
+    }
+
+    const results = await db.select({
+      publishingItem: publishingItems,
+      pipelineItem: pipelineItems,
+    })
+      .from(publishingItems)
+      .innerJoin(pipelineItems, eq(publishingItems.pipelineItemId, pipelineItems.id))
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(publishingItems.createdAt));
+
+    return results.map(r => ({
+      ...r.publishingItem,
+      pipelineItem: r.pipelineItem,
+    }));
+  }
+
+  async getPublishingItem(id: string): Promise<PublishingItem | undefined> {
+    const [item] = await db.select().from(publishingItems)
+      .where(eq(publishingItems.id, id))
+      .limit(1);
+    return item;
+  }
+
+  async getPublishingItemByPipelineItemId(pipelineItemId: string): Promise<PublishingItem | undefined> {
+    const [item] = await db.select().from(publishingItems)
+      .where(eq(publishingItems.pipelineItemId, pipelineItemId))
+      .limit(1);
+    return item;
+  }
+
+  async createPublishingItem(data: InsertPublishingItem): Promise<PublishingItem> {
+    const [item] = await db.insert(publishingItems).values(data).returning();
+    return item;
+  }
+
+  async updatePublishingItem(id: string, data: Partial<PublishingItem>): Promise<PublishingItem | undefined> {
+    const [updated] = await db.update(publishingItems)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(publishingItems.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deletePublishingItem(id: string): Promise<void> {
+    await db.delete(publishingItems).where(eq(publishingItems.id, id));
   }
 
   // WordPress Plugin Request Logs
@@ -1675,6 +1756,24 @@ export class DatabaseStorage implements IStorage {
     return run;
   }
 
+  /**
+   * Atomically claim a queued job by transitioning to running
+   * Returns the job if successfully claimed, undefined if already claimed
+   */
+  async claimQueuedJob(id: string): Promise<AutomationJobRun | undefined> {
+    const [run] = await db.update(automationJobRuns)
+      .set({
+        status: "running",
+        startedAt: new Date(),
+      })
+      .where(and(
+        eq(automationJobRuns.id, id),
+        eq(automationJobRuns.status, "queued")
+      ))
+      .returning();
+    return run;
+  }
+
   // Publish Attempts
   async getPublishAttempts(pipelineItemId: string): Promise<PublishAttempt[]> {
     return await db.select().from(publishAttempts)
@@ -1805,4 +1904,53 @@ export class DatabaseStorage implements IStorage {
   }
 }
 
-export const storage = new DatabaseStorage();
+// Export db for test scripts and direct queries
+export { db } from "./db";
+
+export const schema = {
+  workspaces,
+  workspaceUsers,
+  sites,
+  brands,
+  templates,
+  projects,
+  inputs,
+  workflows,
+  workflowRuns,
+  assets,
+  assetVersions,
+  comments,
+  publishingTargets,
+  publishJobs,
+  wpPullJobs,
+  wpPluginRequestLogs,
+  usageLedger,
+  sources,
+  sourceItems,
+  sourceItemMentions,
+  fetchRuns,
+  automations,
+  automationRuns,
+  automationRunItems,
+  contentGoals,
+  discoveryJobs,
+  discoveredSources,
+  contentPlans,
+  stories,
+  storyItems,
+  drafts,
+  topics,
+  topicSources,
+  topicStories,
+  topicSourceRecommendations,
+  imageAssets,
+  imageUsages,
+  wpTaxonomyCache,
+  pipelineItems,
+  automationJobRuns,
+  publishAttempts,
+  publishingItems,
+};
+
+export const storage = new DatabaseStorage() as DatabaseStorage & { schema: typeof schema };
+storage.schema = schema;

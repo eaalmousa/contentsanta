@@ -1,6 +1,5 @@
 import { storage } from "../storage";
 import { processWorkflowWithAI } from "../ai-workflow";
-import { publishToWordPress } from "./wordpress-service";
 import type { 
   Automation, 
   SourceItem, 

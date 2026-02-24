@@ -7,6 +7,14 @@ export interface WorkspaceMembership {
   role: string;
 }
 
+export interface Site {
+  id: string;
+  name: string;
+  url: string | null;
+  connectionStatus: "not_connected" | "connected" | "error";
+  lastConnectedAt: string | null;
+}
+
 export interface RecentTarget {
   id: string;
   name: string;
@@ -18,10 +26,13 @@ export interface WorkspaceContext {
   userId: string;
   memberships: WorkspaceMembership[];
   activeWorkspaceId: string;
+  activeSiteId: string | null;
+  sites: Site[];
   counts: {
     topicsCount: number;
     targetsCount: number;
     sourcesCount: number;
+    sitesCount: number;
   };
   recentTargets: RecentTarget[];
 }
@@ -41,6 +52,8 @@ export function useWorkspaceContext() {
     console.log("[WorkspaceContext] API Response:", {
       userId: query.data.userId,
       activeWorkspaceId: query.data.activeWorkspaceId,
+      activeSiteId: query.data.activeSiteId,
+      sitesCount: query.data.sites?.length,
       memberships: query.data.memberships,
       sourcesCount: query.data.counts?.sourcesCount,
     });
@@ -54,6 +67,8 @@ export function useWorkspaceContext() {
   console.log("[WorkspaceContext] Resolved:", {
     activeWorkspaceId: query.data?.activeWorkspaceId,
     activeWorkspaceName: activeWorkspace?.name,
+    activeSiteId: query.data?.activeSiteId,
+    sitesCount: query.data?.sites?.length,
     isLoading: query.isLoading,
     isError: query.isError,
   });
@@ -62,6 +77,8 @@ export function useWorkspaceContext() {
     ...query,
     activeWorkspaceId: query.data?.activeWorkspaceId,
     activeWorkspaceName: activeWorkspace?.name,
+    activeSiteId: query.data?.activeSiteId,
+    sites: query.data?.sites || [],
     memberships: query.data?.memberships || [],
     counts: query.data?.counts,
     recentTargets: query.data?.recentTargets || [],

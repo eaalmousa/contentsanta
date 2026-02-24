@@ -3,22 +3,18 @@ import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspaceContext } from "@/hooks/use-workspace-context";
-import { 
+import { useTopicRuns } from "@/hooks/use-topic-runs";
+import { StartHereBanner } from "@/components/start-here-banner";
+import {
   Plus,
   Power,
   PowerOff,
   Settings,
   Trash2,
-  MoreVertical,
   Globe,
-  BookOpen,
-  FileText,
-  Shuffle,
   Clock,
   Loader2,
   FolderTree,
-  Tag,
-  MapPin,
   RefreshCw,
   ChevronRight,
   ChevronDown,
@@ -28,27 +24,14 @@ import {
   Circle,
   Star,
   AlertCircle,
-  Play,
-  History,
   Eye,
-  Copy,
-  ExternalLink,
-  Zap,
-  Shield,
-  Pause,
   Rss,
+  X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -76,6 +59,159 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { formatDistanceToNow } from "date-fns";
+import { TopicCard } from "@/components/topic-card";
+
+// Region, Country, and Language data
+const REGIONS = [
+  { value: "gcc", label: "GCC Countries" },
+  { value: "mena", label: "Middle East & North Africa" },
+  { value: "europe", label: "Europe" },
+  { value: "asia", label: "Asia Pacific" },
+  { value: "north-america", label: "North America" },
+  { value: "south-america", label: "South America" },
+  { value: "africa", label: "Africa" },
+  { value: "oceania", label: "Oceania" },
+  { value: "global", label: "Global" },
+];
+
+const COUNTRIES = [
+  // GCC
+  { value: "AE", label: "United Arab Emirates", region: "gcc" },
+  { value: "SA", label: "Saudi Arabia", region: "gcc" },
+  { value: "KW", label: "Kuwait", region: "gcc" },
+  { value: "QA", label: "Qatar", region: "gcc" },
+  { value: "BH", label: "Bahrain", region: "gcc" },
+  { value: "OM", label: "Oman", region: "gcc" },
+  
+  // MENA
+  { value: "EG", label: "Egypt", region: "mena" },
+  { value: "JO", label: "Jordan", region: "mena" },
+  { value: "LB", label: "Lebanon", region: "mena" },
+  { value: "IQ", label: "Iraq", region: "mena" },
+  { value: "SY", label: "Syria", region: "mena" },
+  { value: "YE", label: "Yemen", region: "mena" },
+  { value: "PS", label: "Palestine", region: "mena" },
+  { value: "IL", label: "Israel", region: "mena" },
+  { value: "TR", label: "Turkey", region: "mena" },
+  { value: "IR", label: "Iran", region: "mena" },
+  { value: "MA", label: "Morocco", region: "mena" },
+  { value: "DZ", label: "Algeria", region: "mena" },
+  { value: "TN", label: "Tunisia", region: "mena" },
+  { value: "LY", label: "Libya", region: "mena" },
+  { value: "SD", label: "Sudan", region: "mena" },
+  
+  // Europe
+  { value: "GB", label: "United Kingdom", region: "europe" },
+  { value: "FR", label: "France", region: "europe" },
+  { value: "DE", label: "Germany", region: "europe" },
+  { value: "IT", label: "Italy", region: "europe" },
+  { value: "ES", label: "Spain", region: "europe" },
+  { value: "PT", label: "Portugal", region: "europe" },
+  { value: "NL", label: "Netherlands", region: "europe" },
+  { value: "BE", label: "Belgium", region: "europe" },
+  { value: "CH", label: "Switzerland", region: "europe" },
+  { value: "AT", label: "Austria", region: "europe" },
+  { value: "SE", label: "Sweden", region: "europe" },
+  { value: "NO", label: "Norway", region: "europe" },
+  { value: "DK", label: "Denmark", region: "europe" },
+  { value: "FI", label: "Finland", region: "europe" },
+  { value: "PL", label: "Poland", region: "europe" },
+  { value: "CZ", label: "Czech Republic", region: "europe" },
+  { value: "GR", label: "Greece", region: "europe" },
+  { value: "RU", label: "Russia", region: "europe" },
+  { value: "UA", label: "Ukraine", region: "europe" },
+  { value: "IE", label: "Ireland", region: "europe" },
+  
+  // Asia Pacific
+  { value: "CN", label: "China", region: "asia" },
+  { value: "JP", label: "Japan", region: "asia" },
+  { value: "KR", label: "South Korea", region: "asia" },
+  { value: "IN", label: "India", region: "asia" },
+  { value: "PK", label: "Pakistan", region: "asia" },
+  { value: "BD", label: "Bangladesh", region: "asia" },
+  { value: "ID", label: "Indonesia", region: "asia" },
+  { value: "MY", label: "Malaysia", region: "asia" },
+  { value: "SG", label: "Singapore", region: "asia" },
+  { value: "TH", label: "Thailand", region: "asia" },
+  { value: "VN", label: "Vietnam", region: "asia" },
+  { value: "PH", label: "Philippines", region: "asia" },
+  { value: "MM", label: "Myanmar", region: "asia" },
+  { value: "KH", label: "Cambodia", region: "asia" },
+  { value: "LA", label: "Laos", region: "asia" },
+  { value: "NP", label: "Nepal", region: "asia" },
+  { value: "LK", label: "Sri Lanka", region: "asia" },
+  { value: "AF", label: "Afghanistan", region: "asia" },
+  { value: "MN", label: "Mongolia", region: "asia" },
+  { value: "KZ", label: "Kazakhstan", region: "asia" },
+  { value: "UZ", label: "Uzbekistan", region: "asia" },
+  
+  // North America
+  { value: "US", label: "United States", region: "north-america" },
+  { value: "CA", label: "Canada", region: "north-america" },
+  { value: "MX", label: "Mexico", region: "north-america" },
+  
+  // South America
+  { value: "BR", label: "Brazil", region: "south-america" },
+  { value: "AR", label: "Argentina", region: "south-america" },
+  { value: "CL", label: "Chile", region: "south-america" },
+  { value: "CO", label: "Colombia", region: "south-america" },
+  { value: "PE", label: "Peru", region: "south-america" },
+  { value: "VE", label: "Venezuela", region: "south-america" },
+  { value: "EC", label: "Ecuador", region: "south-america" },
+  { value: "UY", label: "Uruguay", region: "south-america" },
+  
+  // Africa
+  { value: "ZA", label: "South Africa", region: "africa" },
+  { value: "NG", label: "Nigeria", region: "africa" },
+  { value: "KE", label: "Kenya", region: "africa" },
+  { value: "ET", label: "Ethiopia", region: "africa" },
+  { value: "GH", label: "Ghana", region: "africa" },
+  { value: "TZ", label: "Tanzania", region: "africa" },
+  { value: "UG", label: "Uganda", region: "africa" },
+  { value: "SN", label: "Senegal", region: "africa" },
+  { value: "CI", label: "Côte d'Ivoire", region: "africa" },
+  { value: "CM", label: "Cameroon", region: "africa" },
+  
+  // Oceania
+  { value: "AU", label: "Australia", region: "oceania" },
+  { value: "NZ", label: "New Zealand", region: "oceania" },
+];
+
+const LANGUAGES = [
+  { value: "en", label: "English" },
+  { value: "ar", label: "Arabic" },
+  { value: "zh", label: "Chinese" },
+  { value: "es", label: "Spanish" },
+  { value: "fr", label: "French" },
+  { value: "de", label: "German" },
+  { value: "hi", label: "Hindi" },
+  { value: "pt", label: "Portuguese" },
+  { value: "ru", label: "Russian" },
+  { value: "ja", label: "Japanese" },
+  { value: "ko", label: "Korean" },
+  { value: "it", label: "Italian" },
+  { value: "tr", label: "Turkish" },
+  { value: "nl", label: "Dutch" },
+  { value: "sv", label: "Swedish" },
+  { value: "pl", label: "Polish" },
+  { value: "id", label: "Indonesian" },
+  { value: "th", label: "Thai" },
+  { value: "vi", label: "Vietnamese" },
+  { value: "fa", label: "Persian" },
+  { value: "he", label: "Hebrew" },
+  { value: "uk", label: "Ukrainian" },
+  { value: "el", label: "Greek" },
+  { value: "cs", label: "Czech" },
+  { value: "ro", label: "Romanian" },
+  { value: "hu", label: "Hungarian" },
+  { value: "da", label: "Danish" },
+  { value: "fi", label: "Finnish" },
+  { value: "no", label: "Norwegian" },
+  { value: "bn", label: "Bengali" },
+  { value: "ur", label: "Urdu" },
+  { value: "ms", label: "Malay" },
+  { value: "sw", label: "Swahili" },
+];
 
 // Helper to normalize various API response shapes to arrays
 function normalizeList<T>(data: any): T[] {
@@ -86,12 +222,7 @@ function normalizeList<T>(data: any): T[] {
   return [];
 }
 
-const contentIntentConfig: Record<ContentIntent, { label: string; icon: any; color: string }> = {
-  news_monitoring: { label: "News", icon: Globe, color: "bg-blue-500" },
-  informational: { label: "Info", icon: BookOpen, color: "bg-green-500" },
-  evergreen: { label: "Evergreen", icon: FileText, color: "bg-amber-500" },
-  mixed: { label: "Mixed", icon: Shuffle, color: "bg-purple-500" },
-};
+
 
 interface TaxonomyCacheItem extends WpTaxonomyCache {
   children?: TaxonomyCacheItem[];
@@ -100,11 +231,11 @@ interface TaxonomyCacheItem extends WpTaxonomyCache {
 function buildCategoryTree(categories: WpTaxonomyCache[]): TaxonomyCacheItem[] {
   const map = new Map<number, TaxonomyCacheItem>();
   const roots: TaxonomyCacheItem[] = [];
-  
+
   categories.forEach(cat => {
     map.set(cat.wpId, { ...cat, children: [] });
   });
-  
+
   categories.forEach(cat => {
     const node = map.get(cat.wpId)!;
     if (cat.parentWpId && map.has(cat.parentWpId)) {
@@ -113,17 +244,17 @@ function buildCategoryTree(categories: WpTaxonomyCache[]): TaxonomyCacheItem[] {
       roots.push(node);
     }
   });
-  
+
   return roots;
 }
 
-function CategoryTreeSelect({ 
-  item, 
+function CategoryTreeSelect({
+  item,
   level = 0,
   selectedIds,
   onToggle
-}: { 
-  item: TaxonomyCacheItem; 
+}: {
+  item: TaxonomyCacheItem;
   level?: number;
   selectedIds: number[];
   onToggle: (id: number) => void;
@@ -131,14 +262,14 @@ function CategoryTreeSelect({
   const [expanded, setExpanded] = useState(level === 0);
   const hasChildren = item.children && item.children.length > 0;
   const isSelected = selectedIds.includes(item.wpId);
-  
+
   return (
     <div>
-      <div 
+      <div
         className="flex items-center gap-2 py-1 hover-elevate rounded cursor-pointer pr-2"
         style={{ paddingLeft: `${level * 16 + 4}px` }}
       >
-        <div 
+        <div
           className="flex items-center gap-1"
           onClick={() => hasChildren && setExpanded(!expanded)}
         >
@@ -152,7 +283,7 @@ function CategoryTreeSelect({
             <span className="w-3" />
           )}
         </div>
-        <Checkbox 
+        <Checkbox
           checked={isSelected}
           onCheckedChange={() => onToggle(item.wpId)}
           data-testid={`checkbox-category-${item.wpId}`}
@@ -162,9 +293,9 @@ function CategoryTreeSelect({
       {expanded && hasChildren && (
         <div>
           {item.children!.map(child => (
-            <CategoryTreeSelect 
-              key={child.wpId} 
-              item={child} 
+            <CategoryTreeSelect
+              key={child.wpId}
+              item={child}
               level={level + 1}
               selectedIds={selectedIds}
               onToggle={onToggle}
@@ -190,11 +321,11 @@ interface TopicSourceWithDetails {
   } | null;
 }
 
-function TopicSettingsDialog({ 
+function TopicSettingsDialog({
   topic,
   open,
   onOpenChange
-}: { 
+}: {
   topic: Topic;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -203,33 +334,21 @@ function TopicSettingsDialog({
   const { isAuthenticated } = useAuth();
   const { activeWorkspaceId, isLoading: isWorkspaceLoading } = useWorkspaceContext();
   const [activeTab, setActiveTab] = useState("sources");
-  
-  // Block dialog content until workspace context is loaded
-  if (isWorkspaceLoading) {
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-4xl">
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-muted-foreground">Loading workspace...</span>
-          </div>
-        </DialogContent>
-      </Dialog>
-    );
-  }
+
+  // IMPORTANT: All hooks must be called before any conditional returns
   const [publishingTargetId, setPublishingTargetId] = useState<string | null>(topic.publishingTargetId || null);
   const [tagSearch, setTagSearch] = useState("");
   const [sourceSearch, setSourceSearch] = useState("");
-  
+
   const currentRules = topic.taxonomyRules as TopicTaxonomyRules || {};
   const [rules, setRules] = useState<TopicTaxonomyRules>(currentRules);
-  
+
   const [timezone, setTimezone] = useState(topic.timezone || "UTC");
   const [publishTimes, setPublishTimes] = useState<string[]>((topic.publishTimes as string[] | null) || []);
   const [articlesPerRun, setArticlesPerRun] = useState(topic.articlesPerRun || 3);
   const [runIntervalMinutes, setRunIntervalMinutes] = useState(topic.runIntervalMinutes || 5);
   const [newPublishTime, setNewPublishTime] = useState("14:30");
-  
+
   const commonTimezones = [
     { value: "Asia/Dubai", label: "Dubai (GMT+4)" },
     { value: "Asia/Riyadh", label: "Riyadh (GMT+3)" },
@@ -242,29 +361,29 @@ function TopicSettingsDialog({
     { value: "America/Los_Angeles", label: "Los Angeles (GMT-8)" },
     { value: "UTC", label: "UTC" },
   ];
-  
+
   const addPublishTime = () => {
     if (newPublishTime && !publishTimes.includes(newPublishTime)) {
       setPublishTimes([...publishTimes, newPublishTime].sort());
     }
   };
-  
+
   const removePublishTime = (time: string) => {
     setPublishTimes(publishTimes.filter(t => t !== time));
   };
-  
+
   // Fetch topic sources (gate on isAuthenticated to avoid 401s)
   const topicSourcesQuery = useQuery<TopicSourceWithDetails[]>({
     queryKey: [`/api/topics/${topic.id}/sources`],
     enabled: open && isAuthenticated,
   });
-  
+
   // Fetch all available sources
   const allSourcesQuery = useQuery<any[]>({
     queryKey: ["/api/sources"],
     enabled: open && isAuthenticated,
   });
-  
+
   const toggleSourceMutation = useMutation({
     mutationFn: async ({ sourceId, isEnabled }: { sourceId: string; isEnabled: boolean }) => {
       return await apiRequest("PATCH", `/api/topics/${topic.id}/sources/${sourceId}`, { isEnabled });
@@ -277,7 +396,7 @@ function TopicSettingsDialog({
       toast({ title: "Failed to update source", variant: "destructive" });
     },
   });
-  
+
   const addSourceMutation = useMutation({
     mutationFn: async (sourceId: string) => {
       return await apiRequest("POST", `/api/topics/${topic.id}/sources`, {
@@ -293,7 +412,7 @@ function TopicSettingsDialog({
       toast({ title: "Failed to add source", variant: "destructive" });
     },
   });
-  
+
   // Get enabled source IDs for quick lookup
   const enabledSourceIds = new Set(
     (topicSourcesQuery.data ?? []).filter(ts => ts.isEnabled).map(ts => ts.sourceId)
@@ -301,33 +420,33 @@ function TopicSettingsDialog({
   const topicSourceIds = new Set(
     (topicSourcesQuery.data ?? []).map(ts => ts.sourceId)
   );
-  
+
   // Filter available sources not yet added to topic
   const availableSources = (allSourcesQuery.data ?? []).filter(
     s => !topicSourceIds.has(s.id) && s.name.toLowerCase().includes(sourceSearch.toLowerCase())
   );
-  
+
   // Server auto-resolves workspace from session - include activeWorkspaceId in key for cache separation
   // Use object form to prevent URL concatenation (workspace ID is for cache key only, not URL)
   const { data: targets, isLoading: targetsLoading } = useQuery<PublishingTarget[]>({
     queryKey: ["/api/publishing-targets", { workspaceId: activeWorkspaceId }],
     enabled: open && isAuthenticated && !!activeWorkspaceId,
   });
-  
+
   const wordPressTargets = useMemo(() => {
     const filtered = (targets ?? []).filter(t => t.type === "wordpress" || t.type === "wordpress_pull");
     console.log("[EditDialog] targets:", targets, "filtered:", filtered);
     return filtered;
   }, [targets]);
-  
-  const taxonomyQuery = useQuery<{ 
-    items: WpTaxonomyCache[]; 
-    lastSync: { categories: string | null; tags: string | null } 
+
+  const taxonomyQuery = useQuery<{
+    items: WpTaxonomyCache[];
+    lastSync: { categories: string | null; tags: string | null }
   }>({
     queryKey: ["/api/publishing-targets", publishingTargetId, "taxonomy"],
     enabled: open && isAuthenticated && !!publishingTargetId,
   });
-  
+
   const syncCategoriesMutation = useMutation({
     mutationFn: async () => {
       return await apiRequest("POST", `/api/publishing-targets/${publishingTargetId}/sync-categories`);
@@ -340,7 +459,7 @@ function TopicSettingsDialog({
       toast({ title: "Failed to sync categories", variant: "destructive" });
     },
   });
-  
+
   const syncTagsMutation = useMutation({
     mutationFn: async () => {
       return await apiRequest("POST", `/api/publishing-targets/${publishingTargetId}/sync-tags`);
@@ -353,10 +472,10 @@ function TopicSettingsDialog({
       toast({ title: "Failed to sync tags", variant: "destructive" });
     },
   });
-  
+
   const updateMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("PATCH", `/api/topics/${topic.id}`, { 
+      return await apiRequest("PATCH", `/api/topics/${topic.id}`, {
         taxonomyRules: rules,
         timezone,
         publishTimes,
@@ -374,32 +493,32 @@ function TopicSettingsDialog({
       toast({ title: "Failed to save settings", variant: "destructive" });
     },
   });
-  
+
   const categories = taxonomyQuery.data?.items.filter(i => i.taxonomyType === "category") || [];
   const tags = taxonomyQuery.data?.items.filter(i => i.taxonomyType === "tag") || [];
   const categoryTree = buildCategoryTree(categories);
-  
-  const filteredTags = tagSearch 
+
+  const filteredTags = tagSearch
     ? tags.filter(t => t.name.toLowerCase().includes(tagSearch.toLowerCase()))
     : tags;
-  
+
   const getTargetRules = (targetId: string) => {
-    return rules[targetId] || { 
-      defaultCategoryIds: [], 
-      defaultTagIds: [], 
+    return rules[targetId] || {
+      defaultCategoryIds: [],
+      defaultTagIds: [],
       locationMode: "none",
       allowCreateTags: true,
       allowCreateCategories: false
     };
   };
-  
+
   const setTargetRules = (targetId: string, update: Partial<TopicTaxonomyRules[string]>) => {
     setRules(prev => ({
       ...prev,
       [targetId]: { ...getTargetRules(targetId), ...update }
     }));
   };
-  
+
   const toggleCategory = (categoryId: number) => {
     if (!publishingTargetId) return;
     const current = getTargetRules(publishingTargetId).defaultCategoryIds || [];
@@ -408,7 +527,7 @@ function TopicSettingsDialog({
       : [...current, categoryId];
     setTargetRules(publishingTargetId, { defaultCategoryIds: updated });
   };
-  
+
   const toggleTag = (tagId: number) => {
     if (!publishingTargetId) return;
     const current = getTargetRules(publishingTargetId).defaultTagIds || [];
@@ -417,11 +536,25 @@ function TopicSettingsDialog({
       : [...current, tagId];
     setTargetRules(publishingTargetId, { defaultTagIds: updated });
   };
-  
+
   const targetRules = publishingTargetId ? getTargetRules(publishingTargetId) : null;
   const selectedCategories = targetRules?.defaultCategoryIds || [];
   const selectedTags = targetRules?.defaultTagIds || [];
-  
+
+  // Block dialog content until workspace context is loaded (after all hooks)
+  if (isWorkspaceLoading) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-4xl">
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-muted-foreground">Loading workspace...</span>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
@@ -434,7 +567,7 @@ function TopicSettingsDialog({
             Configure publishing rules and taxonomy defaults
           </DialogDescription>
         </DialogHeader>
-        
+
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid grid-cols-4 w-full">
             <TabsTrigger value="sources" data-testid="tab-topic-sources">
@@ -451,7 +584,7 @@ function TopicSettingsDialog({
               Taxonomy
             </TabsTrigger>
           </TabsList>
-          
+
           <TabsContent value="sources" className="space-y-4 pt-4">
             <div className="space-y-4">
               <div className="flex items-center justify-between gap-2">
@@ -465,13 +598,13 @@ function TopicSettingsDialog({
                   <Loader2 className="w-4 h-4 animate-spin" />
                 )}
               </div>
-              
+
               {/* Current topic sources */}
               {(topicSourcesQuery.data ?? []).length > 0 ? (
                 <ScrollArea className="h-48 rounded border p-2">
                   <div className="space-y-2">
                     {(topicSourcesQuery.data ?? []).map((ts) => (
-                      <div 
+                      <div
                         key={ts.sourceId}
                         className="flex items-center justify-between gap-2 p-2 rounded hover-elevate"
                       >
@@ -491,7 +624,7 @@ function TopicSettingsDialog({
                           )}
                           <Switch
                             checked={ts.isEnabled}
-                            onCheckedChange={(checked) => 
+                            onCheckedChange={(checked) =>
                               toggleSourceMutation.mutate({ sourceId: ts.sourceId, isEnabled: checked })
                             }
                             disabled={toggleSourceMutation.isPending}
@@ -513,12 +646,12 @@ function TopicSettingsDialog({
                   </p>
                 </div>
               )}
-              
+
               {/* Add more sources */}
               <div className="border-t pt-4">
                 <Label className="text-sm">Add More Sources</Label>
-                <Input 
-                  placeholder="Search sources..." 
+                <Input
+                  placeholder="Search sources..."
                   className="mt-2"
                   value={sourceSearch}
                   onChange={(e) => setSourceSearch(e.target.value)}
@@ -532,7 +665,7 @@ function TopicSettingsDialog({
                   <ScrollArea className="h-32 mt-2 rounded border p-2">
                     <div className="space-y-1">
                       {availableSources.slice(0, 20).map((source) => (
-                        <div 
+                        <div
                           key={source.id}
                           className="flex items-center justify-between gap-2 p-2 rounded hover-elevate cursor-pointer"
                           onClick={() => addSourceMutation.mutate(source.id)}
@@ -540,8 +673,8 @@ function TopicSettingsDialog({
                           <div className="flex-1 min-w-0">
                             <p className="text-sm truncate">{source.name}</p>
                           </div>
-                          <Button 
-                            size="sm" 
+                          <Button
+                            size="sm"
                             variant="ghost"
                             disabled={addSourceMutation.isPending}
                             data-testid={`button-add-source-${source.id}`}
@@ -560,7 +693,7 @@ function TopicSettingsDialog({
               </div>
             </div>
           </TabsContent>
-          
+
           <TabsContent value="schedule" className="space-y-4 pt-4">
             <div className="space-y-4">
               <div className="space-y-2">
@@ -579,18 +712,18 @@ function TopicSettingsDialog({
                   Publishing times will be scheduled based on this timezone
                 </p>
               </div>
-              
+
               <Separator />
-              
+
               <div className="space-y-2">
                 <Label>Publishing Times</Label>
                 <p className="text-xs text-muted-foreground mb-2">
                   Add specific times when content should be published each day
                 </p>
-                
+
                 <div className="flex gap-2">
-                  <Input 
-                    type="time" 
+                  <Input
+                    type="time"
                     value={newPublishTime}
                     onChange={(e) => setNewPublishTime(e.target.value)}
                     className="flex-1"
@@ -601,12 +734,12 @@ function TopicSettingsDialog({
                     Add Time
                   </Button>
                 </div>
-                
+
                 {publishTimes.length > 0 ? (
                   <div className="flex flex-wrap gap-2 mt-2">
                     {publishTimes.map(time => (
-                      <Badge 
-                        key={time} 
+                      <Badge
+                        key={time}
                         variant="secondary"
                         className="flex items-center gap-1"
                       >
@@ -628,14 +761,14 @@ function TopicSettingsDialog({
                   </p>
                 )}
               </div>
-              
+
               <Separator />
-              
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Articles Per Run</Label>
-                  <Select 
-                    value={String(articlesPerRun)} 
+                  <Select
+                    value={String(articlesPerRun)}
                     onValueChange={(v) => setArticlesPerRun(Number(v))}
                   >
                     <SelectTrigger data-testid="select-articles-per-run">
@@ -653,11 +786,11 @@ function TopicSettingsDialog({
                     Max articles per publishing slot
                   </p>
                 </div>
-                
+
                 <div className="space-y-2">
                   <Label>Interval Between Articles</Label>
-                  <Select 
-                    value={String(runIntervalMinutes)} 
+                  <Select
+                    value={String(runIntervalMinutes)}
                     onValueChange={(v) => setRunIntervalMinutes(Number(v))}
                   >
                     <SelectTrigger data-testid="select-run-interval">
@@ -678,13 +811,13 @@ function TopicSettingsDialog({
               </div>
             </div>
           </TabsContent>
-          
+
           <TabsContent value="general" className="space-y-4 pt-4">
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label>Publishing Target</Label>
-                <Select 
-                  value={publishingTargetId || "none"} 
+                <Select
+                  value={publishingTargetId || "none"}
                   onValueChange={(value) => setPublishingTargetId(value === "none" ? null : value)}
                 >
                   <SelectTrigger data-testid="select-publishing-target">
@@ -715,13 +848,13 @@ function TopicSettingsDialog({
                   </div>
                 )}
               </div>
-              
+
               <Separator />
-              
+
               <div className="space-y-2">
                 <Label>Default Content Language</Label>
-                <Select 
-                  value={topic.language || "en"} 
+                <Select
+                  value={topic.language || "en"}
                   disabled
                 >
                   <SelectTrigger data-testid="select-topic-language">
@@ -736,11 +869,11 @@ function TopicSettingsDialog({
                   Language for generated content from this topic
                 </p>
               </div>
-              
+
               <div className="space-y-2">
                 <Label>Content Intent</Label>
-                <Select 
-                  value={topic.contentIntent || "news_monitoring"} 
+                <Select
+                  value={topic.contentIntent || "news_monitoring"}
                   disabled
                 >
                   <SelectTrigger data-testid="select-topic-intent">
@@ -757,9 +890,9 @@ function TopicSettingsDialog({
                   Determines how content is processed and prioritized
                 </p>
               </div>
-              
+
               <Separator />
-              
+
               <div className="flex items-center justify-between">
                 <div>
                   <Label>Discovery Status</Label>
@@ -771,7 +904,7 @@ function TopicSettingsDialog({
                   {topic.isLive === "true" ? "Live" : "Paused"}
                 </Badge>
               </div>
-              
+
               <div className="flex items-center justify-between">
                 <div>
                   <Label>Output Volume</Label>
@@ -783,7 +916,7 @@ function TopicSettingsDialog({
               </div>
             </div>
           </TabsContent>
-          
+
           <TabsContent value="taxonomy" className="space-y-4 pt-4">
             {!publishingTargetId ? (
               <div className="text-center py-6">
@@ -809,7 +942,7 @@ function TopicSettingsDialog({
                     <div className="text-sm text-muted-foreground">Loading target...</div>
                   );
                 })()}
-                
+
                 {publishingTargetId && targetRules && (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
@@ -837,8 +970,8 @@ function TopicSettingsDialog({
                             </div>
                           ) : (
                             categoryTree.map(cat => (
-                              <CategoryTreeSelect 
-                                key={cat.wpId} 
+                              <CategoryTreeSelect
+                                key={cat.wpId}
                                 item={cat}
                                 selectedIds={selectedCategories}
                                 onToggle={toggleCategory}
@@ -859,7 +992,7 @@ function TopicSettingsDialog({
                           </div>
                         )}
                       </div>
-                      
+
                       <div className="flex flex-col gap-2">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-medium">Default Tags</span>
@@ -877,8 +1010,8 @@ function TopicSettingsDialog({
                             )}
                           </Button>
                         </div>
-                        <Input 
-                          placeholder="Search tags..." 
+                        <Input
+                          placeholder="Search tags..."
                           className="h-8 text-sm"
                           value={tagSearch}
                           onChange={(e) => setTagSearch(e.target.value)}
@@ -894,7 +1027,7 @@ function TopicSettingsDialog({
                               {filteredTags.slice(0, 50).map(tag => {
                                 const isSelected = selectedTags.includes(tag.wpId);
                                 return (
-                                  <div 
+                                  <div
                                     key={tag.wpId}
                                     className="flex items-center gap-2 py-1 px-2 hover-elevate rounded cursor-pointer"
                                     onClick={() => toggleTag(tag.wpId)}
@@ -922,7 +1055,7 @@ function TopicSettingsDialog({
                         )}
                       </div>
                     </div>
-                    
+
                     <div className="space-y-3 pt-2 border-t">
                       <div className="flex items-center justify-between gap-2">
                         <div>
@@ -931,13 +1064,13 @@ function TopicSettingsDialog({
                             Create new tags in WordPress if they dont exist
                           </p>
                         </div>
-                        <Switch 
+                        <Switch
                           checked={targetRules.allowCreateTags}
                           onCheckedChange={(v) => setTargetRules(publishingTargetId!, { allowCreateTags: v })}
                           data-testid="switch-allow-create-tags"
                         />
                       </div>
-                      
+
                       <div className="flex items-center justify-between gap-2">
                         <div>
                           <Label className="text-sm">Location-based categorization</Label>
@@ -966,12 +1099,12 @@ function TopicSettingsDialog({
             )}
           </TabsContent>
         </Tabs>
-        
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button 
+          <Button
             onClick={() => updateMutation.mutate()}
             disabled={updateMutation.isPending}
             data-testid="button-save-topic-settings"
@@ -1032,13 +1165,20 @@ function SourceSelector({
 }) {
   // Ensure sources is always an array to prevent crashes
   const safeSources = Array.isArray(sources) ? sources : [];
-  
+
   const groupedByTier = useMemo(() => {
-    const tier1 = safeSources.filter(s => s.tier === 1);
-    const tier2 = safeSources.filter(s => s.tier === 2);
-    const tier3 = safeSources.filter(s => s.tier === 3);
+    // Filter sources by selected language if specified
+    const filteredSources = language
+      ? safeSources.filter(s => s.language === language)
+      : safeSources;
+
+    const tier1 = filteredSources.filter(s => s.tier === 1);
+    const tier2 = filteredSources.filter(s => s.tier === 2);
+    const tier3 = filteredSources.filter(s => s.tier === 3);
     return { tier1, tier2, tier3 };
-  }, [safeSources]);
+  }, [safeSources, language]);
+
+  const filteredSourcesCount = groupedByTier.tier1.length + groupedByTier.tier2.length + groupedByTier.tier3.length;
 
   if (isLoading) {
     return (
@@ -1049,14 +1189,23 @@ function SourceSelector({
     );
   }
 
-  if (safeSources.length === 0) {
+  if (filteredSourcesCount === 0) {
+    const hasUnfilteredSources = safeSources.length > 0;
     return (
       <div className="text-center py-8 space-y-4">
         <Newspaper className="w-10 h-10 mx-auto text-muted-foreground/50" />
         <div>
-          <p className="font-medium">No sources found for this query</p>
+          <p className="font-medium">
+            {hasUnfilteredSources
+              ? `No ${language ? language.toUpperCase() : ''} sources found`
+              : "No sources found for this query"
+            }
+          </p>
           <p className="text-sm text-muted-foreground mt-1">
-            Try adjusting your search or region settings
+            {hasUnfilteredSources
+              ? "Try selecting a different language or adjust your region settings"
+              : "Try adjusting your search or region settings"
+            }
           </p>
         </div>
         <div className="flex gap-2 justify-center">
@@ -1083,15 +1232,14 @@ function SourceSelector({
   const renderSourceRow = (source: RecommendedSource) => {
     const id = source.sourceId || source.domain;
     if (!source.sourceId) return null;
-    
+
     const isSelected = selectedSourceIds.has(source.sourceId);
-    
+
     return (
       <div
         key={id}
-        className={`flex items-center gap-3 p-2 rounded-md cursor-pointer hover-elevate ${
-          isSelected ? "bg-accent" : ""
-        }`}
+        className={`flex items-center gap-3 p-2 rounded-md cursor-pointer hover-elevate ${isSelected ? "bg-accent" : ""
+          }`}
         onClick={() => source.sourceId && onToggleSource(source.sourceId)}
         data-testid={`source-row-${source.sourceId}`}
       >
@@ -1102,14 +1250,14 @@ function SourceSelector({
             <Circle className="w-5 h-5 text-muted-foreground" />
           )}
         </div>
-        
+
         <div className="flex-1 min-w-0">
           <div className="font-medium text-sm truncate">
             {source.displayName ? `${source.displayName} (${source.name})` : source.name}
           </div>
           <div className="text-xs text-muted-foreground truncate">{source.domain}</div>
         </div>
-        
+
         <div className="flex items-center gap-2 flex-shrink-0">
           {source.tier === 1 && (
             <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
@@ -1137,7 +1285,7 @@ function SourceSelector({
             </div>
           </div>
         )}
-        
+
         {groupedByTier.tier2.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -1149,7 +1297,7 @@ function SourceSelector({
             </div>
           </div>
         )}
-        
+
         {groupedByTier.tier3.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -1162,7 +1310,7 @@ function SourceSelector({
           </div>
         )}
       </div>
-      
+
       {isBroadened && (
         <div className="mt-3 pt-3 border-t">
           <p className="text-xs text-muted-foreground text-center">
@@ -1174,484 +1322,7 @@ function SourceSelector({
   );
 }
 
-interface TopicStory {
-  id: string;
-  canonicalTitle: string;
-  topicRelevance?: {
-    score: number;
-    matchedTerms: string[];
-  };
-}
 
-interface TopicStoriesResponse {
-  stories: TopicStory[];
-  stats: { relevant: number };
-}
-
-function TopicCard({ 
-  topic, 
-  onToggleLive,
-  onDelete,
-  onOpenSettings,
-  onRunDiscovery,
-  isPending,
-  isDiscoveryPending,
-  enabledSourceCount
-}: { 
-  topic: Topic;
-  onToggleLive: () => void;
-  onDelete: () => void;
-  onOpenSettings: () => void;
-  onRunDiscovery: () => void;
-  isPending: boolean;
-  isDiscoveryPending?: boolean;
-  enabledSourceCount: number;
-}) {
-  const [showStories, setShowStories] = useState(false);
-  
-  // Fetch topic stories
-  const { data: storiesData } = useQuery<TopicStoriesResponse>({
-    queryKey: ["/api/topics", topic.id, "stories"],
-  });
-  
-  const topicStories = storiesData?.stories || [];
-  
-  const intent = contentIntentConfig[topic.contentIntent as ContentIntent] || contentIntentConfig.mixed;
-  const IntentIcon = intent.icon;
-  const isLive = topic.isLive === "true";
-  const hasRules = Boolean(topic.taxonomyRules && typeof topic.taxonomyRules === 'object' && Object.keys(topic.taxonomyRules as object).length > 0);
-  const canActivate = enabledSourceCount > 0 || isLive;
-  const storiesCount = topicStories.length;
-
-  return (
-    <Card className="hover-elevate" data-testid={`topic-card-${topic.id}`}>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-md ${intent.color} text-white`}>
-              <IntentIcon className="w-4 h-4" />
-            </div>
-            <div>
-              <CardTitle className="text-base font-medium">
-                {topic.name}
-              </CardTitle>
-              <CardDescription className="text-xs">
-                {intent.label} content
-              </CardDescription>
-            </div>
-          </div>
-          
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" data-testid={`button-topic-menu-${topic.id}`}>
-                <MoreVertical className="w-4 h-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem 
-                onClick={onRunDiscovery} 
-                disabled={isDiscoveryPending || enabledSourceCount === 0}
-                data-testid={`menu-run-discovery-${topic.id}`}
-              >
-                {isDiscoveryPending ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                )}
-                Run Discovery
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onOpenSettings} data-testid={`menu-edit-${topic.id}`}>
-                <Settings className="w-4 h-4 mr-2" />
-                Edit Settings
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem 
-                className="text-destructive"
-                onClick={onDelete}
-                data-testid={`menu-delete-${topic.id}`}
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {topic.query && (
-          <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
-            {topic.query}
-          </p>
-        )}
-        
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Badge variant="outline" className="text-xs">
-              {topic.language || "en"}
-            </Badge>
-            {topic.outputVolumePerDay && (
-              <Badge variant="outline" className="text-xs">
-                {String(topic.outputVolumePerDay)}/day
-              </Badge>
-            )}
-            {hasRules && (
-              <Badge variant="secondary" className="text-xs">
-                <FolderTree className="w-3 h-3 mr-1" />
-                Rules
-              </Badge>
-            )}
-            {storiesCount > 0 && (
-              <Badge 
-                variant="default" 
-                className="text-xs cursor-pointer"
-                onClick={() => setShowStories(!showStories)}
-                data-testid={`badge-stories-${topic.id}`}
-              >
-                <Newspaper className="w-3 h-3 mr-1" />
-                {storiesCount} stories
-              </Badge>
-            )}
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {isLive ? "Live" : enabledSourceCount === 0 ? "No Sources" : "Paused"}
-            </span>
-            <Switch
-              checked={isLive}
-              onCheckedChange={onToggleLive}
-              disabled={isPending || !canActivate}
-              data-testid={`switch-live-${topic.id}`}
-            />
-          </div>
-        </div>
-        
-        {showStories && storiesCount > 0 && (
-          <div className="mt-4 pt-4 border-t space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Matched Stories</span>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => setShowStories(false)}
-                className="h-6 px-2 text-xs"
-              >
-                Hide
-              </Button>
-            </div>
-            <ScrollArea className="max-h-48">
-              <div className="space-y-2">
-                {topicStories.slice(0, 10).map((story) => (
-                  <div 
-                    key={story.id} 
-                    className="p-2 rounded-md bg-muted/50 text-sm"
-                    data-testid={`story-item-${story.id}`}
-                  >
-                    <div className="font-medium line-clamp-1">{story.canonicalTitle}</div>
-                    {story.topicRelevance && (
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <Badge variant="outline" className="text-xs">
-                          {(story.topicRelevance.score * 100).toFixed(0)}% match
-                        </Badge>
-                        {story.topicRelevance.matchedTerms?.slice(0, 3).map((term) => (
-                          <Badge key={term} variant="secondary" className="text-xs">
-                            {term}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {storiesCount > 10 && (
-                  <p className="text-xs text-muted-foreground text-center py-1">
-                    +{storiesCount - 10} more stories
-                  </p>
-                )}
-              </div>
-            </ScrollArea>
-          </div>
-        )}
-        
-        {topic.automationMode && topic.automationMode !== "manual" && (
-          <AutomationStatusCard 
-            topic={topic} 
-            hasWpPlugin={!!topic.publishingTargetId}
-          />
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-type AutomationActivity = {
-  automationMode: string;
-  lastRunAt: string | null;
-  lastRunStatus: string | null;
-  stats: {
-    totalGenerated: number;
-    totalPublished: number;
-    totalQuarantined: number;
-    draftsCreated: number;
-    draftsPendingReview: number;
-    draftsApproved: number;
-    draftsPublished: number;
-    currentQuarantined: number;
-    awaitingGate: number;
-    awaitingSchedule: number;
-    todayPublished: number;
-  };
-  recentRuns: Array<{
-    id: string;
-    jobType: string;
-    status: string;
-    startedAt: string;
-    endedAt: string | null;
-    processed: number;
-    success: number;
-    failed: number;
-    quarantined: number;
-  }>;
-};
-
-function AutomationStatusCard({ 
-  topic,
-  hasWpPlugin 
-}: { 
-  topic: Topic;
-  hasWpPlugin: boolean;
-}) {
-  const { toast } = useToast();
-  const [showHistory, setShowHistory] = useState(false);
-  
-  const { data: activity, isLoading, refetch } = useQuery<AutomationActivity>({
-    queryKey: [`/api/topics/${topic.id}/automation-activity`],
-    refetchInterval: topic.automationMode !== "manual" ? 30000 : false,
-  });
-
-  const runPipelineMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/topics/${topic.id}/run-pipeline`);
-      return res.json();
-    },
-    onSuccess: () => {
-      toast({ title: "Pipeline started", description: "Running automation for this topic" });
-      setTimeout(() => refetch(), 2000);
-      queryClient.invalidateQueries({ queryKey: [`/api/topics/${topic.id}/automation-activity`] });
-    },
-    onError: (error: any) => {
-      toast({ title: "Pipeline failed", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const copyDebugBundle = async () => {
-    const lastError = activity?.recentRuns?.find(r => r.failed > 0);
-    const bundle = {
-      topicId: topic.id,
-      topicName: topic.name,
-      automationMode: topic.automationMode,
-      lastRunId: activity?.recentRuns?.[0]?.id || null,
-      stats: activity?.stats || {},
-      lastError: lastError ? {
-        jobType: lastError.jobType,
-        runId: lastError.id,
-        failedAt: lastError.endedAt,
-      } : null,
-      recentJobs: activity?.recentRuns?.slice(0, 20) || [],
-      timestamp: new Date().toISOString(),
-      hasWpPlugin,
-    };
-    
-    await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
-    toast({ title: "Debug bundle copied", description: "Paste this when reporting issues" });
-  };
-
-  const modeConfig: Record<string, { label: string; color: string; icon: any }> = {
-    auto: { label: "Full Auto", color: "bg-green-500", icon: Zap },
-    approval_required: { label: "Semi-Auto", color: "bg-amber-500", icon: Shield },
-    manual: { label: "Manual", color: "bg-slate-500", icon: Pause },
-  };
-
-  const mode = modeConfig[topic.automationMode || "manual"] || modeConfig.manual;
-  const ModeIcon = mode.icon;
-  
-  const hasErrors = (activity?.stats?.currentQuarantined || 0) > 0;
-  const isHealthy = !hasErrors && activity?.lastRunStatus === "completed";
-  const lastError = activity?.recentRuns?.find(r => r.failed > 0);
-
-  if (topic.automationMode === "manual") {
-    return null;
-  }
-
-  return (
-    <div className="mt-4 pt-4 border-t space-y-3" data-testid={`automation-status-${topic.id}`}>
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-medium flex items-center gap-2">
-          <ModeIcon className="h-4 w-4" />
-          Automation Status
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge className={`${mode.color} text-white`}>
-            {mode.label}
-          </Badge>
-          {isHealthy ? (
-            <Badge variant="outline" className="border-green-500 text-green-600">
-              <CheckCircle2 className="h-3 w-3 mr-1" />
-              Healthy
-            </Badge>
-          ) : hasErrors ? (
-            <Badge variant="destructive">
-              <AlertCircle className="h-3 w-3 mr-1" />
-                Issues
-              </Badge>
-            ) : null}
-          </div>
-        </div>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-4">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-              <div className="p-2 rounded-lg bg-muted/50">
-                <div className="text-lg font-semibold">{activity?.stats?.totalGenerated || 0}</div>
-                <div className="text-xs text-muted-foreground">Generated</div>
-              </div>
-              <div className="p-2 rounded-lg bg-muted/50">
-                <div className="text-lg font-semibold">{activity?.stats?.draftsCreated || 0}</div>
-                <div className="text-xs text-muted-foreground">Drafts</div>
-              </div>
-              <div className="p-2 rounded-lg bg-muted/50">
-                <div className="text-lg font-semibold text-green-600">{activity?.stats?.todayPublished || 0}</div>
-                <div className="text-xs text-muted-foreground">Published Today</div>
-              </div>
-              <div className="p-2 rounded-lg bg-muted/50">
-                <div className={`text-lg font-semibold ${(activity?.stats?.currentQuarantined || 0) > 0 ? "text-destructive" : ""}`}>
-                  {activity?.stats?.currentQuarantined || 0}
-                </div>
-                <div className="text-xs text-muted-foreground">Quarantined</div>
-              </div>
-            </div>
-
-            {topic.automationMode === "approval_required" && (activity?.stats?.draftsPendingReview || 0) > 0 && (
-              <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                    {activity?.stats?.draftsPendingReview} drafts awaiting review
-                  </span>
-                  <Link href="/smart-editor">
-                    <Button size="sm" variant="outline" data-testid={`button-review-now-${topic.id}`}>
-                      <Eye className="h-3 w-3 mr-1" />
-                      Review Now
-                    </Button>
-                  </Link>
-                </div>
-              </div>
-            )}
-
-            {lastError && (
-              <div className="p-2 rounded-lg bg-destructive/10 text-xs">
-                <span className="font-medium text-destructive">Last error: </span>
-                <span className="text-muted-foreground">
-                  {lastError.jobType} job failed ({lastError.failed} items) 
-                  {lastError.endedAt && ` - ${formatDistanceToNow(new Date(lastError.endedAt))} ago`}
-                </span>
-              </div>
-            )}
-
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                Last run: {activity?.lastRunAt 
-                  ? formatDistanceToNow(new Date(activity.lastRunAt)) + " ago"
-                  : "Never"}
-              </span>
-              <span>Next: ~10 min cycle</span>
-            </div>
-
-            <Separator />
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button
-                size="sm"
-                onClick={() => runPipelineMutation.mutate()}
-                disabled={runPipelineMutation.isPending}
-                data-testid={`button-run-now-${topic.id}`}
-              >
-                {runPipelineMutation.isPending ? (
-                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                ) : (
-                  <Play className="h-3 w-3 mr-1" />
-                )}
-                Run Now
-              </Button>
-              
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowHistory(!showHistory)}
-                data-testid={`button-job-history-${topic.id}`}
-              >
-                <History className="h-3 w-3 mr-1" />
-                Job History
-              </Button>
-              
-              <Link href="/pipeline">
-                <Button size="sm" variant="ghost" data-testid={`link-quarantine-${topic.id}`}>
-                  <AlertCircle className="h-3 w-3 mr-1" />
-                  Quarantine
-                </Button>
-              </Link>
-              
-              {hasWpPlugin && (
-                <Link href="/settings/publishing">
-                  <Button size="sm" variant="ghost" data-testid={`link-plugin-diagnostics-${topic.id}`}>
-                    <ExternalLink className="h-3 w-3 mr-1" />
-                    Plugin Diagnostics
-                  </Button>
-                </Link>
-              )}
-              
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={copyDebugBundle}
-                data-testid={`button-copy-debug-${topic.id}`}
-              >
-                <Copy className="h-3 w-3 mr-1" />
-                Copy Debug Bundle
-              </Button>
-            </div>
-
-            {showHistory && (
-              <div className="pt-2 space-y-2">
-                <div className="text-xs font-medium">Recent Job Runs</div>
-                <ScrollArea className="h-32">
-                  {activity?.recentRuns?.map((run) => (
-                    <div key={run.id} className="flex items-center gap-2 py-1 text-xs">
-                      <div className={`h-2 w-2 rounded-full ${
-                        run.status === "completed" ? "bg-green-500" : 
-                        run.status === "running" ? "bg-yellow-500 animate-pulse" : "bg-red-500"
-                      }`} />
-                      <Badge variant="outline" className="text-xs capitalize">{run.jobType}</Badge>
-                      <span className="text-muted-foreground">
-                        {run.success} ok, {run.failed} fail
-                      </span>
-                      <span className="text-muted-foreground ml-auto">
-                        {run.startedAt ? formatDistanceToNow(new Date(run.startedAt)) + " ago" : ""}
-                      </span>
-                    </div>
-                  ))}
-                  {(!activity?.recentRuns || activity.recentRuns.length === 0) && (
-                    <p className="text-xs text-muted-foreground py-2">No job runs yet</p>
-                  )}
-                </ScrollArea>
-              </div>
-            )}
-          </>
-        )}
-    </div>
-  );
-}
 
 export default function TopicsPage() {
   const { toast } = useToast();
@@ -1674,6 +1345,7 @@ export default function TopicsPage() {
     contentIntent: "news_monitoring" as ContentIntent,
     outputVolumePerDay: 5,
     publishingTargetId: null as string | null,
+    publishIntervalMinutes: 2, // NEW: Default 2 minutes between articles
   });
 
   // Auto-open create dialog from query param (e.g., /topics?create=1)
@@ -1686,25 +1358,45 @@ export default function TopicsPage() {
     }
   }, [searchString, setLocation]);
 
+  // Debug: Track component mount/unmount
+  useEffect(() => {
+    console.log("[Topics] mount");
+    return () => console.log("[Topics] unmount");
+  }, []);
+
   const { isAuthenticated } = useAuth();
-  
+
   // Use unified workspace context for all workspace-scoped operations
-  const { 
-    activeWorkspaceId, 
+  const {
+    activeWorkspaceId,
     activeWorkspaceName,
-    counts: workspaceCounts, 
+    counts: workspaceCounts,
     recentTargets,
-    isLoading: isContextLoading 
+    isLoading: isContextLoading
   } = useWorkspaceContext();
-  
+
   const { data: topics, isLoading, isError } = useQuery<(Topic & { enabledSourceCount: number })[]>({
-    queryKey: ["/api/topics"],
-    enabled: isAuthenticated,
+    queryKey: ["/api/topics", { workspaceId: activeWorkspaceId }],
+    enabled: isAuthenticated && !!activeWorkspaceId,
+    refetchOnMount: "always",
   });
-  
+
   // Safe array even on error or undefined
   const safeTopics = topics ?? [];
-  
+
+  // Compute effective loading state - must gate on workspace readiness
+  const effectiveLoading = isContextLoading || !activeWorkspaceId || isLoading;
+
+  // Debug: Track component render
+  console.log("[Topics] render", { 
+    isContextLoading,
+    activeWorkspaceId: activeWorkspaceId ? "present" : "missing",
+    isLoading, 
+    effectiveLoading,
+    hasError: !!isError, 
+    count: topics?.length 
+  });
+
   // Use activeWorkspaceId from context as single source of truth - no fallback to avoid cross-workspace data
   const userWorkspaceId = activeWorkspaceId;
 
@@ -1714,12 +1406,12 @@ export default function TopicsPage() {
     queryKey: ["/api/publishing-targets", { workspaceId: activeWorkspaceId }],
     enabled: isAuthenticated && showCreateDialog && !!activeWorkspaceId,
   });
-  
-  const createDialogWordPressTargets = useMemo(() => 
-    (createDialogTargets ?? []).filter(t => t.type === "wordpress" || t.type === "wordpress_pull"), 
+
+  const createDialogWordPressTargets = useMemo(() =>
+    (createDialogTargets ?? []).filter(t => t.type === "wordpress" || t.type === "wordpress_pull"),
     [createDialogTargets]
   );
-  
+
   // Debug info for development (remove in production)
   const debugInfo = useMemo(() => ({
     activeWorkspaceId,
@@ -1731,16 +1423,16 @@ export default function TopicsPage() {
   }), [activeWorkspaceId, isContextLoading, workspaceCounts, createDialogTargets, createDialogWordPressTargets, isTargetsLoading]);
 
   const fetchRecommendedSources = async (options?: { broaden?: boolean; retryCount?: number }) => {
-    console.log("[fetchRecommendedSources] Called with:", { 
-      userWorkspaceId, 
-      region: newTopic.region, 
-      query: newTopic.query?.substring(0, 30) 
+    console.log("[fetchRecommendedSources] Called with:", {
+      userWorkspaceId,
+      region: newTopic.region,
+      query: newTopic.query?.substring(0, 30)
     });
     setIsLoadingSources(true);
     const broaden = options?.broaden ?? false;
     const retryCount = options?.retryCount ?? 0;
     const maxRetries = 2;
-    
+
     try {
       const requestBody = {
         topicQuery: newTopic.query,
@@ -1752,19 +1444,19 @@ export default function TopicsPage() {
         workspaceId: userWorkspaceId,
       };
       console.log("[RecommendSources] Sending request:", JSON.stringify(requestBody));
-      
+
       const response = await apiRequest("POST", "/api/topics/recommend-sources", requestBody);
       console.log("[RecommendSources] Response status:", response.status, response.ok);
-      
+
       const rawData = await response.json();
       console.log("[RecommendSources] Raw response:", rawData);
-      
+
       // Normalize response - handle various shapes ([], {sources:[]}, {items:[]}, {data:[]})
       const sources = normalizeList<RecommendedSource>(rawData);
       const defaultEnabled = Array.isArray(rawData?.defaultEnabled) ? rawData.defaultEnabled : [];
       const totalFound = rawData?.totalFound ?? sources.length;
-      
-      console.log("[RecommendSources] Normalized:", { 
+
+      console.log("[RecommendSources] Normalized:", {
         sourceCount: sources.length,
         totalFound,
         defaultEnabledCount: defaultEnabled.length,
@@ -1774,7 +1466,7 @@ export default function TopicsPage() {
       setIsBroadenedSearch(broaden);
     } catch (error: any) {
       console.error("[RecommendSources] FAILED:", error?.message || error, error);
-      
+
       // Retry on 401 errors (session might not be fully restored after server restart)
       const is401 = error?.message?.includes("401");
       if (is401 && retryCount < maxRetries) {
@@ -1782,9 +1474,9 @@ export default function TopicsPage() {
         await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
         return fetchRecommendedSources({ broaden, retryCount: retryCount + 1 });
       }
-      
-      const errorMsg = is401 
-        ? "Please sign in to discover sources" 
+
+      const errorMsg = is401
+        ? "Please sign in to discover sources"
         : "Failed to load sources";
       toast({ title: errorMsg, variant: "destructive" });
     } finally {
@@ -1826,7 +1518,7 @@ export default function TopicsPage() {
           console.error("Failed to save topic sources:", error);
         }
       }
-      
+
       queryClient.invalidateQueries({ queryKey: ["/api/topics"] });
       toast({ title: "Topic created", description: `${selectedSourceIds.size} sources enabled` });
       resetCreateDialog();
@@ -1849,6 +1541,7 @@ export default function TopicsPage() {
       contentIntent: "news_monitoring",
       outputVolumePerDay: 5,
       publishingTargetId: null,
+      publishIntervalMinutes: 2,
     });
   };
 
@@ -1894,9 +1587,9 @@ export default function TopicsPage() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
       queryClient.invalidateQueries({ queryKey: ["/api/topics", result.topicId, "stories"] });
-      toast({ 
-        title: "Discovery completed", 
-        description: `Found ${result.matchedStories || 0} matching stories` 
+      toast({
+        title: "Discovery completed",
+        description: `Found ${result.matchedStories || 0} matching stories`
       });
     },
     onError: (error: any) => {
@@ -1918,9 +1611,11 @@ export default function TopicsPage() {
       { id: topic.id, isLive: newIsLive },
       {
         onSuccess: () => {
-          toast({ 
-            title: newIsLive === "true" ? "Topic activated" : "Topic paused" 
+          toast({
+            title: newIsLive === "true" ? "Topic activated" : "Topic paused",
+            description: newIsLive === "true" ? "First discovery job starting..." : undefined
           });
+          // Backend automatically enqueues discovery job on activation
         },
       }
     );
@@ -1959,23 +1654,60 @@ export default function TopicsPage() {
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTopic.name.trim()) return;
-    
+
+    // Guard against missing workspace context
+    if (!userWorkspaceId) {
+      toast({
+        title: "Workspace not loaded",
+        description: "Please wait for workspace context to load",
+        variant: "destructive"
+      });
+      return;
+    }
+
     // Allow creating without sources - topic will be inactive
     if (selectedSourceIds.size === 0) {
-      toast({ 
-        title: "Creating inactive topic", 
+      toast({
+        title: "Creating inactive topic",
         description: "Add and enable sources later to activate this topic",
       });
     }
-    
+
     createTopicMutation.mutate(newTopic);
   };
 
   const liveTopics = safeTopics.filter(t => t.isLive === "true");
   const pausedTopics = safeTopics.filter(t => t.isLive !== "true");
 
+  // Early guard: Show skeleton if workspace context not ready
+  // This prevents blank renders on first mount before workspace resolves
+  if (isContextLoading || !activeWorkspaceId) {
+    return (
+      <div className="container py-6 space-y-6">
+        {/* DEBUG BADGE - Confirms updated code is running */}
+        <div className="fixed top-16 right-4 z-50 bg-yellow-500 text-black px-3 py-1 rounded-full text-xs font-mono shadow-lg">
+          Topics Loading Guard Active
+        </div>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Topics</h1>
+            <p className="text-muted-foreground">
+              Manage your content topics and automated pipelines
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">Loading workspace...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container py-6 space-y-6">
+      <StartHereBanner />
+
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Topics</h1>
@@ -1983,16 +1715,19 @@ export default function TopicsPage() {
             Manage your content topics and automated pipelines
           </p>
         </div>
-        
+
         <Button onClick={() => setShowCreateDialog(true)} data-testid="button-create-topic">
           <Plus className="w-4 h-4 mr-2" />
           Create Topic
         </Button>
       </div>
 
-      {isLoading ? (
+      {effectiveLoading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">
+            {isContextLoading || !activeWorkspaceId ? "Loading workspace..." : "Loading topics..."}
+          </span>
         </div>
       ) : isError ? (
         <Card className="text-center py-12">
@@ -2090,31 +1825,31 @@ export default function TopicsPage() {
               {wizardStep === 1 ? "Create Topic" : "Select Sources"}
             </DialogTitle>
             <DialogDescription>
-              {wizardStep === 1 
+              {wizardStep === 1
                 ? "Define a new content topic to track and generate drafts"
                 : "Choose which sources to enable for this topic"
               }
             </DialogDescription>
           </DialogHeader>
-          
+
           {/* Workspace info line */}
           {activeWorkspaceName && (
             <div className="text-xs text-muted-foreground bg-muted/30 px-3 py-1.5 rounded-md mb-2">
               Workspace: <span className="font-medium text-foreground">{activeWorkspaceName}</span>
             </div>
           )}
-          
+
           {process.env.NODE_ENV === "development" && (
             <div className="text-xs font-mono bg-muted/50 p-2 rounded mb-2 text-muted-foreground">
               WS: {debugInfo.activeWorkspaceId || "none"} |
               ctxLoad: {debugInfo.isContextLoading ? "Y" : "N"} |
-              ctx-targets: {debugInfo.targetsCount} | 
-              loaded: {debugInfo.loadedTargets} | 
+              ctx-targets: {debugInfo.targetsCount} |
+              loaded: {debugInfo.loadedTargets} |
               wp: {debugInfo.wpTargets} |
               targetsLoad: {debugInfo.isTargetsLoading ? "Y" : "N"}
             </div>
           )}
-          
+
           <div className="flex items-center gap-2 mb-4">
             <div className={`flex items-center gap-1 text-sm ${wizardStep >= 1 ? "text-primary" : "text-muted-foreground"}`}>
               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${wizardStep >= 1 ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
@@ -2130,7 +1865,7 @@ export default function TopicsPage() {
               <span>Sources</span>
             </div>
           </div>
-          
+
           {wizardStep === 1 ? (
             <div className="space-y-4">
               <div>
@@ -2146,8 +1881,8 @@ export default function TopicsPage() {
 
               <div>
                 <Label htmlFor="intent">Content Type</Label>
-                <Select 
-                  value={newTopic.contentIntent} 
+                <Select
+                  value={newTopic.contentIntent}
                   onValueChange={(v) => setNewTopic({ ...newTopic, contentIntent: v as ContentIntent })}
                 >
                   <SelectTrigger data-testid="select-create-topic-intent">
@@ -2178,72 +1913,139 @@ export default function TopicsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="region">Region</Label>
-                  <Select 
-                    value={newTopic.region} 
-                    onValueChange={(v) => setNewTopic({ ...newTopic, region: v })}
+                  <Select
+                    value={newTopic.region}
+                    onValueChange={(v) => {
+                      setNewTopic({ ...newTopic, region: v, countries: [] });
+                    }}
                   >
                     <SelectTrigger data-testid="select-create-topic-region">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="global">Global</SelectItem>
-                      <SelectItem value="mena">MENA</SelectItem>
-                      <SelectItem value="gcc">GCC</SelectItem>
-                      <SelectItem value="europe">Europe</SelectItem>
-                      <SelectItem value="north_america">North America</SelectItem>
-                      <SelectItem value="asia_pacific">Asia Pacific</SelectItem>
+                      {REGIONS.map((r) => (
+                        <SelectItem key={r.value} value={r.value}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
 
-                <div>
-                  <Label htmlFor="country">Country</Label>
-                  <Select 
-                    value={newTopic.countries[0] || ""} 
-                    onValueChange={(v) => setNewTopic({ ...newTopic, countries: v ? [v] : [] })}
-                  >
-                    <SelectTrigger data-testid="select-create-topic-country">
-                      <SelectValue placeholder="Select country" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ae">UAE</SelectItem>
-                      <SelectItem value="sa">Saudi Arabia</SelectItem>
-                      <SelectItem value="qa">Qatar</SelectItem>
-                      <SelectItem value="kw">Kuwait</SelectItem>
-                      <SelectItem value="bh">Bahrain</SelectItem>
-                      <SelectItem value="om">Oman</SelectItem>
-                      <SelectItem value="eg">Egypt</SelectItem>
-                      <SelectItem value="jo">Jordan</SelectItem>
-                      <SelectItem value="us">United States</SelectItem>
-                      <SelectItem value="gb">United Kingdom</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="language">Language</Label>
-                  <Select 
-                    value={newTopic.language} 
+                  <Select
+                    value={newTopic.language}
                     onValueChange={(v) => setNewTopic({ ...newTopic, language: v })}
                   >
                     <SelectTrigger data-testid="select-create-topic-language">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="en">English</SelectItem>
-                      <SelectItem value="ar">Arabic</SelectItem>
-                      <SelectItem value="es">Spanish</SelectItem>
-                      <SelectItem value="fr">French</SelectItem>
+                      {LANGUAGES.map((l) => (
+                        <SelectItem key={l.value} value={l.value}>
+                          {l.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
 
+              <div>
+                <Label>Countries (Optional - Multi-select)</Label>
+                <div className="border rounded-md p-4 max-h-[200px] overflow-y-auto bg-background">
+                  {newTopic.region === "global" ? (
+                    <div className="space-y-2">
+                      {COUNTRIES.map((country) => (
+                        <div key={country.value} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`country-${country.value}`}
+                            checked={newTopic.countries.includes(country.value)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setNewTopic({
+                                  ...newTopic,
+                                  countries: [...newTopic.countries, country.value]
+                                });
+                              } else {
+                                setNewTopic({
+                                  ...newTopic,
+                                  countries: newTopic.countries.filter(c => c !== country.value)
+                                });
+                              }
+                            }}
+                          />
+                          <label
+                            htmlFor={`country-${country.value}`}
+                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                          >
+                            {country.label}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {COUNTRIES.filter(c => c.region === newTopic.region).map((country) => (
+                        <div key={country.value} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`country-${country.value}`}
+                            checked={newTopic.countries.includes(country.value)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setNewTopic({
+                                  ...newTopic,
+                                  countries: [...newTopic.countries, country.value]
+                                });
+                              } else {
+                                setNewTopic({
+                                  ...newTopic,
+                                  countries: newTopic.countries.filter(c => c !== country.value)
+                                });
+                              }
+                            }}
+                          />
+                          <label
+                            htmlFor={`country-${country.value}`}
+                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                          >
+                            {country.label}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {newTopic.countries.length > 0 && (
+                    <div className="mt-3 pt-3 border-t">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">
+                          {newTopic.countries.length} selected
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setNewTopic({ ...newTopic, countries: [] })}
+                        >
+                          Clear all
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {newTopic.region === "global" 
+                    ? "Select specific countries or leave empty for all countries"
+                    : `Select specific countries in ${REGIONS.find(r => r.value === newTopic.region)?.label} or leave empty for the entire region`
+                  }
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="volume">Drafts per Day</Label>
-                  <Select 
-                    value={String(newTopic.outputVolumePerDay)} 
+                  <Select
+                    value={String(newTopic.outputVolumePerDay)}
                     onValueChange={(v) => setNewTopic({ ...newTopic, outputVolumePerDay: parseInt(v) })}
                   >
                     <SelectTrigger data-testid="select-create-topic-volume">
@@ -2257,12 +2059,34 @@ export default function TopicsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div>
+                  <Label htmlFor="publishInterval">Publishing Interval</Label>
+                  <div className="flex items-center gap-4">
+                    <input
+                      id="publishInterval"
+                      type="range"
+                      min="1"
+                      max="60"
+                      step="1"
+                      value={newTopic.publishIntervalMinutes}
+                      onChange={(e) => setNewTopic({ ...newTopic, publishIntervalMinutes: parseInt(e.target.value) })}
+                      className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <span className="text-sm font-medium text-muted-foreground w-24 text-right">
+                      {newTopic.publishIntervalMinutes} min
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Time between publishing each article (1-60 minutes)
+                  </p>
+                </div>
               </div>
 
               <div>
                 <Label htmlFor="publishingTarget">Publishing Target</Label>
-                <Select 
-                  value={newTopic.publishingTargetId || "none"} 
+                <Select
+                  value={newTopic.publishingTargetId || "none"}
                   onValueChange={(v) => setNewTopic({ ...newTopic, publishingTargetId: v === "none" ? null : v })}
                 >
                   <SelectTrigger data-testid="select-create-topic-target">
@@ -2292,7 +2116,7 @@ export default function TopicsPage() {
                 <Button type="button" variant="outline" onClick={resetCreateDialog}>
                   Cancel
                 </Button>
-                <Button 
+                <Button
                   type="button"
                   onClick={handleNextStep}
                   disabled={!newTopic.name.trim()}
@@ -2313,7 +2137,7 @@ export default function TopicsPage() {
                   {selectedSourceIds.size} selected
                 </Badge>
               </div>
-              
+
               <SourceSelector
                 sources={recommendedSources}
                 selectedSourceIds={selectedSourceIds}
@@ -2328,9 +2152,9 @@ export default function TopicsPage() {
                 <Button type="button" variant="outline" onClick={handlePreviousStep}>
                   Back
                 </Button>
-                <Button 
-                  type="submit" 
-                  disabled={createTopicMutation.isPending}
+                <Button
+                  type="submit"
+                  disabled={createTopicMutation.isPending || isContextLoading || !userWorkspaceId}
                   variant={selectedSourceIds.size === 0 ? "outline" : "default"}
                   data-testid="button-submit-create-topic"
                 >

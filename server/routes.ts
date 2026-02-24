@@ -3,7 +3,9 @@ import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql } from "drizzle-orm";
+import { requireRole, requireWorkspaceOwnership } from "./middleware/rbac";
+import { getUserId, getUserEmail, requireUserId } from "./middleware/auth-helpers";
+import { sql, eq } from "drizzle-orm";
 import { setupAuth, registerAuthRoutes, isAuthenticated, authStorage, createAutomationAuthMiddleware, resolveWorkspaceId, resolveWorkspace } from "./replit_integrations/auth";
 import { processWorkflowWithAI } from "./ai-workflow";
 import { 
@@ -24,11 +26,14 @@ import {
   type AssetStatus,
   type ChannelType,
   type SourceItemStatus,
+  sites,
+  workspaces,
+  topics,
+  sources,
 } from "@shared/schema";
 import { z } from "zod";
 import { fetchRSSSource, testRSSFeed } from "./services/rss-service";
 import { runAutomation } from "./services/automation-service";
-import { testWordPressConnection, publishToWordPress, fetchWordPressCategories, fetchWordPressTags, createWordPressTag, createWordPressCategory } from "./services/wordpress-service";
 import { startScheduler } from "./services/scheduler";
 import { runDiscoveryJob, convertDiscoveredSourceToSource } from "./services/discovery-service";
 import { insertContentGoalSchema, insertTopicSchema, insertDraftSchema, insertImageAssetSchema } from "@shared/schema";
@@ -219,7 +224,7 @@ export async function registerRoutes(
   // Get current user's workspace ID (for API calls that need it)
   app.get("/api/user/workspace", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Not authenticated" });
       }
@@ -237,13 +242,14 @@ export async function registerRoutes(
   // GET /api/me/context - Single source of truth for active workspace
   app.get("/api/me/context", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
+      const userEmail = getUserEmail(req);
       if (!userId) {
         return res.status(401).json({ error: "Not authenticated" });
       }
       
       // Ensure user has at least one workspace (auto-create if needed)
-      await authStorage.ensureUserHasWorkspace(userId);
+      await authStorage.ensureUserHasWorkspace(userId, userEmail);
       
       // Get all user's workspace memberships (refreshed after potential auto-creation)
       const memberships = await storage.getUserWorkspaceMemberships(userId);
@@ -286,6 +292,19 @@ export async function registerRoutes(
         workspaceId: t.workspaceId,
       }));
       
+      // Get sites for active workspace
+      const sitesData = await db
+        .select()
+        .from(sites)
+        .where(sql`workspace_id = ${activeWorkspaceId}`)
+        .orderBy(sql`created_at ASC`);
+
+      // Get active site ID from workspace
+      const [workspace] = await db
+        .select()
+        .from(workspaces)
+        .where(sql`id = ${activeWorkspaceId}`);
+
       res.json({
         userId,
         memberships: memberships.map((m: { workspaceId: string; workspaceName: string; role: string }) => ({
@@ -294,23 +313,36 @@ export async function registerRoutes(
           role: m.role,
         })),
         activeWorkspaceId,
+        activeSiteId: workspace?.activeSiteId || null,
+        sites: sitesData.map(s => ({
+          id: s.id,
+          name: s.name,
+          url: s.url,
+          connectionStatus: s.connectionStatus,
+          lastConnectedAt: s.lastConnectedAt,
+        })),
         counts: {
           topicsCount: topics.length,
           targetsCount: targets.length,
           sourcesCount: sources.length,
+          sitesCount: sitesData.length,
         },
         recentTargets,
       });
     } catch (error) {
       console.error("[API] Error getting user context:", error);
-      return res.status(500).json({ error: "Failed to get user context" });
+      console.error("[API] Error stack:", (error as Error)?.stack);
+      return res.status(500).json({ 
+        error: "Failed to get user context",
+        details: process.env.NODE_ENV === "development" ? (error as Error)?.message : undefined
+      });
     }
   });
   
   // GET /api/user/context - Full user context with workspace details and legacy report
   app.get("/api/user/context", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Not authenticated" });
       }
@@ -394,10 +426,109 @@ export async function registerRoutes(
     }
   });
   
+  // GET /api/debug/db - Database health check (dev-only, single source of truth)
+  app.get("/api/debug/db", async (req: Request, res: Response) => {
+    try {
+      // Get counts for all major tables
+      const [
+        workspacesResult,
+        topicsResult,
+        sourcesResult,
+        automationJobRunsResult,
+        activeJobsResult,
+        recentJobsResult,
+      ] = await Promise.all([
+        db.execute(sql`SELECT COUNT(*) as count FROM workspaces`),
+        db.execute(sql`SELECT status, is_live, COUNT(*) as count FROM topics GROUP BY status, is_live`),
+        db.execute(sql`SELECT is_active, COUNT(*) as count FROM sources GROUP BY is_active`),
+        db.execute(sql`SELECT job_type, status, COUNT(*) as count FROM automation_job_runs GROUP BY job_type, status ORDER BY job_type, status`),
+        db.execute(sql`SELECT COUNT(*) as count FROM automation_job_runs WHERE status IN ('queued', 'running')`),
+        db.execute(sql`
+          SELECT job_type, status, COUNT(*) as count 
+          FROM automation_job_runs 
+          WHERE created_at > NOW() - INTERVAL '1 hour'
+          GROUP BY job_type, status
+          ORDER BY job_type, status
+        `),
+      ]);
+
+      // Check for unique index existence
+      const indexCheckResult = await db.execute(sql`
+        SELECT indexname, indexdef 
+        FROM pg_indexes 
+        WHERE tablename = 'automation_job_runs' 
+          AND indexname = 'idx_automation_job_runs_active_unique'
+      `);
+
+      const reaperIndexResult = await db.execute(sql`
+        SELECT indexname, indexdef 
+        FROM pg_indexes 
+        WHERE tablename = 'automation_job_runs' 
+          AND indexname = 'idx_automation_job_runs_stale_running'
+      `);
+
+      // Get last 10 jobs for debugging
+      const recentJobsDetailResult = await db.execute(sql`
+        SELECT id, topic_id, job_type, status, started_at, ended_at,
+               EXTRACT(EPOCH FROM (COALESCE(ended_at, NOW()) - started_at)) as duration_seconds
+        FROM automation_job_runs 
+        ORDER BY started_at DESC 
+        LIMIT 10
+      `);
+
+      // Get database connection info (safe parts only)
+      const dbInfoResult = await db.execute(sql`
+        SELECT current_database() as db_name, 
+               current_schema() as schema_name,
+               version() as pg_version
+      `);
+
+      res.json({
+        database: {
+          name: dbInfoResult.rows[0]?.db_name,
+          schema: dbInfoResult.rows[0]?.schema_name,
+          version: dbInfoResult.rows[0]?.pg_version?.split(' ')[0] + ' ' + dbInfoResult.rows[0]?.pg_version?.split(' ')[1],
+        },
+        counts: {
+          workspaces: workspacesResult.rows[0]?.count || 0,
+          topics: topicsResult.rows || [],
+          sources: sourcesResult.rows || [],
+          automation_job_runs: automationJobRunsResult.rows || [],
+          active_jobs: activeJobsResult.rows[0]?.count || 0,
+          recent_jobs_1h: recentJobsResult.rows || [],
+        },
+        indexes: {
+          idempotency_index: indexCheckResult.rows.length > 0 ? '✅ EXISTS' : '❌ MISSING',
+          reaper_index: reaperIndexResult.rows.length > 0 ? '✅ EXISTS' : '❌ MISSING',
+        },
+        recent_jobs_detail: recentJobsDetailResult.rows.map((row: any) => ({
+          id: row.id,
+          topic_id: row.topic_id,
+          job_type: row.job_type,
+          status: row.status,
+          started_at: row.started_at,
+          ended_at: row.ended_at,
+          duration_seconds: row.duration_seconds ? parseFloat(row.duration_seconds).toFixed(2) : null,
+        })),
+        health: {
+          status: indexCheckResult.rows.length > 0 && reaperIndexResult.rows.length > 0 ? 'HEALTHY' : 'DEGRADED',
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error: any) {
+      console.error("[API] /api/debug/db error:", error);
+      res.status(500).json({ 
+        error: "Database health check failed", 
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
+
   // GET /api/debug/legacy-report - Report on legacy workspace IDs (no secrets)
   app.get("/api/debug/legacy-report", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Not authenticated" });
       }
@@ -574,13 +705,26 @@ export async function registerRoutes(
     const startTime = Date.now();
     const { authenticateWpPullRequest, reportJobResult } = await import("./services/wp-pull-service");
     
-    const { siteId, jobId, leaseToken, ok, wpPostId, wpUrl, error } = req.body;
-    const secret = req.headers["x-contentsanta-secret"] as string | undefined;
-    const secretLast4 = secret ? secret.slice(-4) : "none";
+    // DEBUG: Log ALL report requests BEFORE processing
+    const timestamp = new Date().toISOString();
+    const ip = req.ip || req.headers["x-forwarded-for"]?.toString() || "unknown";
+    const userAgent = req.headers["user-agent"] || "unknown";
+    const secretHeader = req.headers["x-contentsanta-secret"] as string | undefined;
+    const secretLast4 = secretHeader ? secretHeader.slice(-4) : "MISSING";
+    
+    console.log(`[WP-REPORT-DEBUG] ${timestamp}`);
+    console.log(`  IP: ${ip}`);
+    console.log(`  User-Agent: ${userAgent}`);
+    console.log(`  Secret-Last4: ${secretLast4}`);
+    console.log(`  Body: ${JSON.stringify(req.body).substring(0, 200)}`);
+    
+    const { siteId, jobId, leaseToken, ok, wpPostId, wpUrl, error, featuredImageError, warning } = req.body;
+    const secret = secretHeader;
     
     const auth = await authenticateWpPullRequest(siteId, secret);
     if (!auth.ok) {
       console.log(`[WP Report] Auth failed for siteId=${siteId}: ${auth.error}`);
+      console.log(`[WP-REPORT-DEBUG] Returning 401: ${auth.error}`);
       // Log failed auth attempt
       if (siteId) {
         await storage.createPluginRequestLog({
@@ -600,7 +744,7 @@ export async function registerRoutes(
       return res.status(401).json({ ok: false, error: auth.error, errorCode: auth.errorCode });
     }
     
-    const result = await reportJobResult({ siteId, jobId, leaseToken, ok, wpPostId, wpUrl, error });
+    const result = await reportJobResult({ siteId, jobId, leaseToken, ok, wpPostId, wpUrl, error, featuredImageError, warning });
     
     if (!result.ok) {
       console.log(`[WP Report] Failed for jobId=${jobId}: ${result.error}`);
@@ -669,7 +813,7 @@ export async function registerRoutes(
       }
       
       // Verify user has access: must be a member of the same workspace
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Authentication required" });
       }
@@ -741,7 +885,7 @@ export async function registerRoutes(
   // Workspaces
   app.get("/api/workspaces", async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (userId) {
         const workspaces = await storage.getUserWorkspaces(userId);
         return res.json(workspaces);
@@ -771,7 +915,7 @@ export async function registerRoutes(
       const workspace = await storage.createWorkspace(data);
       
       // Add creator as owner
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (userId) {
         await storage.addUserToWorkspace({
           workspaceId: workspace.id,
@@ -816,8 +960,8 @@ export async function registerRoutes(
   // Debug context endpoint - verify workspace resolution
   app.get("/api/debug/context", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
-      const email = (req.user as any)?.claims?.email;
+      const userId = getUserId(req);
+      const email = getUserEmail(req);
       
       if (!userId) {
         return res.status(401).json({ error: "User not authenticated" });
@@ -889,7 +1033,7 @@ export async function registerRoutes(
   // Migrate legacy workspace IDs (admin-only)
   app.post("/api/debug/migrate-legacy-workspace-ids", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Not authenticated" });
       }
@@ -941,8 +1085,8 @@ export async function registerRoutes(
   // Ensure workspace for existing user (can be called to fix workspace issues)
   app.post("/api/debug/ensure-workspace", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
-      const email = (req.user as any)?.claims?.email;
+      const userId = getUserId(req);
+      const email = getUserEmail(req);
       
       if (!userId) {
         return res.status(401).json({ error: "User not authenticated" });
@@ -969,7 +1113,7 @@ export async function registerRoutes(
   // Fix topics with the legacy "demo-workspace" slug (security-safe: only fixes known invalid slug)
   app.post("/api/debug/fix-topics", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       
       if (!userId) {
         return res.status(401).json({ error: "User not authenticated" });
@@ -1014,7 +1158,7 @@ export async function registerRoutes(
   // GET /api/debug/targets-audit - Audit publishing targets for current user/workspace
   app.get("/api/debug/targets-audit", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Authentication required" });
       }
@@ -1073,7 +1217,7 @@ export async function registerRoutes(
   // POST /api/debug/adopt-orphan-targets - Move orphan targets to active workspace
   app.post("/api/debug/adopt-orphan-targets", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Authentication required" });
       }
@@ -1126,6 +1270,370 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[Debug] Error adopting orphan targets:", error);
       res.status(500).json({ error: "Failed to adopt orphan targets" });
+    }
+  });
+
+  // ===========================
+  // Sites (Multi-Site Support)
+  // ===========================
+
+  // List all sites for a workspace
+  app.get("/api/sites", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      const sites = await db
+        .select()
+        .from(sites)
+        .where(sql`workspace_id = ${workspace.id}`)
+        .orderBy(sql`created_at DESC`);
+
+      res.json(sites);
+    } catch (error) {
+      console.error("[GET /api/sites] Error:", error);
+      res.status(500).json({ error: "Failed to fetch sites" });
+    }
+  });
+
+  // Create a new site
+  app.post("/api/sites", isAuthenticated, requireRole(["admin", "owner", "editor"]), async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      const { name, url, wpSiteUrl, wpAuthToken } = req.body;
+
+      if (!name) {
+        return res.status(400).json({ error: "Site name is required" });
+      }
+
+      const [site] = await db
+        .insert(sites)
+        .values({
+          workspaceId: workspace.id,
+          name,
+          url: url || null,
+          wpSiteUrl: wpSiteUrl || null,
+          wpAuthToken: wpAuthToken || null,
+          connectionStatus: "not_connected",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+
+      // If this is the first site, set it as active
+      const existingSites = await db
+        .select()
+        .from(sites)
+        .where(sql`workspace_id = ${workspace.id}`);
+
+      if (existingSites.length === 1) {
+        await db
+          .update(workspaces)
+          .set({ activeSiteId: site.id })
+          .where(sql`id = ${workspace.id}`);
+      }
+
+      res.status(201).json(site);
+    } catch (error) {
+      console.error("[POST /api/sites] Error:", error);
+      res.status(500).json({ error: "Failed to create site" });
+    }
+  });
+
+  // Update a site
+  app.patch("/api/sites/:id", isAuthenticated, requireRole(["admin", "owner", "editor"]), async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      const { name, url, wpSiteUrl, wpAuthToken, connectionStatus } = req.body;
+
+      const updateData: any = {
+        updatedAt: new Date(),
+      };
+
+      if (name !== undefined) updateData.name = name;
+      if (url !== undefined) updateData.url = url;
+      if (wpSiteUrl !== undefined) updateData.wpSiteUrl = wpSiteUrl;
+      if (wpAuthToken !== undefined) updateData.wpAuthToken = wpAuthToken;
+      if (connectionStatus !== undefined) {
+        updateData.connectionStatus = connectionStatus;
+        if (connectionStatus === "connected") {
+          updateData.lastConnectedAt = new Date();
+        }
+      }
+
+      const [site] = await db
+        .update(sites)
+        .set(updateData)
+        .where(sql`id = ${req.params.id} AND workspace_id = ${workspace.id}`)
+        .returning();
+
+      if (!site) {
+        return res.status(404).json({ error: "Site not found" });
+      }
+
+      res.json(site);
+    } catch (error) {
+      console.error("[PATCH /api/sites/:id] Error:", error);
+      res.status(500).json({ error: "Failed to update site" });
+    }
+  });
+
+  // Set active site for workspace
+  app.post("/api/sites/:id/set-active", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      // Verify site belongs to workspace
+      const [site] = await db
+        .select()
+        .from(sites)
+        .where(sql`id = ${req.params.id} AND workspace_id = ${workspace.id}`);
+
+      if (!site) {
+        return res.status(404).json({ error: "Site not found" });
+      }
+
+      // Update active site
+      await db
+        .update(workspaces)
+        .set({ activeSiteId: req.params.id })
+        .where(sql`id = ${workspace.id}`);
+
+      res.json({ success: true, activeSiteId: req.params.id });
+    } catch (error) {
+      console.error("[POST /api/sites/:id/set-active] Error:", error);
+      res.status(500).json({ error: "Failed to set active site" });
+    }
+  });
+
+  // Delete a site
+  app.delete("/api/sites/:id", isAuthenticated, requireRole(["admin", "owner"]), async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      // Check if site has topics
+      const topics = await db
+        .select()
+        .from(topics)
+        .where(sql`site_id = ${req.params.id}`);
+
+      if (topics.length > 0) {
+        return res.status(400).json({ 
+          error: "Cannot delete site with existing topics",
+          topicCount: topics.length 
+        });
+      }
+
+      // If this is the active site, clear it
+      if (workspace.activeSiteId === req.params.id) {
+        await db
+          .update(workspaces)
+          .set({ activeSiteId: null })
+          .where(sql`id = ${workspace.id}`);
+      }
+
+      await db
+        .delete(sites)
+        .where(sql`id = ${req.params.id} AND workspace_id = ${workspace.id}`);
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("[DELETE /api/sites/:id] Error:", error);
+      res.status(500).json({ error: "Failed to delete site" });
+    }
+  });
+
+  // WordPress Integration Endpoints
+  
+  // Test WordPress connection
+  app.post("/api/sites/:id/test-connection", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      const site = await db.query.sites.findFirst({
+        where: and(
+          eq(sites.id, req.params.id),
+          eq(sites.workspaceId, workspace.id)
+        )
+      });
+
+      if (!site) {
+        return res.status(404).json({ error: "Site not found" });
+      }
+
+      const { wordpressService } = await import("./services/wordpress-service");
+      const result = await wordpressService.testConnection(site);
+      
+      // Update site connection status
+      await db
+        .update(sites)
+        .set({
+          connectionStatus: result.ok ? "connected" : "error",
+          lastConnectedAt: result.ok ? new Date() : site.lastConnectedAt,
+        })
+        .where(eq(sites.id, site.id));
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("[API] WordPress test connection error:", error);
+      res.status(500).json({ error: error.message || "Connection test failed" });
+    }
+  });
+
+  // Sync categories from WordPress
+  app.post("/api/sites/:id/sync/categories", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      const site = await db.query.sites.findFirst({
+        where: and(
+          eq(sites.id, req.params.id),
+          eq(sites.workspaceId, workspace.id)
+        )
+      });
+
+      if (!site) {
+        return res.status(404).json({ error: "Site not found" });
+      }
+
+      const { wpCategoryService } = await import("./services/wp-category-service");
+      const result = await wpCategoryService.syncCategories(site.id);
+
+      if (result.success) {
+        res.json({
+          success: true,
+          count: result.count,
+          message: `Successfully synced ${result.count} categories`,
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          error: result.error,
+        });
+      }
+    } catch (error: any) {
+      console.error("[API] Category sync error:", error);
+      res.status(500).json({ error: error.message || "Category sync failed" });
+    }
+  });
+
+  // Sync tags from WordPress
+  app.post("/api/sites/:id/sync/tags", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      const site = await db.query.sites.findFirst({
+        where: and(
+          eq(sites.id, req.params.id),
+          eq(sites.workspaceId, workspace.id)
+        )
+      });
+
+      if (!site) {
+        return res.status(404).json({ error: "Site not found" });
+      }
+
+      const { wpCategoryService } = await import("./services/wp-category-service");
+      const result = await wpCategoryService.syncTags(site.id);
+
+      if (result.success) {
+        res.json({
+          success: true,
+          count: result.count,
+          message: `Successfully synced ${result.count} tags`,
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          error: result.error,
+        });
+      }
+    } catch (error: any) {
+      console.error("[API] Tag sync error:", error);
+      res.status(500).json({ error: error.message || "Tag sync failed" });
+    }
+  });
+
+  // Get categories for a site
+  app.get("/api/sites/:id/categories", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      const site = await db.query.sites.findFirst({
+        where: and(
+          eq(sites.id, req.params.id),
+          eq(sites.workspaceId, workspace.id)
+        )
+      });
+
+      if (!site) {
+        return res.status(404).json({ error: "Site not found" });
+      }
+
+      const { wpCategoryService } = await import("./services/wp-category-service");
+      const categories = await wpCategoryService.getCategories(site.id);
+
+      res.json(categories);
+    } catch (error: any) {
+      console.error("[API] Get categories error:", error);
+      res.status(500).json({ error: "Failed to fetch categories" });
+    }
+  });
+
+  // Get tags for a site
+  app.get("/api/sites/:id/tags", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspace = await resolveWorkspace(getUserId(req));
+      if (!workspace) {
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+
+      const site = await db.query.sites.findFirst({
+        where: and(
+          eq(sites.id, req.params.id),
+          eq(sites.workspaceId, workspace.id)
+        )
+      });
+
+      if (!site) {
+        return res.status(404).json({ error: "Site not found" });
+      }
+
+      const { wpCategoryService } = await import("./services/wp-category-service");
+      const tags = await wpCategoryService.getTags(site.id);
+
+      res.json(tags);
+    } catch (error: any) {
+      console.error("[API] Get tags error:", error);
+      res.status(500).json({ error: "Failed to fetch tags" });
     }
   });
 
@@ -1327,7 +1835,7 @@ export async function registerRoutes(
       const data = insertWorkflowRunSchema.parse(req.body);
       const run = await storage.createWorkflowRun(data);
       
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       
       // Start async AI processing
       processWorkflowWithAI(
@@ -1472,7 +1980,7 @@ export async function registerRoutes(
         ? Math.max(...existingVersions.map(v => v.versionNo)) + 1 
         : 1;
       
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       
       const data = insertAssetVersionSchema.parse({
         ...req.body,
@@ -1527,7 +2035,7 @@ export async function registerRoutes(
 
   app.post("/api/asset-versions/:id/comments", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Unauthorized" });
       }
@@ -1560,7 +2068,7 @@ export async function registerRoutes(
   // Publishing Targets - auto-resolves workspace from user session (consistent with /api/me/context)
   app.get("/api/publishing-targets", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Authentication required" });
       }
@@ -1585,7 +2093,15 @@ export async function registerRoutes(
       }
       
       console.log(`[API] GET /api/publishing-targets - userId: ${userId}, workspaceId: ${workspaceId}`);
-      const targets = await storage.getPublishingTargets(workspaceId);
+      let targets = await storage.getPublishingTargets(workspaceId);
+      
+      // Filter by site if siteId query param provided
+      const siteId = req.query.siteId as string | undefined;
+      if (siteId) {
+        targets = targets.filter(t => t.contentSiteId === siteId);
+        console.log(`[API] GET /api/publishing-targets - filtered to siteId: ${siteId}, ${targets.length} targets`);
+      }
+      
       console.log(`[API] GET /api/publishing-targets - found ${targets.length} targets`);
       res.json(targets);
     } catch (error) {
@@ -1597,7 +2113,7 @@ export async function registerRoutes(
   // GET single publishing target by ID - validates workspace membership
   app.get("/api/publishing-targets/:id", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Authentication required" });
       }
@@ -1624,7 +2140,7 @@ export async function registerRoutes(
 
   app.post("/api/publishing-targets", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Authentication required" });
       }
@@ -1681,6 +2197,64 @@ export async function registerRoutes(
     }
   });
 
+  // Update publishing target (for adding WordPress credentials, etc.)
+  app.patch("/api/publishing-targets/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const targetId = req.params.id;
+      const updates = req.body;
+
+      // Validate target exists and user has access
+      const existingTarget = await storage.getPublishingTarget(targetId);
+      if (!existingTarget) {
+        return res.status(404).json({ error: "Publishing target not found" });
+      }
+
+      // Verify workspace membership
+      const memberships = await storage.getUserWorkspaceMemberships(userId);
+      const userWorkspace = memberships.find(m => m.workspaceId === existingTarget.workspaceId);
+      if (!userWorkspace) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Handle WordPress credential updates
+      if (updates.configJson) {
+        const existingConfig = existingTarget.configJson || {};
+        const newConfig = { ...existingConfig, ...updates.configJson };
+        
+        // For WordPress targets, map fields correctly
+        if (existingTarget.type === "wordpress" || existingTarget.type === "wordpress_pull") {
+          if (updates.configJson.siteUrl) {
+            newConfig.siteUrl = updates.configJson.siteUrl;
+          }
+          if (updates.configJson.applicationPassword) {
+            newConfig.applicationPassword = updates.configJson.applicationPassword;
+          }
+          if (updates.configJson.username) {
+            newConfig.username = updates.configJson.username;
+          }
+        }
+
+        updates.configJson = newConfig;
+      }
+
+      // Update target
+      const updatedTarget = await storage.updatePublishingTarget(targetId, updates);
+      
+      console.log(`[API] PATCH /api/publishing-targets/${targetId} - updated by user ${userId}`);
+      res.json(updatedTarget);
+    } catch (error) {
+      console.error("[API] Error updating publishing target:", error);
+      console.error("[API] Stack trace:", error instanceof Error ? error.stack : "N/A");
+      console.error("[API] Request body:", JSON.stringify(req.body, null, 2));
+      res.status(500).json({ error: "Failed to update publishing target" });
+    }
+  });
+
   // WordPress Pull Target Management
   app.post("/api/publishing-targets/wordpress-pull", isAuthenticated, async (req: Request, res: Response) => {
     try {
@@ -1696,7 +2270,7 @@ export async function registerRoutes(
       }
       
       // Pass current user ID as creator
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       const { target, rawSecret } = await createWordPressPullTarget(workspaceId, name, wpSiteUrl, userId);
       
       res.status(201).json({
@@ -1899,8 +2473,14 @@ export async function registerRoutes(
   // Admin endpoints
   app.get("/api/admin/stats", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const assets = await storage.getAssets("demo-workspace");
-      const runs = await storage.getWorkflowRuns("demo-workspace");
+      // Admin stats should aggregate across ALL workspaces, not hardcode one
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId parameter required for stats" });
+      }
+      
+      const assets = await storage.getAssets(workspaceId);
+      const runs = await storage.getWorkflowRuns(workspaceId);
       const users = await authStorage.getAllUsers();
       
       const successfulRuns = runs.filter(r => r.status === "succeeded").length;
@@ -1923,12 +2503,17 @@ export async function registerRoutes(
 
   app.get("/api/admin/users", isAuthenticated, async (req: Request, res: Response) => {
     try {
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId parameter required" });
+      }
+      
       const users = await authStorage.getAllUsers();
       
       const usersWithStats = await Promise.all(
         users.map(async (user) => {
-          const assets = await storage.getAssets("demo-workspace");
-          const runs = await storage.getWorkflowRuns("demo-workspace");
+          const assets = await storage.getAssets(workspaceId);
+          const runs = await storage.getWorkflowRuns(workspaceId);
           return {
             ...user,
             assetCount: assets.length,
@@ -2033,7 +2618,12 @@ export async function registerRoutes(
   // Admin diagnostics - list all stories with basic info
   app.get("/api/admin/diagnostics/stories", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const stories = await storage.getStories("demo-workspace");
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId parameter required" });
+      }
+      
+      const stories = await storage.getStories(workspaceId);
       
       const storiesWithInfo = await Promise.all(
         stories.slice(0, 50).map(async (story) => {
@@ -2064,7 +2654,9 @@ export async function registerRoutes(
   
   app.get("/api/sources", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const sources = await storage.getSources("demo-workspace");
+      const userId = getUserId(req);
+      const workspace = await resolveWorkspace(userId);
+      const sources = await storage.getSources(workspace.id);
       res.json(sources);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch sources" });
@@ -2081,11 +2673,13 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/sources", isAuthenticated, async (req: Request, res: Response) => {
+  app.post("/api/sources", isAuthenticated, requireRole(["admin", "owner"]), async (req: Request, res: Response) => {
     try {
+      const userId = getUserId(req);
+      const workspace = await resolveWorkspace(userId);
       const data = insertSourceSchema.parse({
         ...req.body,
-        workspaceId: "demo-workspace",
+        workspaceId: workspace.id,
       });
       const source = await storage.createSource(data);
       res.status(201).json(source);
@@ -2094,18 +2688,37 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/sources/:id", isAuthenticated, async (req: Request, res: Response) => {
+  app.patch("/api/sources/:id", isAuthenticated, requireRole(["admin", "owner"]), async (req: Request, res: Response) => {
     try {
-      const source = await storage.updateSource(req.params.id, req.body);
+      const userId = getUserId(req);
+      const source = await storage.getSource(req.params.id);
       if (!source) return res.status(404).json({ error: "Source not found" });
-      res.json(source);
+      
+      // Verify source belongs to user's workspace
+      const ownership = await requireWorkspaceOwnership(source.workspaceId, userId);
+      if (!ownership.allowed) {
+        return res.status(403).json({ error: "Cannot modify source from another workspace" });
+      }
+      
+      const updated = await storage.updateSource(req.params.id, req.body);
+      res.json(updated);
     } catch (error) {
       res.status(500).json({ error: "Failed to update source" });
     }
   });
 
-  app.delete("/api/sources/:id", isAuthenticated, async (req: Request, res: Response) => {
+  app.delete("/api/sources/:id", isAuthenticated, requireRole(["admin", "owner"]), async (req: Request, res: Response) => {
     try {
+      const userId = getUserId(req);
+      const source = await storage.getSource(req.params.id);
+      if (!source) return res.status(404).json({ error: "Source not found" });
+      
+      // Verify source belongs to user's workspace
+      const ownership = await requireWorkspaceOwnership(source.workspaceId, userId);
+      if (!ownership.allowed) {
+        return res.status(403).json({ error: "Cannot delete source from another workspace" });
+      }
+      
       await storage.deleteSource(req.params.id);
       res.status(204).send();
     } catch (error) {
@@ -2113,10 +2726,218 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/sources/:id/fetch", isAuthenticated, async (req: Request, res: Response) => {
+  // ============ SOURCE DISCOVERY & APPROVAL (SITE ADMIN ONLY) ============
+
+  // Middleware to check if user is site admin
+  const requireSiteAdmin = async (req: Request, res: Response, next: any) => {
     try {
+      const userId = getUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      
+      const userResult = await db.execute(sql`
+        SELECT is_site_admin FROM users WHERE id = ${userId}
+      `);
+      
+      if (userResult.rows.length === 0 || (userResult.rows[0] as any).is_site_admin !== 'true') {
+        return res.status(403).json({ error: "Site admin access required" });
+      }
+      
+      next();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to verify admin status" });
+    }
+  };
+
+  // AI-powered source discovery
+  app.post("/api/admin/sources/discover", isAuthenticated, requireSiteAdmin, async (req: Request, res: Response) => {
+    try {
+      const { region, country, topic, language } = req.body;
+      const { discoverSources } = await import("./services/source-discovery-service");
+      
+      // Get AI suggestions
+      const aiSuggestions = await discoverSources(region, country, topic, language);
+      
+      // Get all existing sources to filter out duplicates
+      const existingSources = await db.select({
+        feedUrl: sources.feedUrl,
+        domain: sources.domain,
+      }).from(sources);
+      
+      // Create a Set of existing feed URLs and domains for fast lookup
+      const existingFeedUrls = new Set(existingSources.map(s => s.feedUrl?.toLowerCase()));
+      const existingDomains = new Set(existingSources.map(s => s.domain?.toLowerCase()));
+      
+      // Filter out sources that already exist (by feedUrl or domain)
+      const newSuggestions = aiSuggestions.filter((suggestion: any) => {
+        const feedUrlExists = existingFeedUrls.has(suggestion.feedUrl?.toLowerCase());
+        const domainExists = existingDomains.has(suggestion.domain?.toLowerCase());
+        
+        // Only include if neither feedUrl nor domain exists
+        return !feedUrlExists && !domainExists;
+      });
+      
+      console.log(`[Source Discovery] AI found ${aiSuggestions.length} sources, ${newSuggestions.length} are new (filtered ${aiSuggestions.length - newSuggestions.length} duplicates)`);
+      
+      res.json(newSuggestions);
+    } catch (error: any) {
+      console.error("[Source Discovery] Error:", error);
+      res.status(500).json({ error: error.message || "Failed to discover sources" });
+    }
+  });
+
+  // Validate RSS feed URL
+  app.post("/api/admin/sources/validate", isAuthenticated, requireSiteAdmin, async (req: Request, res: Response) => {
+    try {
+      const { feedUrl } = req.body;
+      if (!feedUrl) {
+        return res.status(400).json({ error: "feedUrl is required" });
+      }
+      
+      const { validateRssFeed } = await import("./services/source-discovery-service");
+      const isValid = await validateRssFeed(feedUrl);
+      res.json({ valid: isValid });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to validate feed" });
+    }
+  });
+
+  // Get all sources (admin view - includes pending/rejected)
+  app.get("/api/admin/sources", isAuthenticated, requireSiteAdmin, async (req: Request, res: Response) => {
+    try {
+      const { status } = req.query;
+      
+      let query = db.select().from(sources);
+      if (status === 'pending') {
+        query = query.where(eq(sources.approvalStatus, 'pending'));
+      } else if (status === 'rejected') {
+        query = query.where(eq(sources.approvalStatus, 'rejected'));
+      }
+      
+      const allSources = await query;
+      res.json(allSources);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch sources" });
+    }
+  });
+
+  // Approve source
+  app.post("/api/admin/sources/:id/approve", isAuthenticated, requireSiteAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const { id } = req.params;
+      
+      await db.update(sources)
+        .set({
+          approvalStatus: 'approved',
+          approvedBy: userId,
+          approvedAt: new Date(),
+          rejectionReason: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(sources.id, id));
+      
+      const updated = await storage.getSource(id);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to approve source" });
+    }
+  });
+
+  // Reject source
+  app.post("/api/admin/sources/:id/reject", isAuthenticated, requireSiteAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const { id } = req.params;
+      const { reason } = req.body;
+      
+      await db.update(sources)
+        .set({
+          approvalStatus: 'rejected',
+          approvedBy: userId,
+          approvedAt: new Date(),
+          rejectionReason: reason || 'Rejected by admin',
+          updatedAt: new Date(),
+        })
+        .where(eq(sources.id, id));
+      
+      const updated = await storage.getSource(id);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to reject source" });
+    }
+  });
+
+  // Add AI-discovered source to database for review
+  app.post("/api/admin/sources/add-suggestion", isAuthenticated, requireSiteAdmin, async (req: Request, res: Response) => {
+    try {
+      const { name, feedUrl, domain, description, language, region, country, tier, isOfficial, tags } = req.body;
+      const userId = getUserId(req);
+      
+      // Validate required fields
+      if (!name || !feedUrl || !domain) {
+        return res.status(400).json({ error: "name, feedUrl, and domain are required" });
+      }
+      
+      // Get admin's workspace ID (site admins should have one workspace)
+      const memberships = await storage.getUserWorkspaceMemberships(userId!);
+      if (memberships.length === 0) {
+        return res.status(400).json({ error: "Admin user has no workspace" });
+      }
+      const adminWorkspaceId = memberships[0].workspaceId;
+      
+      // Check if source already exists
+      const existing = await db.select()
+        .from(sources)
+        .where(eq(sources.feedUrl, feedUrl))
+        .limit(1);
+      
+      if (existing.length > 0) {
+        return res.status(400).json({ 
+          error: "Source already exists",
+          source: existing[0]
+        });
+      }
+      
+      // Create source with pending status
+      const [newSource] = await db.insert(sources).values({
+        id: crypto.randomUUID(),
+        name,
+        feedUrl,
+        domain,
+        description: description || '',
+        language: language || 'en',
+        region: region || 'global',
+        country: country || 'GLOBAL',
+        tier: tier || 3,
+        isOfficial: isOfficial ? 'true' : 'false',
+        approvalStatus: 'pending',
+        tags: tags || [],
+        isActive: 'false', // Inactive until approved
+        workspaceId: adminWorkspaceId, // Use admin's workspace (sources are workspace-scoped)
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }).returning();
+      
+      res.json(newSource);
+    } catch (error: any) {
+      console.error("[Add Suggestion] Error:", error);
+      res.status(500).json({ error: error.message || "Failed to add source" });
+    }
+  });
+
+  app.post("/api/sources/:id/fetch", isAuthenticated, requireRole(["admin", "owner"]), async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
       const source = await storage.getSource(req.params.id);
       if (!source) return res.status(404).json({ error: "Source not found" });
+      
+      // Verify source belongs to user's workspace
+      const ownership = await requireWorkspaceOwnership(source.workspaceId, userId);
+      if (!ownership.allowed) {
+        return res.status(403).json({ error: "Cannot fetch source from another workspace" });
+      }
       
       const result = await fetchRSSSource(source);
       res.json(result);
@@ -2141,9 +2962,11 @@ export async function registerRoutes(
 
   app.get("/api/source-items", isAuthenticated, async (req: Request, res: Response) => {
     try {
+      const userId = getUserId(req);
+      const workspace = await resolveWorkspace(userId);
       const status = req.query.status as SourceItemStatus | undefined;
       const sourceId = req.query.sourceId as string | undefined;
-      const items = await storage.getSourceItems("demo-workspace", status, sourceId);
+      const items = await storage.getSourceItems(workspace.id, status, sourceId);
       res.json(items);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch source items" });
@@ -2172,13 +2995,15 @@ export async function registerRoutes(
 
   app.post("/api/source-items/:id/generate", isAuthenticated, async (req: Request, res: Response) => {
     try {
+      const userId = getUserId(req);
+      const workspace = await resolveWorkspace(userId);
       const item = await storage.getSourceItem(req.params.id);
       if (!item) return res.status(404).json({ error: "Source item not found" });
       
       const workflowType = (req.body.workflowType || "seo_blog") as WorkflowType;
       
       const input = await storage.createInput({
-        workspaceId: "demo-workspace",
+        workspaceId: workspace.id,
         type: "url",
         title: item.title,
         sourceUrl: item.url,
@@ -2187,13 +3012,13 @@ export async function registerRoutes(
       });
       
       const workflowRun = await storage.createWorkflowRun({
-        workspaceId: "demo-workspace",
+        workspaceId: workspace.id,
         inputId: input.id,
         workflowType,
       });
       
       const asset = await storage.createAsset({
-        workspaceId: "demo-workspace",
+        workspaceId: workspace.id,
         inputId: input.id,
         status: "draft",
         primaryLanguage: "en",
@@ -2201,7 +3026,7 @@ export async function registerRoutes(
       
       await storage.updateSourceItem(item.id, { status: "queued" });
       
-      processWorkflowWithAI(workflowRun.id, input.id, workflowType, "demo-workspace", null)
+      processWorkflowWithAI(workflowRun.id, input.id, workflowType, workspace.id, null)
         .then(async () => {
           await storage.updateSourceItem(item.id, { status: "processed" });
         })
@@ -2224,7 +3049,9 @@ export async function registerRoutes(
 
   app.get("/api/automations", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const automations = await storage.getAutomations("demo-workspace");
+      const userId = getUserId(req);
+      const workspace = await resolveWorkspace(userId);
+      const automations = await storage.getAutomations(workspace.id);
       res.json(automations);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch automations" });
@@ -2243,9 +3070,11 @@ export async function registerRoutes(
 
   app.post("/api/automations", isAuthenticated, async (req: Request, res: Response) => {
     try {
+      const userId = getUserId(req);
+      const workspace = await resolveWorkspace(userId);
       const data = insertAutomationSchema.parse({
         ...req.body,
-        workspaceId: "demo-workspace",
+        workspaceId: workspace.id,
       });
       const automation = await storage.createAutomation(data);
       res.status(201).json(automation);
@@ -2452,7 +3281,10 @@ export async function registerRoutes(
   // Content Goals
   app.get("/api/content-goals", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId parameter required" });
+      }
       const goals = await storage.getContentGoals(workspaceId);
       res.json(goals);
     } catch (error: any) {
@@ -2509,10 +3341,13 @@ export async function registerRoutes(
   // Discovery Jobs
   app.post("/api/discovery/run", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const { contentGoalId, workspaceId = "demo-workspace" } = req.body;
+      const { contentGoalId, workspaceId } = req.body;
       
       if (!contentGoalId) {
         return res.status(400).json({ error: "contentGoalId is required" });
+      }
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId is required" });
       }
 
       const goal = await storage.getContentGoal(contentGoalId);
@@ -2572,7 +3407,10 @@ export async function registerRoutes(
 
   app.get("/api/discovery-jobs", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId parameter required" });
+      }
       const contentGoalId = req.query.contentGoalId as string | undefined;
       const jobs = await storage.getDiscoveryJobs(workspaceId, contentGoalId);
       res.json(jobs);
@@ -2586,7 +3424,7 @@ export async function registerRoutes(
   app.get("/api/topics", isAuthenticated, async (req: Request, res: Response) => {
     try {
       // Resolve workspace from authenticated user
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       const workspaceId = req.query.workspaceId as string || await resolveWorkspaceId(userId);
       
       if (!workspaceId) {
@@ -2623,21 +3461,111 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/topics/:id/runs - Get job run history for a topic (for UI polling)
+  app.get("/api/topics/:id/runs", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const topicId = req.params.id;
+      const limit = Math.min(parseInt(req.query.limit as string) || 10, 50); // Default 10, max 50
+      const jobType = req.query.jobType as string; // optional filter
+
+      // Verify topic exists and user has access
+      const topic = await storage.getTopic(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+
+      // Authorization: verify topic belongs to user's workspace
+      const userId = getUserId(req);
+      const userWorkspaceId = await resolveWorkspaceId(userId);
+      
+      if (topic.workspaceId !== userWorkspaceId) {
+        return res.status(403).json({ 
+          error: "Access denied",
+          hint: "Topic belongs to a different workspace"
+        });
+      }
+
+      // Get job runs from database
+      let runs = await storage.getAutomationJobRuns(topicId, jobType);
+      
+      // Sort by most recent first (started_at DESC, nulls last)
+      runs = runs
+        .sort((a, b) => {
+          const aTime = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+          const bTime = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+          return bTime - aTime;
+        })
+        .slice(0, limit);
+
+      // Separate active job from history
+      const activeJob = runs.find(r => r.status === "queued" || r.status === "running");
+      const completedRuns = runs.filter(r => r.status !== "queued" && r.status !== "running");
+
+      // Format for UI consumption
+      const formatRun = (run: any) => ({
+        id: run.id,
+        jobType: run.jobType,
+        status: run.status,
+        startedAt: run.startedAt,
+        endedAt: run.endedAt,
+        durationSeconds: run.endedAt && run.startedAt 
+          ? ((new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()) / 1000).toFixed(2)
+          : null,
+        processedCount: run.processedCount || 0,
+        successCount: run.successCount || 0,
+        errorSummary: run.errorSummary || null,
+      });
+
+      res.json({
+        topicId,
+        topicName: topic.name,
+        activeJob: activeJob ? formatRun(activeJob) : null,
+        runs: completedRuns.map(formatRun),
+        totalCount: runs.length,
+      });
+    } catch (error: any) {
+      console.error("[API] Error fetching topic runs:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch topic runs" });
+    }
+  });
+
   app.post("/api/topics", isAuthenticated, async (req: Request, res: Response) => {
     const requestId = crypto.randomUUID();
     
     try {
       // Server-enforced workspaceId - derive from authenticated user's default workspace
-      const userId = (req.user as any)?.claims?.sub;
-      const serverWorkspaceId = await resolveWorkspaceId(userId);
+      const userId = getUserId(req);
+      const workspace = await resolveWorkspace(userId);
       
-      if (!serverWorkspaceId) {
+      if (!workspace) {
         console.log(`[topics:create] requestId=${requestId} no workspace found for user=${userId}`);
         return res.status(400).json({
           error: "No workspace found. Please contact support.",
           errorCode: "WORKSPACE_NOT_FOUND"
         });
       }
+
+      const serverWorkspaceId = workspace.id;
+
+      // Site ID is now optional - topics can exist without sites since we use publishing targets
+      const siteId = req.body.siteId || null;
+      
+      // Validate siteId if provided
+      if (siteId) {
+        const [site] = await db
+          .select()
+          .from(sites)
+          .where(sql`id = ${siteId} AND workspace_id = ${serverWorkspaceId}`);
+
+        if (!site) {
+          console.log(`[topics:create] requestId=${requestId} siteId=${siteId} not found or workspace mismatch`);
+          return res.status(400).json({
+            error: "Site not found or does not belong to your workspace",
+            errorCode: "SITE_WORKSPACE_MISMATCH"
+          });
+        }
+      }
+
       console.log(`[topics:create] requestId=${requestId} payloadKeys=${Object.keys(req.body).join(",")}`);
       
       // Normalize region: empty/missing -> "global"
@@ -2648,10 +3576,11 @@ export async function registerRoutes(
       const rawCountries = req.body.countries;
       const normalizedCountries = Array.isArray(rawCountries) ? rawCountries.filter((c: unknown) => typeof c === "string") : [];
       
-      // Override any client-provided workspaceId with server-derived value
+      // Override any client-provided workspaceId/siteId with server-validated values
       const bodyWithServerWorkspace = {
         ...req.body,
         workspaceId: serverWorkspaceId,
+        siteId: siteId,
         isLive: "false" as const, // Always create inactive - must have sources to activate
         region: normalizedRegion,
         countries: normalizedCountries,
@@ -2689,7 +3618,7 @@ export async function registerRoutes(
         }
       }
       
-      console.log(`[topics:create] requestId=${requestId} inserting: name=${validation.data.name} region=${validation.data.region} countries=${JSON.stringify(validation.data.countries)}`);
+      console.log(`[topics:create] requestId=${requestId} inserting: name=${validation.data.name} site=${siteId} region=${validation.data.region} countries=${JSON.stringify(validation.data.countries)}`);
       
       const topic = await storage.createTopic(validation.data);
       console.log(`[topics:create] requestId=${requestId} success: id=${topic.id}`);
@@ -2757,6 +3686,18 @@ export async function registerRoutes(
       
       const topic = await storage.updateTopic(req.params.id, updateData);
       
+      // If activating, enqueue discovery job automatically
+      if (isActivating && topic) {
+        console.log(`[API] Topic ${topic.id} activated, enqueuing first discovery job`);
+        try {
+          const { enqueueDiscoveryJob } = await import("./services/job-queue-service");
+          await enqueueDiscoveryJob(topic.id);
+        } catch (err) {
+          console.error(`[API] Failed to enqueue discovery job:`, err);
+          // Don't fail the activation if job enqueue fails
+        }
+      }
+      
       // If schedule changed, reschedule existing "scheduled" items
       if (scheduleChanged && topic) {
         console.log(`[API] Publish schedule changed for topic ${topic.id}, rescheduling items...`);
@@ -2786,7 +3727,7 @@ export async function registerRoutes(
   // Seed sources from demo-workspace (or fallback to hardcoded official sources)
   app.post("/api/sources/seed-official", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "User not authenticated" });
       }
@@ -2810,7 +3751,7 @@ export async function registerRoutes(
   // Debug endpoint: Force seed sources from demo-workspace (bypasses count check)
   app.post("/api/debug/seed-sources", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "User not authenticated" });
       }
@@ -2909,7 +3850,7 @@ export async function registerRoutes(
   // Migrate/adopt sources from another workspace user owns to current workspace
   app.post("/api/sources/adopt-from-workspace", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "User not authenticated" });
       }
@@ -2990,7 +3931,7 @@ export async function registerRoutes(
   // Topic Source Recommendations - workspace resolved from session (not client)
   app.post("/api/topics/recommend-sources", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "User not authenticated" });
       }
@@ -3168,24 +4109,24 @@ export async function registerRoutes(
       
       console.log(`[ManualDiscovery] User triggered discovery for topic: ${topic.name} (${topic.id})`);
       
-      const { runTopicDiscovery } = await import("./services/topic-run-service");
-      const log = await runTopicDiscovery(topic);
-      
-      // Get updated story count from persisted topic_stories
-      const topicStories = await storage.getTopicStories(topicId, 0.15);
+      // Enqueue job instead of running inline
+      const { enqueueDiscoveryJob } = await import("./services/job-queue-service");
+      const { jobId, status } = await enqueueDiscoveryJob(topicId);
       
       res.json({
-        status: log.status === "completed" ? "ok" : log.status,
-        topicId: log.topicId,
-        topicName: log.topicName,
-        processedStories: log.itemsProcessed || 0,
-        matchedStories: topicStories.length,
-        threshold: 0.15,
+        status: "queued",
+        jobId,
+        jobStatus: status,
+        topicId: topic.id,
+        topicName: topic.name,
+        message: status === "queued" 
+          ? "Discovery job queued and will start shortly"
+          : "Discovery job is already running",
         trigger: "manual",
-        timestamp: log.timestamp,
+        timestamp: new Date().toISOString(),
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to run discovery" });
+      res.status(500).json({ error: error.message || "Failed to queue discovery" });
     }
   });
 
@@ -3193,7 +4134,10 @@ export async function registerRoutes(
   
   app.get("/api/drafts", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId parameter required" });
+      }
       const status = req.query.status as string | undefined;
       const topicId = req.query.topicId as string | undefined;
       const drafts = await storage.getDrafts(workspaceId, status as any, topicId);
@@ -3267,7 +4211,10 @@ export async function registerRoutes(
   
   app.get("/api/stories", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId parameter required" });
+      }
       const dateBucket = req.query.dateBucket as string | undefined;
       const rawStories = await storage.getStories(workspaceId, dateBucket);
       
@@ -3443,7 +4390,10 @@ export async function registerRoutes(
   // Discovered Sources
   app.post("/api/discovered-sources/:id/convert-to-source", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const { workspaceId = "demo-workspace" } = req.body;
+      const { workspaceId } = req.body;
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId is required" });
+      }
       
       const result = await convertDiscoveredSourceToSource(req.params.id, workspaceId);
       
@@ -3465,7 +4415,10 @@ export async function registerRoutes(
   
   app.get("/api/image-assets", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const workspaceId = req.query.workspaceId as string || "demo-workspace";
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId parameter required" });
+      }
       const storyId = req.query.storyId as string | undefined;
       const sourceItemId = req.query.sourceItemId as string | undefined;
       const assets = await storage.getImageAssets(workspaceId, storyId, sourceItemId);
@@ -3594,7 +4547,7 @@ export async function registerRoutes(
     try {
       const { generateAutomationKey } = await import("./replit_integrations/auth");
       const workspaceId = req.params.id;
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       
       // Verify user has admin/owner access to workspace
       const workspaceUser = await storage.getWorkspaceUser(workspaceId, userId);
@@ -3633,7 +4586,7 @@ export async function registerRoutes(
   app.delete("/api/workspaces/:id/automation-key", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const workspaceId = req.params.id;
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getUserId(req);
       
       // Verify user has admin/owner access to workspace
       const workspaceUser = await storage.getWorkspaceUser(workspaceId, userId);
@@ -3747,6 +4700,75 @@ export async function registerRoutes(
 
   // ==================== WORDPRESS TAXONOMY SYNC ====================
   
+  // Helper functions for WordPress taxonomy sync
+  async function fetchWordPressCategories(target: any) {
+    try {
+      const siteUrl = target.configJson?.siteUrl;
+      const username = target.configJson?.username;
+      const appPassword = target.configJson?.applicationPassword;
+      
+      if (!siteUrl || !username || !appPassword) {
+        return { success: false, categories: [], error: "WordPress credentials not configured" };
+      }
+      
+      const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
+      const url = `${siteUrl.replace(/\/$/, '')}/wp-json/wp/v2/categories?per_page=100`;
+      
+      console.log(`[WP Categories] Fetching from: ${url}`);
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        const text = await response.text();
+        return { success: false, categories: [], error: `WordPress API error: ${response.status} - ${text}` };
+      }
+      
+      const categories = await response.json();
+      return { success: true, categories };
+    } catch (error: any) {
+      console.error(`[WP Categories] Error:`, error);
+      return { success: false, categories: [], error: error.message || "Unknown error" };
+    }
+  }
+  
+  async function fetchWordPressTags(target: any) {
+    try {
+      const siteUrl = target.configJson?.siteUrl;
+      const username = target.configJson?.username;
+      const appPassword = target.configJson?.applicationPassword;
+      
+      if (!siteUrl || !username || !appPassword) {
+        return { success: false, tags: [], error: "WordPress credentials not configured" };
+      }
+      
+      const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
+      const url = `${siteUrl.replace(/\/$/, '')}/wp-json/wp/v2/tags?per_page=100`;
+      
+      console.log(`[WP Tags] Fetching from: ${url}`);
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        const text = await response.text();
+        return { success: false, tags: [], error: `WordPress API error: ${response.status} - ${text}` };
+      }
+      
+      const tags = await response.json();
+      return { success: true, tags };
+    } catch (error: any) {
+      console.error(`[WP Tags] Error:`, error);
+      return { success: false, tags: [], error: error.message || "Unknown error" };
+    }
+  }
+  
   // Sync WordPress categories
   app.post("/api/publishing-targets/:id/sync-categories", isAuthenticated, async (req: Request, res: Response) => {
     try {
@@ -3759,7 +4781,7 @@ export async function registerRoutes(
       
       console.log(`[Sync Categories] Target found: ${target.name}, type: ${target.type}, config keys: ${Object.keys(target.configJson || {}).join(', ')}`);
       
-      if (target.type !== "wordpress") {
+      if (target.type !== "wordpress" && target.type !== "wordpress_pull") {
         return res.status(400).json({ error: "Only WordPress connections support taxonomy sync" });
       }
       
@@ -3800,7 +4822,7 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Publishing target not found" });
       }
       
-      if (target.type !== "wordpress") {
+      if (target.type !== "wordpress" && target.type !== "wordpress_pull") {
         return res.status(400).json({ error: "Only WordPress connections support taxonomy sync" });
       }
       
@@ -4084,8 +5106,8 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Pipeline item not found" });
       }
       
-      if (item.status !== "scheduled") {
-        return res.status(400).json({ error: "Item must be in scheduled status to publish" });
+      if (!["scheduled", "retrying", "quarantined"].includes(item.status)) {
+        return res.status(400).json({ error: "Item must be in scheduled, retrying, or quarantined status to publish" });
       }
       
       // Update scheduled time to now so the next publish job picks it up immediately
@@ -4246,6 +5268,102 @@ export async function registerRoutes(
       res.status(500).json({ error: error.message || "Failed to fetch quarantined items" });
     }
   });
+
+  app.get("/api/pipeline/published", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      const topicId = req.query.topicId as string;
+      const limit = parseInt(req.query.limit as string) || 50;
+      
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId is required" });
+      }
+      
+      const topics = topicId 
+        ? [await storage.getTopic(topicId)]
+        : await storage.getTopics(workspaceId);
+      
+      const publishedItems = [];
+      
+      for (const topic of topics) {
+        if (!topic) continue;
+        const items = await storage.getPipelineItems(topic.id);
+        const published = items
+          .filter(item => item.status === "published")
+          .sort((a, b) => {
+            const timeA = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+            const timeB = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+            return timeB - timeA;
+          })
+          .slice(0, limit);
+        
+        for (const item of published) {
+          const story = await storage.getStory(item.storyId);
+          publishedItems.push({
+            ...item,
+            topicName: topic.name,
+            story: story ? {
+              id: story.id,
+              canonicalTitle: story.canonicalTitle,
+              excerpt: story.excerpt,
+            } : null,
+          });
+        }
+      }
+      
+      res.json(publishedItems.slice(0, limit));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch published items" });
+    }
+  });
+
+  app.get("/api/pipeline/skipped", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      const topicId = req.query.topicId as string;
+      const limit = parseInt(req.query.limit as string) || 50;
+      
+      if (!workspaceId) {
+        return res.status(400).json({ error: "workspaceId is required" });
+      }
+      
+      const topics = topicId 
+        ? [await storage.getTopic(topicId)]
+        : await storage.getTopics(workspaceId);
+      
+      const skippedItems = [];
+      
+      for (const topic of topics) {
+        if (!topic) continue;
+        const items = await storage.getPipelineItems(topic.id);
+        const skipped = items
+          .filter(item => item.status === "skipped" || item.skipReason)
+          .sort((a, b) => {
+            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return timeB - timeA;
+          })
+          .slice(0, limit);
+        
+        for (const item of skipped) {
+          const story = await storage.getStory(item.storyId);
+          skippedItems.push({
+            ...item,
+            topicName: topic.name,
+            story: story ? {
+              id: story.id,
+              canonicalTitle: story.canonicalTitle,
+              excerpt: story.excerpt,
+            } : null,
+          });
+        }
+      }
+      
+      res.json(skippedItems.slice(0, limit));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch skipped items" });
+    }
+  });
   
   app.post("/api/trigger-pipelines", isAuthenticated, async (req: Request, res: Response) => {
     try {
@@ -4279,6 +5397,193 @@ export async function registerRoutes(
       res.json(analytics);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to fetch pipeline analytics" });
+    }
+  });
+
+  // ============================================================================
+  // PUBLISHING ITEMS API - Separate publishing pipeline
+  // ============================================================================
+
+  // GET /api/publishing-items - List publishing items
+  app.get("/api/publishing-items", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      const topicId = req.query.topicId as string;
+      const status = req.query.status as string;
+      const connectorId = req.query.connectorId as string;
+
+      const items = await storage.getPublishingItems({
+        workspaceId,
+        topicId,
+        status,
+        connectorId,
+      });
+
+      return res.status(200).json(items);
+    } catch (error: any) {
+      console.error("Error fetching publishing items:", error);
+      return res.status(500).json({ error: "Failed to fetch publishing items" });
+    }
+  });
+
+  // POST /api/publishing-items/:pipelineItemId/handoff - Hand off item to publishing
+  app.post("/api/publishing-items/:pipelineItemId/handoff", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { pipelineItemId } = req.params;
+      const { wpConnectorId, scheduledAt, status } = req.body;
+
+      const { publishingHandoffService } = await import("./services/publishing-handoff-service");
+
+      const result = await publishingHandoffService.handoffToPublishing(pipelineItemId, {
+        wpConnectorId,
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
+        status,
+      });
+
+      if (result.success) {
+        return res.status(result.isNew ? 201 : 200).json(result);
+      } else {
+        return res.status(400).json(result);
+      }
+    } catch (error: any) {
+      console.error("Error handing off to publishing:", error);
+      return res.status(500).json({ 
+        success: false, 
+        reason: "Internal server error", 
+        errorCode: "INTERNAL_ERROR" 
+      });
+    }
+  });
+
+  // PATCH /api/publishing-items/:id - Update publishing item
+  app.patch("/api/publishing-items/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+
+      // Validate status if provided
+      const validStatuses = ["draft_ready", "editor_review", "scheduled", "pushing", "published", "publish_failed", "verified"];
+      if (updates.status && !validStatuses.includes(updates.status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      const updatedItem = await storage.updatePublishingItem(id, updates);
+
+      if (!updatedItem) {
+        return res.status(404).json({ error: "Publishing item not found" });
+      }
+
+      return res.status(200).json(updatedItem);
+    } catch (error: any) {
+      console.error("Error updating publishing item:", error);
+      return res.status(500).json({ error: "Failed to update publishing item" });
+    }
+  });
+
+  // POST /api/publishing-items/:id/push - Trigger immediate push
+  app.post("/api/publishing-items/:id/push", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const publishingItem = await storage.getPublishingItem(id);
+      
+      if (!publishingItem) {
+        return res.status(404).json({ error: "Publishing item not found" });
+      }
+
+      // Update status to trigger worker pickup
+      await storage.updatePublishingItem(id, {
+        status: "draft_ready", // Worker will pick it up immediately
+        scheduledAt: null,
+      });
+
+      return res.status(200).json({ 
+        message: "Item queued for immediate publishing",
+        publishingItemId: id 
+      });
+    } catch (error: any) {
+      console.error("Error triggering push:", error);
+      return res.status(500).json({ error: "Failed to trigger push" });
+    }
+  });
+
+  // POST /api/publishing-items/:id/verify - Verify WordPress post
+  app.post("/api/publishing-items/:id/verify", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const publishingItem = await storage.getPublishingItem(id);
+      
+      if (!publishingItem) {
+        return res.status(404).json({ error: "Publishing item not found" });
+      }
+
+      if (!publishingItem.publishedUrl) {
+        return res.status(400).json({ error: "Item has no published URL to verify" });
+      }
+
+      // Simple HEAD request to verify URL exists
+      try {
+        const response = await fetch(publishingItem.publishedUrl, { method: "HEAD" });
+        
+        if (response.ok) {
+          await storage.updatePublishingItem(id, {
+            status: "verified",
+            verifiedAt: new Date(),
+          });
+
+          return res.status(200).json({ 
+            verified: true, 
+            message: "Post verified successfully" 
+          });
+        } else {
+          return res.status(400).json({ 
+            verified: false, 
+            message: `Post URL returned ${response.status}` 
+          });
+        }
+      } catch (fetchError: any) {
+        return res.status(400).json({ 
+          verified: false, 
+          message: `Failed to verify URL: ${fetchError.message}` 
+        });
+      }
+    } catch (error: any) {
+      console.error("Error verifying post:", error);
+      return res.status(500).json({ error: "Failed to verify post" });
+    }
+  });
+
+  // POST /api/publishing-items/batch/handoff - Batch handoff
+  app.post("/api/publishing-items/batch/handoff", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const { pipelineItemIds, wpConnectorId, scheduledAt, status } = req.body;
+
+      if (!Array.isArray(pipelineItemIds) || pipelineItemIds.length === 0) {
+        return res.status(400).json({ error: "pipelineItemIds must be a non-empty array" });
+      }
+
+      const { publishingHandoffService } = await import("./services/publishing-handoff-service");
+
+      const results = await publishingHandoffService.batchHandoffToPublishing(pipelineItemIds, {
+        wpConnectorId,
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
+        status,
+      });
+
+      const summary = {
+        total: results.length,
+        successful: results.filter(r => r.success).length,
+        new: results.filter(r => r.success && r.isNew).length,
+        existing: results.filter(r => r.success && !r.isNew).length,
+        failed: results.filter(r => !r.success).length,
+        results,
+      };
+
+      return res.status(200).json(summary);
+    } catch (error: any) {
+      console.error("Error batch handing off:", error);
+      return res.status(500).json({ error: "Failed to batch handoff" });
     }
   });
 

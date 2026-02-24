@@ -6,9 +6,42 @@ import { z } from "zod";
 // Re-export auth models (required for Replit Auth)
 export * from "./models/auth";
 
+// ============ ENUMS (defined first to prevent forward references) ============
+
 // Role types for workspace permissions
 export const roleTypes = ["owner", "admin", "editor", "reviewer", "viewer"] as const;
 export type RoleType = typeof roleTypes[number];
+
+// Automation modes for topics/pipelines
+export const automationModes = ["auto", "manual", "approval_required"] as const;
+export type AutomationMode = typeof automationModes[number];
+
+// Topic lifecycle states (user-controlled)
+export const topicStatuses = ["draft", "live", "paused"] as const;
+export type TopicStatus = typeof topicStatuses[number];
+
+// Source modes for topic source selection
+export const sourceModes = ["all", "whitelist"] as const;
+export type SourceMode = typeof sourceModes[number];
+
+// Automation job types
+export const automationJobTypes = [
+  "discovery",  // Topic discovery/matching phase
+  "fetch",
+  "match",
+  "generate",
+  "gate",
+  "schedule",
+  "publish",
+  "verify",
+] as const;
+export type AutomationJobType = typeof automationJobTypes[number];
+
+// Automation job statuses
+export const automationJobStatuses = ["queued", "running", "success", "fail", "partial", "timeout"] as const;
+export type AutomationJobStatus = typeof automationJobStatuses[number];
+
+// ============ TABLES ============
 
 // Workspaces
 export const workspaces = pgTable("workspaces", {
@@ -19,12 +52,93 @@ export const workspaces = pgTable("workspaces", {
   features: jsonb("features").default({}),
   automationKeyHash: text("automation_key_hash"),
   automationKeyLast4: text("automation_key_last4"),
+  activeSiteId: varchar("active_site_id", { length: 36 }),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const insertWorkspaceSchema = createInsertSchema(workspaces).omit({ id: true, createdAt: true });
 export type InsertWorkspace = z.infer<typeof insertWorkspaceSchema>;
 export type Workspace = typeof workspaces.$inferSelect;
+
+// Site connection statuses
+export const siteConnectionStatuses = ["not_connected", "connected", "error"] as const;
+export type SiteConnectionStatus = typeof siteConnectionStatuses[number];
+
+// Sites (multi-site support)
+export const sites = pgTable("sites", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  name: text("name").notNull(),
+  url: text("url"),
+  connectionStatus: text("connection_status").$type<SiteConnectionStatus>().default("not_connected"),
+  lastConnectedAt: timestamp("last_connected_at"),
+  
+  // WordPress REST API credentials (outbound: CS → WP)
+  wpSiteUrl: text("wp_site_url"),
+  wpUsername: text("wp_username"),
+  wpAppPassword: text("wp_app_password"), // Application Password for REST API
+  wpAuthToken: text("wp_auth_token"), // Legacy - can be deprecated
+  wpUserId: text("wp_user_id"),
+  
+  // WordPress Pull Plugin credentials (inbound: WP → CS)
+  wpPullSecret: text("wp_pull_secret"), // Secret for plugin authentication
+  
+  // Publishing settings
+  wpDefaultCategory: text("wp_default_category"),
+  wpDefaultStatus: text("wp_default_status").default("draft"),
+  wpDefaultAuthor: text("wp_default_author"),
+  publishingMode: text("publishing_mode").default("plugin"), // "plugin" | "rest" | "both"
+  
+  // Category & Tag sync tracking
+  lastCategorySync: timestamp("last_category_sync"),
+  lastTagSync: timestamp("last_tag_sync"),
+  categoriesCount: integer("categories_count").default(0),
+  tagsCount: integer("tags_count").default(0),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_sites_workspace").on(table.workspaceId),
+]);
+
+export const insertSiteSchema = createInsertSchema(sites).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertSite = z.infer<typeof insertSiteSchema>;
+export type Site = typeof sites.$inferSelect;
+
+// WordPress Categories (synced from WP sites)
+export const wpCategories = pgTable("wp_categories", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  siteId: varchar("site_id", { length: 36 }).notNull(),
+  wpCategoryId: integer("wp_category_id").notNull(), // WordPress category ID
+  name: text("name").notNull(),
+  slug: text("slug").notNull(),
+  description: text("description"),
+  parentId: integer("parent_id"), // WordPress parent category ID
+  count: integer("count").default(0), // Post count
+  syncedAt: timestamp("synced_at").defaultNow(),
+}, (table) => [
+  index("idx_wp_categories_site").on(table.siteId),
+  unique("wp_category_site_unique").on(table.siteId, table.wpCategoryId),
+]);
+
+export type WpCategory = typeof wpCategories.$inferSelect;
+
+// WordPress Tags (synced from WP sites)
+export const wpTags = pgTable("wp_tags", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  siteId: varchar("site_id", { length: 36 }).notNull(),
+  wpTagId: integer("wp_tag_id").notNull(), // WordPress tag ID
+  name: text("name").notNull(),
+  slug: text("slug").notNull(),
+  description: text("description"),
+  count: integer("count").default(0), // Post count
+  syncedAt: timestamp("synced_at").defaultNow(),
+}, (table) => [
+  index("idx_wp_tags_site").on(table.siteId),
+  unique("wp_tag_site_unique").on(table.siteId, table.wpTagId),
+]);
+
+export type WpTag = typeof wpTags.$inferSelect;
 
 // Workspace features for premium entitlements
 export interface WorkspaceFeatures {
@@ -277,11 +391,17 @@ export type TargetHealthStatus = typeof targetHealthStatuses[number];
 export const publishingTargets = pgTable("publishing_targets", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  contentSiteId: varchar("content_site_id", { length: 36 }),
   brandId: varchar("brand_id", { length: 36 }),
   type: text("type").notNull().$type<TargetType>(),
   name: text("name").notNull(),
   credentialsEncrypted: text("credentials_encrypted"),
   configJson: jsonb("config_json").default({}),
+  
+  // Publishing policy
+  requireFeaturedImage: boolean("require_featured_image").default(true),
+  languageMode: text("language_mode").default("any"),
+  allowedLanguages: text("allowed_languages").array().default([]),
   
   // Status
   isActive: boolean("is_active").default(true),
@@ -314,6 +434,7 @@ export const publishingTargets = pgTable("publishing_targets", {
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   index("idx_publishing_targets_workspace").on(table.workspaceId),
+  index("idx_publishing_targets_content_site").on(table.contentSiteId),
   index("idx_publishing_targets_active").on(table.isActive),
   uniqueIndex("idx_publishing_targets_site_id").on(table.siteId),
   index("idx_publishing_targets_created_by").on(table.createdByUserId),
@@ -362,7 +483,13 @@ export const wpPullJobs = pgTable("wp_pull_jobs", {
   slug: text("slug"),
   sourceUrl: text("source_url"),
   featuredImageUrl: text("featured_image_url"),
+  featuredImageCredit: text("featured_image_credit"), // NEW: Image attribution
+  featuredImageCaption: text("featured_image_caption"), // NEW: Image caption/alt
   metadataJson: jsonb("metadata_json").default({}), // topicId, storyId, etc.
+  
+  // Sanitized payload (Step 2F - canonical source for plugin)
+  payloadJson: jsonb("payload_json"),
+  storyHash: text("story_hash"),
   
   // Job status
   status: text("status").notNull().$type<WpPullJobStatus>().default("queued"),
@@ -379,6 +506,14 @@ export const wpPullJobs = pgTable("wp_pull_jobs", {
   resultWpPostId: integer("result_wp_post_id"),
   resultWpUrl: text("result_wp_url"),
   error: text("error"),
+  
+  // Callback evidence fields (v0.8.0+)
+  callbackImageHttpCode: integer("callback_image_http_code"),
+  callbackImageBytes: integer("callback_image_bytes"),
+  callbackWpAttachmentId: integer("callback_wp_attachment_id"),
+  callbackSetThumbnailOk: boolean("callback_set_thumbnail_ok"),
+  callbackErrorStep: text("callback_error_step"),
+  callbackErrorDetails: text("callback_error_details"),
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -566,6 +701,10 @@ export const sources = pgTable("sources", {
   tier: integer("tier"), // 1, 2, or 3 (null = compute dynamically)
   isOfficial: text("is_official").default("false"), // "true" for official national/regional media
   isActive: text("is_active").default("true"),
+  approvalStatus: text("approval_status").default("approved"), // "pending", "approved", "rejected"
+  approvedBy: varchar("approved_by", { length: 36 }), // Site admin user ID
+  approvedAt: timestamp("approved_at"),
+  rejectionReason: text("rejection_reason"),
   fetchIntervalMinutes: integer("fetch_interval_minutes").default(60),
   lastFetchedAt: timestamp("last_fetched_at"),
   lastSuccessAt: timestamp("last_success_at"),
@@ -577,6 +716,7 @@ export const sources = pgTable("sources", {
   index("idx_sources_workspace").on(table.workspaceId),
   index("idx_sources_region").on(table.region),
   index("idx_sources_country").on(table.country),
+  index("idx_sources_approval").on(table.approvalStatus),
 ]);
 
 export const insertSourceSchema = createInsertSchema(sources).omit({ id: true, createdAt: true, updatedAt: true, lastFetchedAt: true, lastSuccessAt: true, lastError: true, itemCount: true });
@@ -1047,14 +1187,6 @@ export const insertDraftSchema = createInsertSchema(drafts).omit({ id: true, cre
 export type InsertDraft = z.infer<typeof insertDraftSchema>;
 export type Draft = typeof drafts.$inferSelect;
 
-// Automation modes for topics/pipelines
-export const automationModes = ["auto", "manual", "approval_required"] as const;
-export type AutomationMode = typeof automationModes[number];
-
-// Source modes for topic source selection
-export const sourceModes = ["all", "whitelist"] as const;
-export type SourceMode = typeof sourceModes[number];
-
 // Quiet hours configuration interface
 export interface QuietHoursConfig {
   start: string;  // HH:MM format
@@ -1083,6 +1215,7 @@ export interface PolicyFlags {
 export const topics = pgTable("topics", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   workspaceId: varchar("workspace_id", { length: 36 }).notNull(),
+  siteId: varchar("site_id", { length: 36 }), // Nullable - topics can exist without sites (using publishing targets instead)
   name: text("name").notNull(),
   description: text("description"),
   contentIntent: text("content_intent").notNull().$type<ContentIntent>().default("news_monitoring"),
@@ -1109,6 +1242,7 @@ export const topics = pgTable("topics", {
   schedule: text("schedule"),
   dailyCap: integer("daily_cap").default(5),
   minSpacingMinutes: integer("min_spacing_minutes").default(120),
+  publishIntervalMinutes: integer("publish_interval_minutes").default(2), // Fast publishing interval (1-60 minutes)
   quietHours: jsonb("quiet_hours"),
   
   // Publishing schedule configuration
@@ -1128,9 +1262,16 @@ export const topics = pgTable("topics", {
   taxonomyRules: jsonb("taxonomy_rules").default({}),
   outputSettings: jsonb("output_settings").default({}),
   
-  // Status
-  isLive: text("is_live").default("false"),
+  // Status and run tracking
+  status: text("status").$type<TopicStatus>().default("draft"), // User-controlled lifecycle only
+  isLive: text("is_live").default("false"), // Legacy field - DEPRECATED, use status instead
+  
+  // Denormalized fields for fast UI queries (derived from automation_job_runs)
   lastRunAt: timestamp("last_run_at"),
+  lastRunId: varchar("last_run_id", { length: 36 }),
+  lastRunStatus: text("last_run_status"), // Denormalized job status: "queued" | "running" | "success" | "fail" | "timeout"
+  firstRunAt: timestamp("first_run_at"),
+  lastError: text("last_error"),
   nextRunAt: timestamp("next_run_at"),
   
   // Stats (for dashboard display)
@@ -1141,7 +1282,10 @@ export const topics = pgTable("topics", {
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   index("idx_topics_workspace").on(table.workspaceId),
+  index("idx_topics_site").on(table.siteId),
   index("idx_topics_is_live").on(table.isLive),
+  // Prevent duplicate topic names within the same site
+  unique("unique_site_topic_name").on(table.siteId, table.name),
 ]);
 
 export const insertTopicSchema = createInsertSchema(topics).omit({ 
@@ -1382,6 +1526,7 @@ export type PipelineItemStatus = typeof pipelineItemStatuses[number];
 // Quarantine reasons for pipeline items
 export const quarantineReasons = [
   "language_mismatch",
+  "missing_featured_image",
   "policy_block",
   "invalid_content",
   "publish_failed",
@@ -1429,6 +1574,17 @@ export const pipelineItems = pgTable("pipeline_items", {
   targetPermalink: text("target_permalink"),
   targetPostStatus: text("target_post_status"),
   
+  // Idempotency fields for deduplication
+  storyHash: text("story_hash"),
+  canonicalSourceUrl: text("canonical_source_url"),
+  
+  // Featured image tracking
+  featuredImageUrl: text("featured_image_url"),
+  featuredImageMediaId: text("featured_image_media_id"),
+  featuredImageCredit: text("featured_image_credit"), // Attribution/credit for sourced images
+  featuredImageCaption: text("featured_image_caption"), // Caption/alt text for images
+  aiGeneratedImageUrl: text("ai_generated_image_url"), // URL for AI-generated fallback images
+  
   // Retry and error tracking
   publishAttempts: integer("publish_attempts").default(0),
   retryCount: integer("retry_count").default(0),
@@ -1454,28 +1610,14 @@ export const pipelineItems = pgTable("pipeline_items", {
   index("idx_pipeline_items_workspace").on(table.workspaceId),
   index("idx_pipeline_items_status").on(table.status),
   index("idx_pipeline_items_scheduled").on(table.scheduledFor),
+  index("idx_pipeline_items_story_hash").on(table.storyHash),
   unique("pipeline_item_unique").on(table.topicId, table.storyId),
+  unique("pipeline_item_target_hash_unique").on(table.targetId, table.storyHash),
 ]);
 
 export const insertPipelineItemSchema = createInsertSchema(pipelineItems).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertPipelineItem = z.infer<typeof insertPipelineItemSchema>;
 export type PipelineItem = typeof pipelineItems.$inferSelect;
-
-// Automation job types
-export const automationJobTypes = [
-  "fetch",
-  "match",
-  "generate",
-  "gate",
-  "schedule",
-  "publish",
-  "verify",
-] as const;
-export type AutomationJobType = typeof automationJobTypes[number];
-
-// Automation job statuses
-export const automationJobStatuses = ["running", "success", "fail", "partial"] as const;
-export type AutomationJobStatus = typeof automationJobStatuses[number];
 
 // Automation Job Runs - tracks execution of pipeline jobs
 export const automationJobRuns = pgTable("automation_job_runs", {
@@ -1540,6 +1682,63 @@ export const insertPublishAttemptSchema = createInsertSchema(publishAttempts).om
 export type InsertPublishAttempt = z.infer<typeof insertPublishAttemptSchema>;
 export type PublishAttempt = typeof publishAttempts.$inferSelect;
 
+// Publishing Item Statuses - separate pipeline for publishing operations
+export const publishingItemStatuses = [
+  "draft_ready",      // Ready for editorial review
+  "editor_review",    // Under editorial review
+  "scheduled",        // Scheduled for publishing
+  "pushing",          // Currently pushing to WordPress
+  "published",        // Successfully published
+  "publish_failed",   // Publish attempt failed
+  "verified",         // Post verified on WordPress
+] as const;
+export type PublishingItemStatus = typeof publishingItemStatuses[number];
+
+// Publishing Items - separate operational pipeline for publishing
+export const publishingItems = pgTable("publishing_items", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Core references
+  pipelineItemId: varchar("pipeline_item_id", { length: 36 }).notNull().unique().references(() => pipelineItems.id, { onDelete: "cascade" }),
+  topicId: varchar("topic_id", { length: 36 }).references(() => topics.id, { onDelete: "cascade" }),
+  workspaceId: varchar("workspace_id", { length: 36 }).notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  
+  // Publishing status
+  status: text("status").notNull().$type<PublishingItemStatus>().default("draft_ready"),
+  
+  // Scheduling
+  scheduledAt: timestamp("scheduled_at"),
+  
+  // WordPress connector info
+  wpConnectorId: varchar("wp_connector_id", { length: 36 }).references(() => publishingTargets.id),
+  wpPostId: text("wp_post_id"),
+  publishedUrl: text("published_url"),
+  
+  // Error tracking
+  lastError: text("last_error"),
+  attemptCount: integer("attempt_count").default(0),
+  
+  // Metadata
+  handedOffAt: timestamp("handed_off_at").defaultNow(),
+  publishedAt: timestamp("published_at"),
+  verifiedAt: timestamp("verified_at"),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_publishing_items_pipeline_item").on(table.pipelineItemId),
+  index("idx_publishing_items_status").on(table.status),
+  index("idx_publishing_items_scheduled").on(table.scheduledAt),
+  index("idx_publishing_items_connector").on(table.wpConnectorId),
+  index("idx_publishing_items_topic").on(table.topicId),
+  index("idx_publishing_items_workspace").on(table.workspaceId),
+]);
+
+export const insertPublishingItemSchema = createInsertSchema(publishingItems).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertPublishingItem = z.infer<typeof insertPublishingItemSchema>;
+export type PublishingItem = typeof publishingItems.$inferSelect;
+
 // Pipeline item relations
 export const pipelineItemsRelations = relations(pipelineItems, ({ one, many }) => ({
   topic: one(topics, { fields: [pipelineItems.topicId], references: [topics.id] }),
@@ -1557,4 +1756,11 @@ export const automationJobRunsRelations = relations(automationJobRuns, ({ one })
 export const publishAttemptsRelations = relations(publishAttempts, ({ one }) => ({
   pipelineItem: one(pipelineItems, { fields: [publishAttempts.pipelineItemId], references: [pipelineItems.id] }),
   target: one(publishingTargets, { fields: [publishAttempts.targetId], references: [publishingTargets.id] }),
+}));
+
+export const publishingItemsRelations = relations(publishingItems, ({ one }) => ({
+  pipelineItem: one(pipelineItems, { fields: [publishingItems.pipelineItemId], references: [pipelineItems.id] }),
+  topic: one(topics, { fields: [publishingItems.topicId], references: [topics.id] }),
+  workspace: one(workspaces, { fields: [publishingItems.workspaceId], references: [workspaces.id] }),
+  wpConnector: one(publishingTargets, { fields: [publishingItems.wpConnectorId], references: [publishingTargets.id] }),
 }));

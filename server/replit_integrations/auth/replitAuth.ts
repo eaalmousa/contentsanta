@@ -9,6 +9,9 @@ import connectPg from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import { authStorage } from "./storage";
 
+// Import custom passport strategies (local + Google OAuth)
+import "../../config/passport";
+
 const getOidcConfig = memoize(
   async () => {
     return await client.discovery(
@@ -28,6 +31,10 @@ export function getSession() {
     ttl: sessionTtl,
     tableName: "sessions",
   });
+  
+  // In development, use non-secure cookies for localhost
+  const isProduction = process.env.NODE_ENV === "production";
+  
   return session({
     secret: process.env.SESSION_SECRET!,
     store: sessionStore,
@@ -35,7 +42,8 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: true,
+      secure: isProduction, // Only secure in production (HTTPS)
+      sameSite: isProduction ? "lax" : "lax",
       maxAge: sessionTtl,
     },
   });
@@ -66,6 +74,119 @@ export async function setupAuth(app: Express) {
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
+
+  // STRICT PRODUCTION GUARD: Prevent dev bypass in production
+  if (process.env.NODE_ENV === "production") {
+    if (process.env.ALLOW_DEV_BYPASS === "true") {
+      throw new Error("SECURITY VIOLATION: Dev bypass cannot be enabled in production (ALLOW_DEV_BYPASS=true)");
+    }
+    if (process.env.REPL_ID === "local-dev-test") {
+      throw new Error("SECURITY VIOLATION: Production cannot use local-dev-test REPL_ID");
+    }
+  }
+
+  // Development mode bypass for local testing
+  // Requires THREE conditions: NODE_ENV=development, REPL_ID=local-dev-test, ALLOW_DEV_BYPASS=true
+  if (process.env.NODE_ENV === "development" && 
+      process.env.REPL_ID === "local-dev-test" &&
+      process.env.ALLOW_DEV_BYPASS === "true") {
+    
+    console.warn("⚠️  DEV USER BYPASS ACTIVE - NOT FOR PRODUCTION");
+    console.log("[Auth] Running in LOCAL DEVELOPMENT MODE - auth bypass enabled");
+    
+    // Generate unique dev user ID (can't be guessed)
+    const devUserId = `dev-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    
+    // NOTE: Do NOT override passport serialization here - it's handled in server/config/passport.ts
+    // Custom auth (email/password/Google) needs its own serialization logic
+    
+    // Mock login endpoint for development
+    app.get("/api/login", async (req, res) => {
+      const mockUser = {
+        claims: {
+          sub: devUserId,
+          email: "dev@localhost",
+          name: "Development User",
+          profile_image_url: null,
+        },
+        access_token: "dev-token",
+        refresh_token: "dev-refresh-token",
+        expires_at: Math.floor(Date.now() / 1000) + 86400, // 24 hours from now
+      };
+      
+      console.log(`[Auth] Dev bypass: Created user ${devUserId}`);
+      
+      // Ensure development user and workspace exist (async, not awaited - don't block login)
+      upsertUser(mockUser.claims)
+        .then(async () => {
+          const workspace = await authStorage.ensureUserHasWorkspace(
+            mockUser.claims.sub,
+            mockUser.claims.email
+          );
+          console.log("[Auth] Dev user authenticated, workspace:", workspace.slug, workspace.id);
+        })
+        .catch((error) => {
+          console.error("[Auth] Error setting up dev user:", error);
+        });
+      
+      // Immediately establish session and respond
+      req.login(mockUser, (err) => {
+        if (err) {
+          console.error("[Auth] Login error:", err);
+          return res.status(500).send("Login failed");
+        }
+        res.redirect("/");
+      });
+    });
+    
+    // Fast login endpoint for testing - returns JSON immediately
+    app.get("/api/dev/session", async (req, res) => {
+      const mockUser = {
+        claims: {
+          sub: devUserId,
+          email: "dev@localhost",
+          name: "Development User",
+          profile_image_url: null,
+        },
+        access_token: "dev-token",
+        refresh_token: "dev-refresh-token",
+        expires_at: Math.floor(Date.now() / 1000) + 86400,
+      };
+      
+      // Ensure user exists in DB (quick upsert only, workspace creation is async)
+      try {
+        await upsertUser(mockUser.claims);
+        
+        // Async workspace setup (not awaited)
+        authStorage.ensureUserHasWorkspace(mockUser.claims.sub, mockUser.claims.email)
+          .catch((error) => console.error("[Auth] Async workspace setup error:", error));
+        
+        // Establish session immediately
+        req.login(mockUser, (err) => {
+          if (err) {
+            console.error("[Auth] Session login error:", err);
+            return res.status(500).json({ error: "Login failed" });
+          }
+          res.json({ ok: true, userId: mockUser.claims.sub });
+        });
+      } catch (error) {
+        console.error("[Auth] Dev session error:", error);
+        res.status(500).json({ error: "Failed to create session" });
+      }
+    });
+    
+    app.get("/api/logout", (req, res) => {
+      req.logout(() => {
+        res.redirect("/");
+      });
+    });
+    
+    app.get("/api/callback", (req, res) => {
+      res.redirect("/api/login");
+    });
+    
+    return; // Skip Replit OAuth setup in dev mode
+  }
 
   const config = await getOidcConfig();
 
@@ -141,6 +262,17 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     return res.status(401).json({ message: "Unauthorized", reason: "not_authenticated" });
   }
   
+  // ✅ FIX: Handle both custom auth (email/password/Google) and Replit OIDC auth
+  // Custom auth: user has 'id' field directly
+  // Replit auth: user has 'claims' and 'expires_at'
+  
+  // If custom auth (has user.id but no expires_at), allow immediately
+  if (user?.id && !user?.expires_at) {
+    console.log(`[Auth] ✅ Custom auth verified: ${method} ${path} (user: ${user.id})`);
+    return next();
+  }
+  
+  // Replit OIDC auth - check token expiration
   if (!user?.expires_at) {
     console.log(`[Auth] 401 - no expires_at in session: ${method} ${path}`);
     return res.status(401).json({ message: "Unauthorized", reason: "no_session_expiry" });
@@ -148,6 +280,7 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
 
   const now = Math.floor(Date.now() / 1000);
   if (now <= user.expires_at) {
+    console.log(`[Auth] ✅ Replit OIDC token valid: ${method} ${path}`);
     return next();
   }
 

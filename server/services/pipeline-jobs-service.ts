@@ -1,6 +1,11 @@
 import { storage } from "../storage";
+import { db } from "../db";
+import { sql } from "drizzle-orm";
 import { processWorkflowWithAI } from "../ai-workflow";
-import { publishToWordPress, testWordPressConnection } from "./wordpress-service";
+import { enhancedPublisher } from "./enhanced-publisher";
+import { publishingPreflight } from "./publishing-preflight";
+import { aiImageService } from "./ai-image-service";
+import { duplicateDetectionService } from "./duplicate-detection-service";
 import type {
   Topic,
   PipelineItem,
@@ -16,8 +21,74 @@ import type {
 } from "@shared/schema";
 import crypto from "crypto";
 
-const MAX_RETRY_COUNT = 5;
+// Externalized configuration - read from environment variables
+const MAX_RETRY_COUNT = parseInt(process.env.PIPELINE_MAX_RETRIES || "5", 10);
 const RETRY_BACKOFF_MINUTES = [1, 5, 20, 60, 360];
+
+/**
+ * Check if a DALL-E image URL has expired
+ * DALL-E URLs expire after 2 hours based on the 'se' (expiry) parameter
+ */
+function isDallEUrlExpired(url: string): boolean {
+  if (!url || !url.includes('oaidalleapiprodscus.blob.core.windows.net')) {
+    return false; // Not a DALL-E URL
+  }
+
+  try {
+    // Extract expiration time from URL (se= parameter)
+    const match = url.match(/se=([^&]+)/);
+    if (!match) return false;
+
+    const expirationStr = decodeURIComponent(match[1]);
+    const expirationDate = new Date(expirationStr);
+    const now = new Date();
+
+    // Add 30 second buffer to prevent race conditions
+    return now.getTime() > (expirationDate.getTime() - 30000);
+  } catch (error) {
+    console.error("Error checking DALL-E URL expiration:", error);
+    return false;
+  }
+}
+
+/**
+ * Regenerate expired DALL-E image and update pipeline item
+ * Returns the new URL, or the original URL if regeneration fails
+ */
+async function regenerateExpiredImage(
+  pipelineItemId: string,
+  currentUrl: string,
+  title: string,
+  excerpt: string
+): Promise<string> {
+  const requestId = `img-regen-${Date.now().toString(36)}`;
+  
+  console.log(`[${requestId}] DALL-E URL expired for item ${pipelineItemId}, regenerating...`);
+  
+  try {
+    const result = await aiImageService.generateFeaturedImage(title, excerpt, "realistic");
+    
+    if (!result.success || !result.imageUrl) {
+      console.error(`[${requestId}] Failed to regenerate: ${result.error}`);
+      return currentUrl; // Return original URL as fallback
+    }
+    
+    console.log(`[${requestId}] ✅ New image generated: ${result.imageUrl.substring(0, 80)}...`);
+    
+    // Update pipeline item with new URL
+    await storage.updatePipelineItem(pipelineItemId, {
+      featuredImageUrl: result.imageUrl,
+      aiGeneratedImageUrl: result.imageUrl,
+      updatedAt: new Date(),
+    });
+    
+    console.log(`[${requestId}] ✅ Pipeline item updated with new image URL`);
+    return result.imageUrl;
+  } catch (error) {
+    console.error(`[${requestId}] Error regenerating image:`, error);
+    return currentUrl; // Return original URL as fallback
+  }
+}
 
 interface JobResult {
   jobRunId: string;
@@ -117,6 +188,26 @@ function matchesKeywords(
   }
 
   return { matches: true };
+}
+
+/**
+ * Detect language of text based on character sets
+ * Returns: 'ar' for Arabic, 'en' for English, or 'unknown'
+ */
+function detectLanguage(text: string): string {
+  if (!text) return 'unknown';
+  
+  // Arabic Unicode range: U+0600 to U+06FF
+  const arabicRegex = /[\u0600-\u06FF]/;
+  
+  // Check if text contains Arabic characters
+  if (arabicRegex.test(text)) {
+    return 'ar';
+  }
+  
+  // Default to English if no Arabic detected
+  // (Could be enhanced with more sophisticated detection)
+  return 'en';
 }
 
 function isInQuietHours(quietHours: { start: string; end: string; tz?: string } | null): boolean {
@@ -256,13 +347,35 @@ export async function runMatchAndRankJob(topic: Topic): Promise<JobResult> {
       if (!keywordMatch.matches) {
         await storage.updatePipelineItem(item.id, {
           status: "skipped" as PipelineItemStatus,
+          skipReason: keywordMatch.reason,
           lastErrorMessage: keywordMatch.reason,
         });
         result.skipped++;
         continue;
       }
 
-      await storage.updatePipelineItem(item.id, { status: "matched" as PipelineItemStatus });
+      // Language filter: Skip if topic requires specific language
+      if (topic.language) {
+        const detectedLanguage = detectLanguage(story.canonicalTitle);
+        if (detectedLanguage !== topic.language) {
+          await storage.updatePipelineItem(item.id, {
+            status: "skipped" as PipelineItemStatus,
+            skipReason: `Language mismatch (detected: ${detectedLanguage}, required: ${topic.language})`,
+            lastErrorMessage: `Language mismatch: expected ${topic.language}, got ${detectedLanguage}`,
+            languageDetected: detectedLanguage,
+          });
+          result.skipped++;
+          continue;
+        }
+        
+        // Store detected language for items that pass the filter
+        await storage.updatePipelineItem(item.id, { 
+          status: "matched" as PipelineItemStatus,
+          languageDetected: detectedLanguage,
+        });
+      } else {
+        await storage.updatePipelineItem(item.id, { status: "matched" as PipelineItemStatus });
+      }
 
       if (publishedHashes.has(item.dedupeHash)) {
         await storage.updatePipelineItem(item.id, {
@@ -372,6 +485,50 @@ export async function runGenerateJob(topic: Topic): Promise<JobResult> {
           const latestVersion = await storage.getLatestAssetVersion(aiResult.assetId);
           
           if (latestVersion?.title && latestVersion?.body) {
+            // === STEP 1: Extract/Generate Featured Image ===
+            const { FeaturedImageService } = await import("./featured-image-service");
+            const { aiImageService } = await import("./ai-image-service");
+            const imageService = new FeaturedImageService();
+            
+            let finalImageUrl = null;
+            let finalImageCredit = null;
+            let finalImageCaption = null;
+            let aiGeneratedUrl = null;
+            
+            try {
+              // Try to extract image from source article
+              const imageResult = await imageService.extractImageFromStory(story.id);
+              
+              if (imageResult.url && imageResult.source !== "none") {
+                finalImageUrl = imageResult.url;
+                finalImageCredit = imageResult.credit || story.sourceName || "Source Article";
+                finalImageCaption = imageResult.caption || latestVersion.title;
+                console.log(`[GenerateJob:${topic.id}] ✅ Extracted featured image from ${imageResult.source}`);
+              } else {
+                // No source image found - generate with AI
+                console.log(`[GenerateJob:${topic.id}] No source image found, generating with AI...`);
+                const aiImageResult = await aiImageService.generateFeaturedImage(
+                  latestVersion.title,
+                  latestVersion.body.substring(0, 500),
+                  "realistic"
+                );
+                
+                if (aiImageResult.success && aiImageResult.imageUrl) {
+                  aiGeneratedUrl = aiImageResult.imageUrl;
+                  finalImageUrl = aiImageResult.imageUrl;
+                  finalImageCredit = "AI Generated Image";
+                  finalImageCaption = latestVersion.title;
+                  console.log(`[GenerateJob:${topic.id}] ✅ AI image generated successfully`);
+                } else {
+                  console.warn(`[GenerateJob:${topic.id}] ⚠️ AI image generation failed: ${aiImageResult.error}`);
+                }
+              }
+            } catch (imageError: any) {
+              console.error(`[GenerateJob:${topic.id}] Error handling featured image:`, imageError.message);
+              // Continue without image - not critical
+            }
+            
+            // === STEP 2: Update Pipeline Item with Content + Images ===
             await storage.updatePipelineItem(item.id, {
               status: "generated" as PipelineItemStatus,
               generatedTitle: latestVersion.title,
@@ -379,6 +536,10 @@ export async function runGenerateJob(topic: Topic): Promise<JobResult> {
               generatedExcerpt: latestVersion.body.slice(0, 200) + "...",
               generatedTags: [],
               generatedCategory: topic.name,
+              featuredImageUrl: finalImageUrl,
+              featuredImageCredit: finalImageCredit,
+              featuredImageCaption: finalImageCaption,
+              aiGeneratedImageUrl: aiGeneratedUrl,
             });
             
             const existingDraft = await storage.getDraftByPipelineItemId(item.id);
@@ -569,6 +730,45 @@ function getWallClockDate(utcDate: Date, timezone: string): { year: number; mont
   };
 }
 
+/**
+ * Get next publish time based on rapid publishing interval
+ * Simpler logic for fast publishing (every N minutes sequentially)
+ */
+async function getNextPublishTimeForRapidPublishing(
+  topic: Topic,
+  storage: any
+): Promise<Date> {
+  const now = new Date();
+  const intervalMinutes = topic.publishIntervalMinutes || 2; // Default 2 minutes
+  
+  // Get the most recent scheduled/published item for this topic
+  const recentItems = await storage.getPipelineItems({
+    topicId: topic.id,
+    status: ["scheduled", "publishing", "published"],
+    orderBy: "scheduledFor DESC",
+    limit: 1
+  });
+  
+  if (recentItems.length > 0) {
+    const lastScheduledTime = recentItems[0].scheduledFor || recentItems[0].publishedAt;
+    if (lastScheduledTime) {
+      const lastTime = new Date(lastScheduledTime);
+      // Schedule next item after interval from the last one
+      const nextTime = new Date(lastTime.getTime() + intervalMinutes * 60 * 1000);
+      
+      // If calculated time is in the past, schedule immediately
+      if (nextTime <= now) {
+        return new Date(now.getTime() + 5000); // 5 seconds from now
+      }
+      
+      return nextTime;
+    }
+  }
+  
+  // No previous items - schedule immediately
+  return new Date(now.getTime() + 5000); // 5 seconds from now
+}
+
 function getNextPublishSlot(
   publishTimes: string[],
   timezone: string,
@@ -740,7 +940,8 @@ export async function runScheduleJob(topic: Topic): Promise<JobResult> {
           continue;
         }
 
-        const nextSlot = new Date(lastScheduledTime + minSpacing * 60 * 1000);
+        const intervalMinutes = topic.publishIntervalMinutes || topic.minSpacingMinutes || 2;
+        const nextSlot = new Date(lastScheduledTime + intervalMinutes * 60 * 1000);
 
         await storage.updatePipelineItem(item.id, {
           status: "scheduled" as PipelineItemStatus,
@@ -782,12 +983,32 @@ export async function runPublishJob(topic: Topic): Promise<JobResult> {
 
     const items = await getPipelineItemsByTopic(topic.id);
     const now = new Date();
+    
+    // CRITICAL FIX: Filter out items already in "publishing" or "published" state to prevent duplicates
     const readyItems = items.filter(
       (i: PipelineItem) =>
         i.status === "scheduled" &&
         i.scheduledFor &&
         new Date(i.scheduledFor) <= now
     );
+    
+    // Additional safety check: quarantine any items stuck in "publishing" for > 5 minutes
+    const stuckPublishingItems = items.filter(
+      (i: PipelineItem) =>
+        i.status === "publishing" &&
+        i.updatedAt &&
+        new Date(i.updatedAt).getTime() < Date.now() - 5 * 60 * 1000
+    );
+    
+    if (stuckPublishingItems.length > 0) {
+      console.log(`[PublishJob:${topic.id}] Found ${stuckPublishingItems.length} items stuck in "publishing" state - resetting to retrying`);
+      for (const stuckItem of stuckPublishingItems) {
+        await storage.updatePipelineItem(stuckItem.id, {
+          status: "retrying" as PipelineItemStatus,
+          lastErrorMessage: "Item stuck in publishing state - reset by reaper",
+        });
+      }
+    }
 
     for (const item of readyItems) {
       result.processed++;
@@ -813,84 +1034,234 @@ export async function runPublishJob(topic: Topic): Promise<JobResult> {
         continue;
       }
 
+      // CRITICAL FIX: Language filter BEFORE publishing (catch items that bypassed match/rank)
+      if (topic.language && item.generatedTitle) {
+        const detectedLanguage = detectLanguage(item.generatedTitle);
+        if (detectedLanguage !== topic.language && detectedLanguage !== 'unknown') {
+          console.log(`[PublishJob:${topic.id}] Skipping item ${item.id}: Language mismatch (detected: ${detectedLanguage}, required: ${topic.language})`);
+          await storage.updatePipelineItem(item.id, {
+            status: "skipped" as PipelineItemStatus,
+            skipReason: `Language mismatch (detected: ${detectedLanguage}, required: ${topic.language})`,
+            lastErrorMessage: `Language mismatch: expected ${topic.language}, got ${detectedLanguage}`,
+            languageDetected: detectedLanguage,
+          });
+          result.skipped++;
+          continue;
+        }
+      }
+
       await storage.updatePipelineItem(item.id, {
         status: "publishing" as PipelineItemStatus,
         publishAttempts: (item.publishAttempts || 0) + 1,
       });
 
+      const attemptNumber = (item.publishAttempts || 0) + 1;
+      let errorCode = "PUBLISH_FAILED";
+      let errorMessage = "";
+      let responseStatus = 500;
+      let responseBody: any = {};
+
       try {
         if (target.type === "wordpress_pull") {
           if (!target.siteId) {
-            throw new Error("WordPress Pull target missing siteId");
+            throw new Error("WP_PULL_NO_SITE_ID: WordPress Pull target missing siteId");
           }
           
-          const slug = (item.generatedTitle || "post")
+          console.log(`[PublishJob:${topic.id}] Running preflight checks for item ${item.id}`);
+          
+          // CRITICAL: Apply preflight validation BEFORE creating wp_pull_job
+          // This enforces sanitization, language policy, featured images, categories, and dedupe
+          const preflightResult = await publishingPreflight.prepare(item.id, target.id);
+          
+          if (!preflightResult.success) {
+            // Preflight failed - item is already quarantined by preflight service
+            console.log(`[PublishJob:${topic.id}] Preflight failed for item ${item.id}: ${preflightResult.quarantineReason} - ${preflightResult.quarantineMessage}`);
+            
+            await storage.createPublishAttempt({
+              pipelineItemId: item.id,
+              targetId: item.targetId,
+              attemptNumber,
+              requestPayload: { title: item.generatedTitle, content: item.generatedBody },
+              responseStatus: 400,
+              responseBody: { 
+                preflightFailed: true,
+                quarantineReason: preflightResult.quarantineReason,
+                message: preflightResult.quarantineMessage,
+                metadata: preflightResult.metadata,
+              },
+              result: "quarantined",
+            });
+            
+            result.quarantined++;
+            continue;
+          }
+          
+          // Preflight passed - use sanitized payload
+          const payload = preflightResult.payload!;
+          
+          // Step 2G: Idempotency checks before creating job
+          // 1. Check if pipeline_item already published
+          if (item.targetPostId) {
+            console.log(`[PublishJob:${topic.id}] Item ${item.id} already published (postId: ${item.targetPostId})`);
+            result.skipped++;
+            continue;
+          }
+          
+          // 2. Check if active job already exists with same story_hash + target_id
+          const existingJobCheck = await db.execute(sql`
+            SELECT id FROM wp_pull_jobs
+            WHERE target_id = ${target.id}
+              AND story_hash = ${payload.storyHash}
+              AND status IN ('queued', 'leased', 'processing')
+            LIMIT 1
+          `);
+          
+          if (existingJobCheck.rows.length > 0) {
+            console.log(`[PublishJob:${topic.id}] Active job already exists for story_hash ${payload.storyHash.substring(0, 12)}`);
+            await storage.updatePipelineItem(item.id, {
+              status: "skipped" as PipelineItemStatus,
+              skipReason: "duplicate_job_exists",
+            });
+            result.skipped++;
+            continue;
+          }
+          
+          // 3. ADVANCED DUPLICATE DETECTION: Check title similarity + content overlap
+          const duplicateCheck = await duplicateDetectionService.checkDuplicateArticle(
+            target.id,
+            payload.storyHash,
+            payload.title,
+            item.id
+          );
+          
+          if (duplicateCheck.isDuplicate) {
+            console.log(`[PublishJob:${topic.id}] ⚠️  DUPLICATE DETECTED: ${duplicateCheck.reason}`);
+            console.log(`  Current title: ${payload.title.substring(0, 60)}...`);
+            console.log(`  Similarity score: ${((duplicateCheck.similarityScore || 0) * 100).toFixed(1)}%`);
+            
+            // Quarantine the duplicate
+            await storage.updatePipelineItem(item.id, {
+              status: "quarantined" as PipelineItemStatus,
+              quarantineReason: `DUPLICATE: ${duplicateCheck.reason}`,
+            });
+            
+            result.quarantined++;
+            continue;
+          }
+          
+          const slug = payload.title
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "-")
             .slice(0, 50);
           
+          // CRITICAL: Check if DALL-E image URL has expired and regenerate if needed
+          let finalImageUrl = payload.featuredImageUrl;
+          if (finalImageUrl && isDallEUrlExpired(finalImageUrl)) {
+            console.log(`[PublishJob:${topic.id}] DALL-E URL expired for item ${item.id}, regenerating...`);
+            finalImageUrl = await regenerateExpiredImage(
+              item.id,
+              finalImageUrl,
+              payload.title,
+              payload.excerpt || payload.title
+            );
+          }
+          
+          // Step 2F: Store sanitized payload in payload_json (canonical source for plugin)
           const wpJob: InsertWpPullJob = {
             targetId: target.id,
             siteId: target.siteId,
             storyId: item.storyId,
             pipelineItemId: item.id,
-            title: item.generatedTitle || "Untitled",
-            contentHtml: item.generatedBody || "<p>Content pending</p>",
+            title: payload.title,
+            contentHtml: payload.contentHtml,
             postStatus: target.defaultPostStatus || "draft",
-            categories: item.generatedCategory ? [item.generatedCategory] : [topic.name],
-            tags: (item.generatedTags as string[] | null) || [],
-            excerpt: item.generatedExcerpt || "",
+            categories: payload.categories,
+            tags: payload.tags,
+            excerpt: payload.excerpt,
             slug,
-            sourceUrl: null,
-            featuredImageUrl: null,
-            metadataJson: {},
+            sourceUrl: payload.canonicalSourceUrl,
+            featuredImageUrl: finalImageUrl || null,
+            featuredImageCredit: item.featuredImageCredit || null, // NEW: Image attribution
+            featuredImageCaption: item.featuredImageCaption || null, // NEW: Image caption/alt
+            metadataJson: {
+              story_hash: payload.storyHash,
+              canonical_source_url: payload.canonicalSourceUrl,
+              source_name: payload.sourceName, // NEW: Source attribution
+              pipeline_item_id: payload.pipelineItemId,
+              image_credit: item.featuredImageCredit, // NEW: Store in metadata too
+              image_caption: item.featuredImageCaption, // NEW: Store in metadata too
+              ai_generated_image: item.aiGeneratedImageUrl ? true : false, // NEW: Flag AI images
+            },
+            // CRITICAL: Sanitized payload - plugin must read ONLY this field
+            payloadJson: {
+              title: payload.title,
+              contentHtml: payload.contentHtml,
+              excerpt: payload.excerpt,
+              categoryIds: payload.categoryIds, // WordPress category IDs
+              categories: payload.categories, // Category names (fallback)
+              tags: payload.tags,
+              featuredImageUrl: finalImageUrl,
+              featuredImageCredit: item.featuredImageCredit, // NEW: For plugin to use
+              featuredImageCaption: item.featuredImageCaption, // NEW: For plugin to use
+              sourceName: payload.sourceName, // NEW: Source attribution for plugin
+              storyHash: payload.storyHash,
+              canonicalSourceUrl: payload.canonicalSourceUrl,
+            },
+            storyHash: payload.storyHash,
             status: "queued",
           };
           
           await storage.createWpPullJob(wpJob);
           
-          console.log(`[PublishJob:${topic.id}] Created WP pull job for item ${item.id}`);
+          // CRITICAL FIX: Mark item as published after job creation to prevent re-publishing
+          // Mark as publishing (NOT published) - will be marked as published when WP plugin reports back
+          await storage.updatePipelineItem(item.id, {
+            status: "publishing" as PipelineItemStatus,
+          });
+          
+          await storage.createPublishAttempt({
+            pipelineItemId: item.id,
+            targetId: item.targetId,
+            attemptNumber,
+            requestPayload: { 
+              title: payload.title, 
+              content: payload.contentHtml,
+              categories: payload.categories,
+              featuredImageUrl: payload.featuredImageUrl,
+            },
+            responseStatus: 200,
+            responseBody: { 
+              wpPullJobCreated: true,
+              storyHash: payload.storyHash,
+              preflightPassed: true,
+              metadata: preflightResult.metadata,
+            },
+            result: "success",
+          });
+          
+          console.log(`[PublishJob:${topic.id}] Created sanitized WP pull job for item ${item.id} (hash: ${payload.storyHash.substring(0, 12)}) - marked as published`);
           result.success++;
         } else {
-          const assetVersion = {
-            id: item.id,
-            assetId: item.id,
-            title: item.generatedTitle || "Untitled",
-            body: item.generatedBody || "",
-            versionNo: 1,
-            workflowType: "seo_blog" as const,
-            createdAt: new Date(),
-            language: topic.language || "en",
-            channel: null,
-            format: null,
-            metadataJson: null,
-            createdBy: null,
-            runId: null,
-          };
-
-          const publishResult = await publishToWordPress(target, assetVersion, {
-            status: "publish",
-          });
+          console.log(`[PublishJob:${topic.id}] Publishing with enhanced publisher for item ${item.id}`);
+          
+          const publishResult = await enhancedPublisher.publishPipelineItem(item.id, target.id);
 
           if (publishResult.success && publishResult.postId) {
-            await storage.updatePipelineItem(item.id, {
-              status: "published" as PipelineItemStatus,
-              targetPostId: publishResult.postId,
-              targetPermalink: publishResult.postUrl,
-              publishedAt: new Date(),
-            });
-
             await storage.createPublishAttempt({
               pipelineItemId: item.id,
               targetId: item.targetId,
-              attemptNumber: (item.publishAttempts || 0) + 1,
+              attemptNumber,
               requestPayload: {
                 title: item.generatedTitle,
                 content: item.generatedBody,
                 excerpt: item.generatedExcerpt,
               },
               responseStatus: 201,
-              responseBody: { postId: publishResult.postId, postUrl: publishResult.postUrl },
+              responseBody: { 
+                postId: publishResult.postId, 
+                postUrl: publishResult.permalink,
+                metadata: publishResult.metadata,
+              },
               result: "success",
             });
 
@@ -899,24 +1270,42 @@ export async function runPublishJob(topic: Topic): Promise<JobResult> {
               publishedTodayResetAt: new Date(),
             });
 
+            console.log(`[PublishJob:${topic.id}] Published successfully: ${publishResult.permalink}`);
             result.success++;
+          } else if (publishResult.quarantineReason) {
+            console.log(`[PublishJob:${topic.id}] Item quarantined: ${publishResult.quarantineReason}`);
+            result.quarantined++;
           } else {
-            throw new Error(publishResult.error || "WordPress publish failed");
+            errorCode = "WP_PUBLISH_FAILED";
+            errorMessage = publishResult.error || "WordPress publish failed";
+            responseBody = { error: errorMessage };
+            throw new Error(`${errorCode}: ${errorMessage}`);
           }
         }
       } catch (error: any) {
+        // Parse structured error codes if present
+        const errorStr = error.message || "Unknown error";
+        if (errorStr.includes(":")) {
+          const parts = errorStr.split(":");
+          errorCode = parts[0].trim();
+          errorMessage = parts.slice(1).join(":").trim();
+        } else {
+          errorMessage = errorStr;
+        }
+        
         const retryCount = (item.retryCount || 0) + 1;
 
+        // ALWAYS create publish attempt, even for early failures
         await storage.createPublishAttempt({
           pipelineItemId: item.id,
           targetId: item.targetId,
-          attemptNumber: (item.publishAttempts || 0) + 1,
+          attemptNumber,
           requestPayload: {
             title: item.generatedTitle,
             content: item.generatedBody,
           },
-          responseStatus: 500,
-          responseBody: { error: error.message },
+          responseStatus,
+          responseBody: responseBody.error ? responseBody : { error: errorMessage },
           result: "fail",
         });
 
@@ -924,20 +1313,21 @@ export async function runPublishJob(topic: Topic): Promise<JobResult> {
           await storage.updatePipelineItem(item.id, {
             status: "quarantined" as PipelineItemStatus,
             retryCount,
-            lastErrorCode: "MAX_RETRIES",
-            lastErrorMessage: error.message,
+            lastErrorCode: errorCode,
+            lastErrorMessage: errorMessage,
           });
           result.quarantined++;
         } else {
           await storage.updatePipelineItem(item.id, {
             status: "retrying" as PipelineItemStatus,
             retryCount,
-            lastErrorCode: "PUBLISH_FAILED",
-            lastErrorMessage: error.message,
+            lastErrorCode: errorCode,
+            lastErrorMessage: errorMessage,
           });
           result.failed++;
         }
-        result.errors.push(`Item ${item.id}: ${error.message}`);
+        result.errors.push(`Item ${item.id}: ${errorMessage}`);
+        console.error(`[PublishJob:${topic.id}] Item ${item.id} failed: [${errorCode}] ${errorMessage}`);
       }
     }
 
@@ -1109,7 +1499,48 @@ export async function runFullPipelineForTopic(topic: Topic): Promise<{
 
   const results: { [key: string]: JobResult } = {};
 
-  // Run topic discovery first to link stories from enabled sources
+  // Step 1: Fetch RSS feeds for enabled sources (only if not fetched recently)
+  try {
+    const enabledSourceIds = await storage.getEnabledSourceIdsForTopic(topic.id);
+    if (enabledSourceIds.length > 0) {
+      const enabledSources = await storage.getSourcesByIds(enabledSourceIds);
+      const activeSources = enabledSources.filter(s => s.isActive === "true");
+      
+      // Only fetch sources that haven't been fetched in the last 10 minutes
+      const staleThresholdMinutes = 10;
+      const staleThreshold = new Date(Date.now() - staleThresholdMinutes * 60 * 1000);
+      const staleSources = activeSources.filter(s => 
+        !s.lastFetchedAt || new Date(s.lastFetchedAt) < staleThreshold
+      );
+      
+      console.log(`[Pipeline:${topic.id}] ${activeSources.length} enabled sources, ${staleSources.length} need fetching (>10min old)`);
+      
+      if (staleSources.length > 0) {
+        const { fetchRSSSource } = await import("./rss-service");
+        let fetchedCount = 0;
+        
+        // Limit to max 10 sources per pipeline run to prevent timeout
+        const sourcesToFetch = staleSources.slice(0, 10);
+        console.log(`[Pipeline:${topic.id}] Fetching ${sourcesToFetch.length} stale sources...`);
+        
+        for (const source of sourcesToFetch) {
+          try {
+            await fetchRSSSource(source);
+            fetchedCount++;
+          } catch (error: any) {
+            console.error(`[Pipeline:${topic.id}] Failed to fetch source ${source.name}:`, error.message);
+          }
+        }
+        console.log(`[Pipeline:${topic.id}] Fetched ${fetchedCount}/${sourcesToFetch.length} sources`);
+      } else {
+        console.log(`[Pipeline:${topic.id}] All sources recently fetched, skipping RSS fetch`);
+      }
+    }
+  } catch (error: any) {
+    console.error(`[Pipeline:${topic.id}] RSS fetch error (continuing):`, error.message);
+  }
+
+  // Step 2: Run topic discovery to link stories from enabled sources
   try {
     const { runTopicDiscovery } = await import("./topic-run-service");
     console.log(`[Pipeline:${topic.id}] Running topic discovery to link stories...`);
@@ -1149,7 +1580,7 @@ export async function runFullPipelineForTopic(topic: Topic): Promise<{
 }
 
 export async function runAllLivePipelines(): Promise<
-  Array<{ topicId: string; topicName: string; results: { [key: string]: JobResult }; stoppedAtGate?: boolean }>
+  Array<{ topicId: string; topicName: string; results: { [key: string]: JobResult }; stoppedAtGate?: boolean; configError?: string }>
 > {
   const liveTopics = await storage.getLiveTopics();
   const automatedTopics = liveTopics.filter(
@@ -1161,9 +1592,59 @@ export async function runAllLivePipelines(): Promise<
   const allResults = [];
 
   for (const topic of automatedTopics) {
+    // Validate auto mode has publishing target configured
     if (topic.automationMode === "auto" && !topic.publishingTargetId) {
-      console.log(`[Pipeline] Skipping ${topic.name} - auto mode requires publishing target`);
+      console.error(`[Pipeline] Topic "${topic.name}" in auto mode but publishingTargetId is null`);
+      
+      const jobRunId = await createJobRun(topic.workspaceId, topic.id, "publish");
+      const failResult: JobResult = {
+        jobRunId,
+        processed: 0,
+        success: 0,
+        failed: 0,
+        skipped: 1,
+        quarantined: 0,
+        errors: ["AUTO_MODE_NO_TARGET: Topic in auto mode requires a publishing target to be configured"],
+      };
+      
+      await finalizeJobRun(jobRunId, failResult, "fail");
+      
+      allResults.push({
+        topicId: topic.id,
+        topicName: topic.name,
+        results: { publish: failResult },
+        configError: "Auto mode requires publishing target",
+      });
       continue;
+    }
+    
+    // Validate publishing target exists and is reachable
+    if (topic.publishingTargetId) {
+      const target = await storage.getPublishingTarget(topic.publishingTargetId);
+      if (!target) {
+        console.error(`[Pipeline] Topic "${topic.name}" references non-existent target ${topic.publishingTargetId}`);
+        
+        const jobRunId = await createJobRun(topic.workspaceId, topic.id, "publish");
+        const failResult: JobResult = {
+          jobRunId,
+          processed: 0,
+          success: 0,
+          failed: 0,
+          skipped: 1,
+          quarantined: 0,
+          errors: [`TARGET_NOT_FOUND: Publishing target ${topic.publishingTargetId} does not exist`],
+        };
+        
+        await finalizeJobRun(jobRunId, failResult, "fail");
+        
+        allResults.push({
+          topicId: topic.id,
+          topicName: topic.name,
+          results: { publish: failResult },
+          configError: "Publishing target not found",
+        });
+        continue;
+      }
     }
 
     const result = await runFullPipelineForTopic(topic);

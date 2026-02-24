@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useWorkspaceContext } from "@/hooks/use-workspace-context";
 import { 
   BarChart3, 
   TrendingUp, 
@@ -290,16 +291,21 @@ function JobTypeChart({ byType }: { byType: Record<string, number> }) {
 }
 
 export default function Analytics() {
+  const { activeWorkspaceId, isLoading: isContextLoading } = useWorkspaceContext();
+  
   const { data: analytics, isLoading } = useQuery<PipelineAnalytics>({
-    queryKey: ["/api/analytics/pipeline", { workspaceId: "demo-workspace" }],
+    queryKey: ["/api/analytics/pipeline", { workspaceId: activeWorkspaceId || "demo-workspace" }],
+    enabled: !!activeWorkspaceId,
   });
 
-  if (isLoading) {
+  if (isLoading || isContextLoading) {
     return (
       <div className="p-6 space-y-6">
         <div>
           <h1 className="text-2xl font-bold">Analytics Dashboard</h1>
-          <p className="text-muted-foreground">Pipeline performance and content metrics</p>
+          <p className="text-muted-foreground">
+            {isContextLoading ? "Loading workspace..." : "Pipeline performance and content metrics"}
+          </p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map(i => (
