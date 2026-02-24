@@ -45,6 +45,10 @@ async function buildAll() {
     ...Object.keys(pkg.devDependencies || {}),
   ];
   const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  
+  // Force ESM-only packages to remain external
+  const esmOnlyPackages = ['openid-client', 'jose'];
+  externals.push(...esmOnlyPackages.filter(pkg => !externals.includes(pkg)));
 
   await esbuild({
     entryPoints: ["server/index.ts"],
