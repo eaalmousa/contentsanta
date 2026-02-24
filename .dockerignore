@@ -3,13 +3,7 @@ dist
 .env
 .env.local
 .git
-.gitignore
-*.md
-.verdent
-.replit
-replit.nix
-scripts/*.ts
-client/src
 *.log
 npm-debug.log*
 .DS_Store
+.verdent
