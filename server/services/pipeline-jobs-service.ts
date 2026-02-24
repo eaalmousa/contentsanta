@@ -843,7 +843,6 @@ export async function runScheduleJob(topic: Topic): Promise<JobResult> {
     const items = await getPipelineItemsByTopic(topic.id);
     const gatedItems = items.filter((i: PipelineItem) => i.status === "gated");
 
-    const dailyCap = topic.dailyCap || 5;
     const quietHours = topic.quietHours as { start: string; end: string; tz?: string } | null;
     
     const timezone = topic.timezone || "UTC";
@@ -851,19 +850,6 @@ export async function runScheduleJob(topic: Topic): Promise<JobResult> {
     const articlesPerRun = Math.min(Math.max(topic.articlesPerRun || 3, 1), 5);
     const runIntervalMinutes = Math.max(topic.runIntervalMinutes || 5, 2);
     const minSpacing = topic.minSpacingMinutes || 30;
-
-    const resetDate = topic.publishedTodayResetAt
-      ? new Date(topic.publishedTodayResetAt).toDateString()
-      : null;
-    const today = new Date().toDateString();
-    let publishedToday = resetDate === today ? (topic.publishedToday || 0) : 0;
-
-    if (resetDate !== today) {
-      await storage.updateTopic(topic.id, {
-        publishedToday: 0,
-        publishedTodayResetAt: new Date(),
-      });
-    }
 
     if (isInQuietHours(quietHours)) {
       console.log(`[ScheduleJob:${topic.id}] In quiet hours, skipping scheduling`);
@@ -883,15 +869,6 @@ export async function runScheduleJob(topic: Topic): Promise<JobResult> {
       
       for (const item of gatedItems) {
         result.processed++;
-
-        if (publishedToday >= dailyCap) {
-          await storage.updatePipelineItem(item.id, {
-            status: "skipped" as PipelineItemStatus,
-            lastErrorMessage: "DAILY_CAP: Daily publishing limit reached",
-          });
-          result.skipped++;
-          continue;
-        }
 
         const updatedScheduledItems = await getPipelineItemsByTopic(topic.id);
         const currentScheduled = updatedScheduledItems.filter((i: PipelineItem) => i.status === "scheduled");
@@ -920,7 +897,6 @@ export async function runScheduleJob(topic: Topic): Promise<JobResult> {
           targetId: topic.publishingTargetId,
         });
 
-        publishedToday++;
         result.success++;
       }
     } else {
@@ -930,15 +906,6 @@ export async function runScheduleJob(topic: Topic): Promise<JobResult> {
 
       for (const item of gatedItems) {
         result.processed++;
-
-        if (publishedToday >= dailyCap) {
-          await storage.updatePipelineItem(item.id, {
-            status: "skipped" as PipelineItemStatus,
-            lastErrorMessage: "DAILY_CAP: Daily publishing limit reached",
-          });
-          result.skipped++;
-          continue;
-        }
 
         const intervalMinutes = topic.publishIntervalMinutes || topic.minSpacingMinutes || 2;
         const nextSlot = new Date(lastScheduledTime + intervalMinutes * 60 * 1000);
@@ -950,7 +917,6 @@ export async function runScheduleJob(topic: Topic): Promise<JobResult> {
         });
 
         lastScheduledTime = nextSlot.getTime();
-        publishedToday++;
         result.success++;
       }
     }
